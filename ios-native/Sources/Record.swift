@@ -126,7 +126,8 @@ struct GenerateSheet: View {
                     }.pickerStyle(.segmented)
 
                     field(L("Rota çizgisi","Route line"))
-                    HStack(spacing: 12) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                      HStack(spacing: 12) {
                         // Çizgisiz (sadece nokta)
                         ZStack {
                             Circle().fill(Color(.systemGray4)).frame(width: 30, height: 30)
@@ -155,8 +156,8 @@ struct GenerateSheet: View {
                                 .overlay(Circle().strokeBorder(.white, lineWidth: lineColor.caseInsensitiveCompare(hex) == .orderedSame ? 3 : 0))
                                 .onTapGesture { lineColor = hex }
                         }
-                        Spacer()
-                    }
+                      }
+                    }.padding(.horizontal, 2)
 
                     field(L("Müzik","Music"))
                     Menu {
@@ -242,7 +243,7 @@ struct GenerateSheet: View {
                     Text(L("Video bulut sunucularında oluşturulur — telefonun yorulmaz, uygulamayı kapatabilirsin.",
                            "Rendered on our cloud servers — your phone stays free; you can close the app."))
                         .font(.caption2).foregroundStyle(.secondary)
-                }.padding(24)
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .presentationDetents([.large])
