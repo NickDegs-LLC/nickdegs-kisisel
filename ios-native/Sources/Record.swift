@@ -35,6 +35,8 @@ struct GenerateSheet: View {
     @State private var showPaywall = false
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
     @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
+    @AppStorage("nd_ultra") private var ultraStored = false  // sunucu/admin Ultra (syncPremium yazar) — StoreKit dışı da açılsın
+    private var isUltra: Bool { isUltra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
     @State private var stock: [[String:String]] = []
     @State private var music = ""               // "", "stock:<id>", "upload"
     @State private var showAudioPicker = false
@@ -99,20 +101,20 @@ struct GenerateSheet: View {
 
                     // KAMERA AÇISI (sadece 3D · Google, ULTRA): takip açısı — yandan / arkadan / Sokak(Street View)
                     if mode == "3d" {
-                        field(L("Kamera açısı","Camera angle") + (iap.ultra ? "" : " · Ultra"))
+                        field(L("Kamera açısı","Camera angle") + (isUltra ? "" : " · Ultra"))
                         Picker("", selection: Binding(
-                            get: { iap.ultra ? camMode : "" },
-                            set: { v in if iap.ultra { camMode = v } else { showPaywall = true } })) {
+                            get: { isUltra ? camMode : "" },
+                            set: { v in if isUltra { camMode = v } else { showPaywall = true } })) {
                             Text(L("Yandan","Side")).tag("")
                             Text(L("Arkadan","Chase")).tag("chase")
                             Text(L("Sokak","Street")).tag("pacman")
                         }.pickerStyle(.segmented)
-                        Text(iap.ultra
+                        Text(isUltra
                              ? L("Yandan: klasik yan takip. Arkadan: tam arkadan hafif yukarıdan. Sokak: gerçek Google Street View (DENEYSEL — sokak fotoğrafları ~20m arayla olduğundan akış yer yer atlayabilir; kısa/dar sokaklarda veya çok detaylı rotalarda bozuk görünebilir).",
                                  "Side: classic. Chase: from directly behind, slightly above. Street: real Google Street View (EXPERIMENTAL — street photos are ~20m apart so motion may skip; can look rough on short/narrow streets or very detailed routes).")
                              : L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
                                  "Camera angles (Chase, Street View) are included in Ultra."))
-                            .font(.caption2).foregroundStyle(iap.ultra ? .secondary : Brand.accent)
+                            .font(.caption2).foregroundStyle(isUltra ? .secondary : Brand.accent)
                     }
 
                     field(L("Görünüm","Style"))
