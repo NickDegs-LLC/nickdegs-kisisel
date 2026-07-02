@@ -175,7 +175,7 @@ struct GenerateSheet: View {
                     } label: {
                         HStack {
                             Image(systemName: "music.note")
-                            Text(musicLabel)
+                            Text(musicLabel).lineLimit(1).truncationMode(.tail)   // uzun şarkı adı satırı itmesin (her ekran boyutu)
                             if !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
                             Spacer(); Image(systemName: "chevron.down").font(.caption2)
                         }.padding(.horizontal, 14).padding(.vertical, 12)
