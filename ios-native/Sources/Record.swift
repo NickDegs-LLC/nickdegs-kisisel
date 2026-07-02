@@ -108,8 +108,8 @@ struct GenerateSheet: View {
                             Text(L("Sokak","Street")).tag("pacman")
                         }.pickerStyle(.segmented)
                         Text(iap.ultra
-                             ? L("Yandan: klasik yan takip. Arkadan: tam arkadan hafif yukarıdan. Sokak: gerçek Google Street View — geçtiğin caddeyi ilk-kişi sokak görüntüsüyle gezer.",
-                                 "Side: classic. Chase: from directly behind, slightly above. Street: real Google Street View — drives your route in first-person street imagery.")
+                             ? L("Yandan: klasik yan takip. Arkadan: tam arkadan hafif yukarıdan. Sokak: gerçek Google Street View (DENEYSEL — sokak fotoğrafları ~20m arayla olduğundan akış yer yer atlayabilir; kısa/dar sokaklarda veya çok detaylı rotalarda bozuk görünebilir).",
+                                 "Side: classic. Chase: from directly behind, slightly above. Street: real Google Street View (EXPERIMENTAL — street photos are ~20m apart so motion may skip; can look rough on short/narrow streets or very detailed routes).")
                              : L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
                                  "Camera angles (Chase, Street View) are included in Ultra."))
                             .font(.caption2).foregroundStyle(iap.ultra ? .secondary : Brand.accent)
