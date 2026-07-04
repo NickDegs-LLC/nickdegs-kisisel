@@ -267,7 +267,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
     // 402 = premium değil, 400 = geçersiz/iz yok. Dönüş nil ise hata.
     func uploadRoute(_ data: Data) async -> (from: Double, to: Double, km: Double)? {
         guard !token.isEmpty else { return nil }
-        var r = URLRequest(url: URL(string: API + "/rides/upload")!)
+        var r = URLRequest(url: URL(string: API + "/api/rides/upload")!)
         r.httpMethod = "POST"
         r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
