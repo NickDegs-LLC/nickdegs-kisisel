@@ -17,6 +17,7 @@ struct RoutesView: View {
     @State private var pendingDelete: Ride?
     @State private var pollTask: Task<Void, Never>? = nil   // render/yeni rota varken otomatik yenile
     @AppStorage("nd_premium") private var premium = false
+    @AppStorage("nd_route_sort") private var sortMode = "date"   // "date"=rota tarihi | "added"=son eklenen (kullanıcı seçer)
     @State private var showImporter = false   // GPX/TCX dosya seçici
     @State private var uploading = false
     @State private var showPaywall = false
@@ -60,13 +61,21 @@ struct RoutesView: View {
         case "run": return "figure.run"; case "walk": return "figure.walk"; default: return "point.topleft.down.curvedto.point.bottomright.up" }
     }
 
+    // Kullanıcının seçtiği sıralama: rota tarihi (varsayılan) veya son eklenen (GPX yüklemeler üstte görünsün)
+    var sortedRides: [Ride] {
+        if sortMode == "added" {
+            return rides.sorted { ($0.added ?? $0.done ?? $0.ts ?? 0) > ($1.added ?? $1.done ?? $1.ts ?? 0) }
+        }
+        return rides   // backend zaten rota tarihine göre (yeni->eski) sıralı gönderir
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 AuroraBackground()
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(rides) { r in
+                        ForEach(sortedRides) { r in
                             HStack(spacing: 14) {
                                 Image(systemName: typeIcon(r.type)).font(.system(size: 22))
                                     .foregroundStyle(Brand.accent).frame(width: 50, height: 50).glassPanel(16)
@@ -130,6 +139,17 @@ struct RoutesView: View {
             }
             .navigationTitle("Move Log")
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Sıralama seçici: rota tarihi / son eklenen (kullanıcı tercihi kalıcı)
+                    Menu {
+                        Picker(L("Sıralama","Sort"), selection: $sortMode) {
+                            Label(L("Rota tarihi","Route date"), systemImage: "calendar").tag("date")
+                            Label(L("Son eklenen","Recently added"), systemImage: "clock.arrow.circlepath").tag("added")
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down").font(.system(size: 15, weight: .semibold))
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — premium
                     Button {

@@ -11,6 +11,7 @@ struct Ride: Codable, Identifiable, Hashable {
     var id: String; var date: String; var type: String?; var mode: String?; var size: Double
     var ts: Double? = nil; var to: Double? = nil; var aspect: String? = nil; var speed: String? = nil
     var done: Double? = nil          // video ÜRETIM zamanı (epoch) — Videolarım'da gösterilir + sıralama
+    var added: Double? = nil         // eklenme/üretim zamanı — Rotalar "Son eklenen" sıralaması (GPX yüklemeler eski tarihli olsa da üstte)
     var rendering: Bool? = nil       // hâlâ render oluyor mu — true ise app oynatmayı kilitler ("Hazırlanıyor")
     var novideo: Bool? = nil         // algılandı ama videosu yok -> Rotalar'da "Video oluştur" gösterilir
 }
