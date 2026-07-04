@@ -62,9 +62,14 @@ struct RoutesView: View {
     }
 
     // Kullanıcının seçtiği sıralama: rota tarihi (varsayılan) veya son eklenen (GPX yüklemeler üstte görünsün)
+    private func addedKey(_ r: Ride) -> Double {
+        if let a = r.added, a > 0 { return a }
+        if let d = r.done, d > 0 { return d }
+        return r.ts ?? 0
+    }
     var sortedRides: [Ride] {
         if sortMode == "added" {
-            return rides.sorted { ($0.added ?? $0.done ?? $0.ts ?? 0) > ($1.added ?? $1.done ?? $1.ts ?? 0) }
+            return rides.sorted { (a: Ride, b: Ride) -> Bool in addedKey(a) > addedKey(b) }
         }
         return rides   // backend zaten rota tarihine göre (yeni->eski) sıralı gönderir
     }
