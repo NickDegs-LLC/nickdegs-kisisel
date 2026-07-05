@@ -14,6 +14,8 @@ struct Ride: Codable, Identifiable, Hashable {
     var added: Double? = nil         // eklenme/üretim zamanı — Rotalar "Son eklenen" sıralaması (GPX yüklemeler eski tarihli olsa da üstte)
     var rendering: Bool? = nil       // hâlâ render oluyor mu — true ise app oynatmayı kilitler ("Hazırlanıyor")
     var novideo: Bool? = nil         // algılandı ama videosu yok -> Rotalar'da "Video oluştur" gösterilir
+    var failed: Bool? = nil          // render başarısız — Videolarım'da HATA kartı olarak kalır (kaybolmaz)
+    var error: String? = nil         // başarısızlık sebebi (kartta gösterilir)
 }
 struct Stats: Codable { var totalRides: Int; var byType: [String:Int]; var latest: Ride? }
 struct Position: Codable, Identifiable, Hashable {

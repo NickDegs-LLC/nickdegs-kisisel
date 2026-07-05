@@ -100,8 +100,8 @@ struct RoutesView: View {
                                     }
                                 }
                                 Spacer()
-                                if r.novideo == true {
-                                    // Videosuz algılanan rota -> kullanıcı isterse video ürettirir
+                                if r.novideo == true || r.failed == true {
+                                    // Videosuz algılanan rota VEYA başarısız render -> kullanıcı (yeniden) video ürettirir
                                     Button { createRide = r } label: {
                                         HStack(spacing: 6) {
                                             Image(systemName: "film.stack").font(.system(size: 13, weight: .bold))

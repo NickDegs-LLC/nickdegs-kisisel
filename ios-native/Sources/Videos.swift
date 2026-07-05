@@ -122,6 +122,7 @@ struct VideosView: View {
                         }
                         ForEach(rides) { r in
                             let rendering = (r.rendering == true)
+                            let failed = (r.failed == true)
                             VStack(spacing: 0) {
                                 // büyük izleme kartı — render bitene kadar KİLİTLİ (oynatma yok, beyaz ekran olmaz)
                                 if rendering {
@@ -130,6 +131,19 @@ struct VideosView: View {
                                         VStack(spacing: 8) {
                                             ProgressView().tint(.white)
                                             Text(L("Hazırlanıyor…","Rendering…")).font(.system(size: 14, weight: .semibold))
+                                                .foregroundStyle(.white.opacity(0.9))
+                                        }
+                                    }
+                                    .frame(height: 150).frame(maxWidth: .infinity).clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                } else if failed {
+                                    // HATA kartı — silinene/yeniden denenene kadar listede kalır (sessizce kaybolmaz)
+                                    ZStack {
+                                        Color.red.opacity(0.14)
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .font(.system(size: 28)).foregroundStyle(.red)
+                                            Text(L("Oluşturulamadı","Failed")).font(.system(size: 14, weight: .semibold))
                                                 .foregroundStyle(.white.opacity(0.9))
                                         }
                                     }
@@ -149,13 +163,16 @@ struct VideosView: View {
                                         if rendering {
                                             Text(L("Video hazırlanıyor, bitince izlenebilir","Rendering, playable when done"))
                                                 .font(.caption2).foregroundStyle(Brand.accent)
+                                        } else if failed {
+                                            Text(r.error ?? L("Video oluşturulamadı","Video failed"))
+                                                .font(.caption2).foregroundStyle(.red).lineLimit(3)
                                         } else if let pl = producedLabel(r) {
                                             Text(L("Üretildi: ","Created: ") + pl)                      // VIDEO üretim tarihi
                                                 .font(.caption2).foregroundStyle(.secondary.opacity(0.8))
                                         }
                                     }
                                     Spacer()
-                                    if !rendering {
+                                    if !rendering && !failed {
                                         // galerine kaydet
                                         Button { save(r) } label: {
                                             Group {
