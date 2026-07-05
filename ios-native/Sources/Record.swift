@@ -151,7 +151,7 @@ struct GenerateSheet: View {
                         }
                         .overlay(Circle().strokeBorder(.white.opacity(lineColor == "clear" ? 1 : 0.5), lineWidth: lineColor == "clear" ? 3 : 1))
                         .onTapGesture { lineColor = "clear" }
-                        ForEach(["#00E5FF","#FF3B30","#39FF14","#FFD60A","#FF7AB6","#FFFFFF","#7C4DFF","#FF8C00"], id: \.self) { hex in
+                        ForEach(ROUTE_LINE_COLORS, id: \.self) { hex in
                             Circle().fill(Color(hex: hex))
                                 .frame(width: 30, height: 30)
                                 .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1))

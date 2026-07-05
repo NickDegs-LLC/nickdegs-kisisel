@@ -29,6 +29,7 @@ struct ProfileView: View {
     @AppStorage("nd_font") var fontId = "default"
     @AppStorage("nd_scheme") var scheme = "dark"
     @AppStorage("nd_premium") var premium = false
+    @AppStorage("nd_ultra") var ultraMember = false   // Ultra rozeti (IAP.setUltra yazar) — altın kart
     @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
     @State private var prof: Profile?
     @State private var friends: [Friend] = []
@@ -77,31 +78,34 @@ struct ProfileView: View {
                             stat("\(friends.count)", L("Arkadaş","Friends"))
                         }
 
-                        // Premium kartı (şık, gradyan)
+                        // Premium/Ultra kartı (şık, gradyan; Ultra = altın)
                         Button { showPaywall = true } label: {
                             HStack(spacing: 14) {
-                                Image(systemName: premium ? "crown.fill" : "star.fill")
+                                Image(systemName: (premium || ultraMember) ? "crown.fill" : "star.fill")
                                     .font(.system(size: 23, weight: .semibold)).foregroundStyle(.white)
                                     .frame(width: 50, height: 50).background(.white.opacity(0.22), in: Circle())
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(premium ? L("Premium üyesin","You're Premium")
-                                                 : L("Move Log Premium","Move Log Premium"))
+                                    Text(ultraMember ? L("Ultra üyesin","You're Ultra")
+                                         : premium ? L("Premium üyesin","You're Premium")
+                                                   : L("Move Log Premium","Move Log Premium"))
                                         .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                                    Text(premium ? L("Tüm özellikler açık · faydalarını gör","All features unlocked · see your perks")
-                                                 : L("3B videolar, filigransız, müzik ve dahası","3D videos, no watermark, music & more"))
+                                    Text(ultraMember ? L("Google 3D + Street View açık · faydalarını gör","Google 3D + Street View unlocked · see your perks")
+                                         : premium ? L("Tüm özellikler açık · faydalarını gör","All features unlocked · see your perks")
+                                                   : L("3B videolar, filigransız, müzik ve dahası","3D videos, no watermark, music & more"))
                                         .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
                                 }
                                 Spacer()
-                                if premium {
+                                if premium || ultraMember {
                                     Image(systemName: "checkmark.seal.fill").foregroundStyle(.white)
                                 } else {
                                     Image(systemName: "chevron.right").foregroundStyle(.white.opacity(0.8))
                                 }
                             }
                             .padding(16)
-                            .background(Brand.gradient, in: RoundedRectangle(cornerRadius: 22))
-                            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                            .shadow(color: Brand.accent.opacity(0.35), radius: 14, y: 6)
+                            .background(ultraMember ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient),
+                                        in: RoundedRectangle(cornerRadius: 22))
+                            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(ultraMember ? 0.45 : 0.25), lineWidth: 1))
+                            .shadow(color: (ultraMember ? Brand.gold : Brand.accent).opacity(0.38), radius: 14, y: 6)
                         }.buttonStyle(.plain).smoothAppear()
 
                         section(L("Arkadaşlar","Friends"))
@@ -479,8 +483,14 @@ struct PaywallSheet: View {
             ScrollView {
                 VStack(spacing: 14) {
                     Image(systemName: premium ? "crown.fill" : "star.fill").font(.system(size: 34))
-                        .foregroundStyle(Brand.gradient).frame(width: 72, height: 72).glassPanel(36)
-                    if premium {
+                        .foregroundStyle(iap.ultra ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient))
+                        .frame(width: 72, height: 72).glassPanel(36)
+                    if iap.ultra {
+                        Text(L("Ultra üyesin 👑","You're Ultra 👑")).font(.title2.bold())
+                            .foregroundStyle(Brand.goldGradient)
+                        Text(L("Google 3D, tüm kamera açıları ve Street View dahil her şey açık:","Google 3D, every camera angle and Street View — all unlocked:"))
+                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    } else if premium {
                         Text(L("Premium üyesin ✨","You're Premium ✨")).font(.title2.bold())
                         Text(L("Şu an tüm bu özelliklerin keyfini çıkarıyorsun:","You're currently enjoying all of these:"))
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -493,8 +503,11 @@ struct PaywallSheet: View {
                     VStack(spacing: 9) { ForEach(perks) { perkRow($0) } }.padding(.vertical, 4)
 
                     if premium {
-                        Text(L("Premium aktif","Premium active")).font(.caption.bold()).foregroundStyle(.white)
-                            .padding(.horizontal, 14).padding(.vertical, 7).background(Brand.gradient, in: Capsule()).padding(.top, 2)
+                        Text(iap.ultra ? L("Ultra aktif","Ultra active") : L("Premium aktif","Premium active"))
+                            .font(.caption.bold()).foregroundStyle(iap.ultra ? .black : .white)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .background(iap.ultra ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient), in: Capsule())
+                            .padding(.top, 2)
 
                         // Günlük 2x Boost (consumable) — premium üyeye, rotasız erişilebilir satın alma
                         if let b = iap.boost {
@@ -664,7 +677,7 @@ struct SummaryVideoSheet: View {
     @Binding var video: SummaryVid
     var onDone: () -> Void
     @Environment(\.dismiss) private var dismiss
-    private let colors = ["#00E5FF","#FF3B30","#39FF14","#FFD60A","#FF7AB6","#FFFFFF","#7C4DFF","#FF8C00"]
+    private let colors = ROUTE_LINE_COLORS   // ortak palet (rotalardaki GenerateSheet ile aynı)
     var body: some View {
         NavigationStack {
             Form {
@@ -685,11 +698,33 @@ struct SummaryVideoSheet: View {
                     Text(L("Yok","None")).tag(""); Text("Chill").tag("stock:chill"); Text("Epic").tag("stock:epic")
                     Text("Upbeat").tag("stock:upbeat"); Text("Lo-Fi").tag("stock:lofi"); Text("Cinematic").tag("stock:cinematic")
                 }
-                Section(L("Rota rengi","Route color")) {
+                Section(L("Rota çizgisi","Route line")) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
+                            // Çizgisiz (sadece nokta)
+                            ZStack {
+                                Circle().fill(Color(.systemGray4)).frame(width: 32, height: 32)
+                                Image(systemName: "line.diagonal").font(.system(size: 14)).foregroundStyle(.secondary)
+                            }
+                            .overlay(Circle().strokeBorder(.white, lineWidth: video.line == "none" ? 3 : 0))
+                            .onTapGesture { video.line = "none" }
+                            // Liquid glass (şeffaf frosted çizgi)
+                            ZStack {
+                                Circle().fill(LinearGradient(colors: [.white.opacity(0.45), Color(hex: "#AEE6FF").opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 32, height: 32)
+                                Image(systemName: "drop.fill").font(.system(size: 13)).foregroundStyle(.white.opacity(0.85))
+                            }
+                            .overlay(Circle().strokeBorder(.white.opacity(video.line == "glass" ? 1 : 0.5), lineWidth: video.line == "glass" ? 3 : 1))
+                            .onTapGesture { video.line = "glass" }
+                            // Renksiz tam şeffaf (en minimal cam)
+                            ZStack {
+                                Circle().fill(Color.white.opacity(0.06)).frame(width: 32, height: 32)
+                                Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1).frame(width: 24, height: 24)
+                            }
+                            .overlay(Circle().strokeBorder(.white.opacity(video.line == "clear" ? 1 : 0.5), lineWidth: video.line == "clear" ? 3 : 1))
+                            .onTapGesture { video.line = "clear" }
                             ForEach(colors, id: \.self) { hex in
                                 Circle().fill(Color(hex: hex)).frame(width: 32, height: 32)
+                                    .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1))
                                     .overlay(Circle().strokeBorder(.white, lineWidth: video.line.caseInsensitiveCompare(hex) == .orderedSame ? 3 : 0))
                                     .onTapGesture { video.line = hex }
                             }

@@ -7,6 +7,12 @@ enum Brand {
     static var gradient: LinearGradient {
         LinearGradient(colors: [accent, accent2], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
+    // ULTRA altını — Ultra üyelik rozeti/kartı (Google 3D + Street View katmanı)
+    static let gold = Color(red: 1.00, green: 0.80, blue: 0.30)
+    static let gold2 = Color(red: 0.76, green: 0.50, blue: 0.05)
+    static var goldGradient: LinearGradient {
+        LinearGradient(colors: [gold, gold2], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
 }
 
 // MARK: - GERÇEK iOS 26 Liquid Glass modifikatörleri
