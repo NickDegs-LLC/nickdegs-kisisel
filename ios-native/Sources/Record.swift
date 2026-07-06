@@ -192,6 +192,21 @@ struct GenerateSheet: View {
                         if !premium { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
+                            // CİHAZDA render (Düz/Flyover, 2026-07-06 Barış): telefon GPU'su üretir, buluta
+                            // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR. Olmazsa sessizce buluta düşer.
+                            if mode == "flat" || mode == "flyover" {
+                                let pts = await store.track(from: from, to: to)
+                                if pts.count >= 3 {
+                                    renderPct = 0.01
+                                    if let vurl = await LocalRouteVideo.render(points: pts, aspect: aspect,
+                                                                               onProgress: { p in Task { @MainActor in renderPct = p } }),
+                                       await store.uploadLocalVideo(vurl, ts: from, to: to, mode: mode, aspect: aspect, type: type, speed: speed) {
+                                        renderPct = 0; sending = false; done = true
+                                        store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
+                                    }
+                                    renderPct = 0   // cihazda olmadı -> buluta düş (aşağıda)
+                                }
+                            }
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
                             // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
                             let ok = rideId == nil
@@ -204,7 +219,9 @@ struct GenerateSheet: View {
                             if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
                         }
                     } label: {
-                        if sending { HStack(spacing: 8) { ProgressView()
+                        if sending && renderPct > 0 { HStack(spacing: 8) { ProgressView(value: renderPct)
+                            Text(L("Cihazda üretiliyor… %","Rendering on device… %") + "\(Int(renderPct * 100))") } }
+                        else if sending { HStack(spacing: 8) { ProgressView()
                             Text(L("Kuyruğa alınıyor…", "Queuing…")) } }
                         else if done { Label(L("Bulutta hazırlanıyor 🎬","Rendering in cloud"), systemImage: "checkmark.icloud") }
                         else { Text(rideId == nil ? L("Video oluştur","Create video")

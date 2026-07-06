@@ -293,6 +293,22 @@ enum AuthGate { case checking, valid, needLogin, offline }
                                       spd: (p["spd"] as? Double) ?? 0)
         }
     }
+    // CİHAZDA üretilen videoyu backend'e yükle -> R2 + Videolarım'da normal video gibi görünür
+    func uploadLocalVideo(_ url: URL, ts: Double, to: Double, mode: String, aspect: String, type: String, speed: String) async -> Bool {
+        guard let data = try? Data(contentsOf: url) else { return false }
+        var comp = URLComponents(string: API + "/api/videos/upload")!
+        comp.queryItems = [.init(name: "ts", value: String(Int(ts))), .init(name: "to", value: String(Int(to))),
+                           .init(name: "mode", value: mode), .init(name: "aspect", value: aspect),
+                           .init(name: "type", value: type), .init(name: "speed", value: speed)]
+        guard let u = comp.url else { return false }
+        var rq = URLRequest(url: u); rq.httpMethod = "POST"; rq.timeoutInterval = 240
+        rq.setValue("video/mp4", forHTTPHeaderField: "Content-Type")
+        authHeader.forEach { rq.setValue($1, forHTTPHeaderField: $0) }
+        guard let (_, resp) = try? await URLSession.shared.upload(for: rq, from: data),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        try? FileManager.default.removeItem(at: url)
+        return true
+    }
     // Videoyu geçmişten sil (yumuşak-sil)
     @discardableResult
     func deleteRide(_ id: String) async -> Bool {
