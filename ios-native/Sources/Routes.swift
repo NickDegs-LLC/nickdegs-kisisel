@@ -67,11 +67,30 @@ struct RoutesView: View {
         if let d = r.done, d > 0 { return d }
         return r.ts ?? 0
     }
-    var sortedRides: [Ride] {
-        if sortMode == "added" {
-            return rides.sorted { (a: Ride, b: Ride) -> Bool in addedKey(a) > addedKey(b) }
+    // ROTA BAŞINA TEK KART (2026-07-06 Barış): her üretilen video ayrı vid taşıdığı için aynı rota
+    // N kez listeleniyordu. Aynı (tarih+başlangıç) rotadan SADECE en güncelini göster
+    // (render olan öncelikli -> kilit görünür; sonra en yeni üretim). Videolarım tüm videoları göstermeye devam eder.
+    private func dedupedByRide(_ list: [Ride]) -> [Ride] {
+        var seen = Set<String>(); var out: [Ride] = []
+        let pref = list.sorted { (a: Ride, b: Ride) -> Bool in
+            if (a.rendering == true) != (b.rendering == true) { return a.rendering == true }
+            return (a.done ?? 0) > (b.done ?? 0)
         }
-        return rides   // backend zaten rota tarihine göre (yeni->eski) sıralı gönderir
+        for r in pref {
+            let key = "\(r.date)_\(Int(r.ts ?? 0))"
+            if seen.insert(key).inserted { out.append(r) }
+        }
+        // orijinal (rota tarihi) sırasını koru
+        let keep = Set(out.map { $0.id })
+        return list.filter { keep.contains($0.id) }
+    }
+
+    var sortedRides: [Ride] {
+        let base = dedupedByRide(rides)
+        if sortMode == "added" {
+            return base.sorted { (a: Ride, b: Ride) -> Bool in addedKey(a) > addedKey(b) }
+        }
+        return base   // backend zaten rota tarihine göre (yeni->eski) sıralı gönderir
     }
 
     var body: some View {
