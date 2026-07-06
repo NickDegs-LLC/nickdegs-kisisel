@@ -19,12 +19,21 @@ final class PromoCaptureTest: XCTestCase {
         // --- GİRİŞ (demo hesap) ---
         let phone = app.textFields["Telefon numarası"]
         if phone.waitForExistence(timeout: 8) {
-            phone.tap(); phone.typeText("5000000000")
+            // klavye açılana kadar dene (simülatörde odak bazen ilk dokunuşta gelmiyor)
+            for _ in 0..<4 {
+                phone.tap()
+                if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
+            }
+            phone.typeText("5000000000")
             let send = app.buttons["Kod gönder"]
             if send.waitForExistence(timeout: 3) { send.tap() }
             let code = app.textFields["6 haneli kod"]
             if code.waitForExistence(timeout: 8) {
-                code.tap(); code.typeText("314159")
+                for _ in 0..<4 {
+                    code.tap()
+                    if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
+                }
+                code.typeText("314159")
                 let verify = app.buttons["Doğrula ve gir"]
                 if verify.waitForExistence(timeout: 3) { verify.tap() }
             }

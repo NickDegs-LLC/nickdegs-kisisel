@@ -33,6 +33,7 @@ jobs:
           UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro \(" | head -1 | grep -oE "[0-9A-F-]{36}")
           [ -z "$UDID" ] && UDID=$(xcrun simctl list devices available | grep -E "iPhone" | head -1 | grep -oE "[0-9A-F-]{36}")
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl privacy "$UDID" grant location-always com.nickdegs.kisisel || true
