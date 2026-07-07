@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.*
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var camAngle by remember { mutableStateOf("") }   // 3D kamera açısı: ""=yandan, chase, pacman
     var music by remember { mutableStateOf("") }
     var line by remember { mutableStateOf("#00E5FF") }
+    var dot by remember { mutableStateOf("#FF3B30") }   // takip noktası rengi ("line" = çizgiyle aynı)
     var stock by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { stock = store.musicList() }
@@ -101,11 +103,32 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                     }
                 }
             }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(L("Takip noktası", "Tracking dot"), color = Color(0xFF9AA4B2), fontSize = 13.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Çizgiyle aynı renk
+                    Box(Modifier.size(34.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (line.startsWith("#")) Color(android.graphics.Color.parseColor(line)) else Color(0x59FFFFFF))
+                        .border(if (dot == "line") 3.dp else 1.dp, if (dot == "line") Color.White else Color(0x4DFFFFFF), androidx.compose.foundation.shape.CircleShape)
+                        .clickable { dot = "line" }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Link, L("Çizgiyle aynı", "Match line"), tint = Color(0xE6FFFFFF), modifier = Modifier.size(16.dp))
+                    }
+                    (listOf("#FF3B30") + lineColors.filter { it != "#FF3B30" }).forEach { hex ->
+                        Box(Modifier.size(34.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color(android.graphics.Color.parseColor(hex)))
+                            .border(if (dot.equals(hex, true)) 3.dp else 0.dp, Color.White, androidx.compose.foundation.shape.CircleShape)
+                            .clickable { dot = hex })
+                    }
+                }
+            }
             Button(
                 onClick = {
                     busy = true
                     scope.launch {
-                        val ok = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "")
+                        val ok = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "",
+                            if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot)
                         busy = false
                         if (ok) onClose()
                     }

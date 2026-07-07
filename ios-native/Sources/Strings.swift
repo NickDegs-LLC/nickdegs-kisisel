@@ -24,6 +24,8 @@ func currentLang() -> String {
 
 // İngilizce anahtara göre 12-dil çeviri (eksikse İngilizce'ye düşer)
 private let TRANS: [String: [String:String]] = [
+ "Tracking dot": ["tr":"Takip noktası","de":"Positionspunkt","fr":"Point de suivi","es":"Punto de seguimiento","it":"Punto di tracciamento","pt":"Ponto de rastreio","ru":"Точка позиции","ja":"トラッキングドット","zh":"跟踪圆点","ko":"추적 점","ar":"نقطة التتبع"],
+ "Match line": ["tr":"Çizgiyle aynı","de":"Wie die Linie","fr":"Comme la ligne","es":"Igual que la línea","it":"Come la linea","pt":"Igual à linha","ru":"Как линия","ja":"線と同じ","zh":"与线条一致","ko":"선과 동일","ar":"مطابق للخط"],
  "Routes · Activity · Live location": ["tr":"Rotalar · Aktivite · Canlı konum","de":"Routen · Aktivität · Live-Standort","fr":"Itinéraires · Activité · Position en direct","es":"Rutas · Actividad · Ubicación en vivo","it":"Percorsi · Attività · Posizione live","pt":"Rotas · Atividade · Localização ao vivo","ru":"Маршруты · Активность · Геопозиция","ja":"ルート · アクティビティ · 現在地","zh":"路线 · 活动 · 实时位置","ko":"경로 · 활동 · 실시간 위치","ar":"المسارات · النشاط · الموقع المباشر"],
  "Username": ["tr":"Kullanıcı","de":"Benutzer","fr":"Identifiant","es":"Usuario","it":"Utente","pt":"Usuário","ru":"Пользователь","ja":"ユーザー名","zh":"用户名","ko":"사용자 이름","ar":"اسم المستخدم"],
  "Password": ["tr":"Parola","de":"Passwort","fr":"Mot de passe","es":"Contraseña","it":"Password","pt":"Senha","ru":"Пароль","ja":"パスワード","zh":"密码","ko":"비밀번호","ar":"كلمة المرور"],

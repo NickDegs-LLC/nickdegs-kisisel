@@ -41,6 +41,9 @@ struct GenerateSheet: View {
     @State private var music = ""               // "", "stock:<id>", "upload"
     @State private var showAudioPicker = false
     @AppStorage("nd_line_color") private var lineColor = "#00E5FF"   // kullanıcının seçtiği rota çizgi rengi
+    @AppStorage("nd_dot_color") private var dotColor = "#FF3B30"     // takip noktası rengi ("line" = çizgiyle aynı)
+    // "Çizgiyle aynı" seçiliyken gönderilecek gerçek renk: glass/clear/none çizgide beyaz nokta
+    private var resolvedDot: String { dotColor == "line" ? (lineColor.hasPrefix("#") ? lineColor : "#FFFFFF") : dotColor }
 
     init(from: Double, to: Double, type: String, mode: String = "flat",
          aspect: String = "16:9", speed: String = "medium", rideId: String? = nil) {
@@ -161,6 +164,27 @@ struct GenerateSheet: View {
                       }
                     }.padding(.horizontal, 2)
 
+                    field(L("Takip noktası","Tracking dot"))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                      HStack(spacing: 12) {
+                        // Çizgiyle aynı renk
+                        ZStack {
+                            Circle().fill(lineColor.hasPrefix("#") ? Color(hex: lineColor) : Color.white.opacity(0.35)).frame(width: 30, height: 30)
+                            Image(systemName: "link").font(.system(size: 12, weight: .bold)).foregroundStyle(.white.opacity(0.9))
+                        }
+                        .overlay(Circle().strokeBorder(.white, lineWidth: dotColor == "line" ? 3 : 0))
+                        .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: dotColor == "line" ? 0 : 1))
+                        .onTapGesture { dotColor = "line" }
+                        ForEach(["#FF3B30"] + ROUTE_LINE_COLORS.filter { $0 != "#FF3B30" }, id: \.self) { hex in
+                            Circle().fill(Color(hex: hex))
+                                .frame(width: 30, height: 30)
+                                .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1))
+                                .overlay(Circle().strokeBorder(.white, lineWidth: dotColor.caseInsensitiveCompare(hex) == .orderedSame ? 3 : 0))
+                                .onTapGesture { dotColor = hex }
+                        }
+                      }
+                    }.padding(.horizontal, 2)
+
                     field(L("Müzik","Music"))
                     Menu {
                         Button(L("Yok","None")) { music = "" }
@@ -211,9 +235,9 @@ struct GenerateSheet: View {
                             // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
                             let ok = rideId == nil
                                 ? await store.generateRide(from: from, to: to, type: type, mode: mode,
-                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, camdist: camdist, cam: mode == "3d" ? camMode : "")
+                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "")
                                 : await store.regenerateRide(rideId!, type: type, mode: mode,
-                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, camdist: camdist, cam: mode == "3d" ? camMode : "")
+                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "")
                             sending = false; done = ok; localErr = !ok
                             // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür
                             if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
