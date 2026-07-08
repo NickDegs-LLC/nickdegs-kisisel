@@ -18,6 +18,14 @@ targets:
     sources:
       - path: Sources
       - path: Resources
+    # Info.plist DOSYASI (taban) + INFOPLIST_KEY_* (üstüne merge edilir).
+    # fetch/processing: iOS Ayarlar'da "Arka Plan Uygulama Yenileme" satırını görünür kılar +
+    # BGTaskScheduler ile periyodik uyanışta takip diriltilir ("asla durmasın" emniyeti).
+    info:
+      path: Info.plist
+      properties:
+        UIBackgroundModes: [location, fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers: [com.nickdegs.kisisel.refresh]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel
@@ -31,7 +39,6 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: "Fotoğraf çekip paylaşmak için."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Move Log; yürüyüş, bisiklet, motosiklet ve koşu rotalarını haritada kaydetmek, mesafe ve hızını hesaplamak ve izin verdiğin aile/arkadaşlarına canlı konumunu göstermek için konumunu kullanır. Örneğin bisiklet rotanı çizer ve eklediğin kişilerin nerede olduğunu görmesini sağlar."
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Move Log, yalnızca bir gezi kaydı açıkken konumunu arka planda kullanır; böylece ekran kapalıyken bile tüm rotan kaydedilir ve otomatik rota videona dönüştürülür. Örneğin motosiklet sürüşünde uygulama arka plandayken rotan kaydedilerek rota filmin oluşturulur. Arka plan konumu yalnızca aktif kayıt ve senin açtığın canlı konum paylaşımı sırasında kullanılır."
-        INFOPLIST_KEY_UIBackgroundModes: location
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

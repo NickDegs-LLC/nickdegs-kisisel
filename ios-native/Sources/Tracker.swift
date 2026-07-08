@@ -110,6 +110,11 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         set(true)
     }
 
+    // BGTask/arka plan uyanışında takibi dirilt: açıksa CLLocationManager'ı yeniden kur (idempotent).
+    func revive() {
+        if active, deviceId != nil { beginUpdates() }
+    }
+
     func stop() {
         mgr.stopUpdatingLocation()
         mgr.stopMonitoringSignificantLocationChanges()

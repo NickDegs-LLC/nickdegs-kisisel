@@ -1,13 +1,36 @@
 import SwiftUI
 import UserNotifications
+import BackgroundTasks
 
 // İlk açılışta bildirim izni ister + APNs token alır (video hazır olunca push için)
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    static let refreshId = "com.nickdegs.kisisel.refresh"   // BGTaskSchedulerPermittedIdentifiers ile aynı
+
+    // Periyodik arka plan yenileme talebi ("Arka Plan Uygulama Yenileme" açıkken iOS uygun anda uyandırır).
+    static func scheduleRefresh() {
+        let req = BGAppRefreshTaskRequest(identifier: refreshId)
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)   // en erken 15 dk sonra
+        try? BGTaskScheduler.shared.submit(req)                        // zaten planlıysa sessizce geçer
+    }
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // Konumla arka plan açılışında (uygulama kapalıyken hareketle uyandırma) takibi hemen dirilt.
         // Tracker.shared.init zaten 'active' ise startUpdatingLocation + significant-change'i sürdürür.
         _ = Tracker.shared
+        // BG refresh: iOS periyodik uyanışında takibi dirilt + bir sonrakini planla ("asla durmasın" emniyeti).
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.refreshId, using: nil) { task in
+            Tracker.shared.revive()
+            Self.scheduleRefresh()
+            task.setTaskCompleted(success: true)
+        }
+        Self.scheduleRefresh()
+        // Arka plana her geçişte yeniden planla (talep tazelenir) + takip diri kalsın.
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                               object: nil, queue: .main) { _ in
+            Tracker.shared.revive()
+            Self.scheduleRefresh()
+        }
         UNUserNotificationCenter.current().delegate = NotifDelegate.shared
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted { DispatchQueue.main.async { application.registerForRemoteNotifications() } }
