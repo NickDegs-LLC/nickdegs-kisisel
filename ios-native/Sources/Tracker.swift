@@ -1,4 +1,5 @@
 import CoreLocation
+import UIKit
 
 // Move Log'un kendi GPS göndericisi: arka planda konumu Traccar'a yollar (ayrı OsmAnd app gerekmez).
 final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -8,12 +9,16 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var recording = false        // manuel gezi kaydı sürüyor mu
     @Published var rideType = "moto"        // manuel gezi tipi
     @Published var rideStart: Date?         // manuel gezi başlangıcı
+    @Published var lastSentAt: Date?        // TEŞHİS: en son Traccar'a başarıyla nokta gönderilen an (UI gösterir)
+    @Published var sentCount = 0            // TEŞHİS: bu oturumda gönderilen nokta sayısı
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
     private var lastLoc: CLLocation?        // en son geçerli konum (heartbeat için)
     private var heartbeat: Timer?           // hassasiyete göre N sn'de bir zorunlu gönderim (boşluk olmasın)
     private var hbInterval: TimeInterval = 15   // heartbeat aralığı (hassasiyete göre ayarlanır)
+    private var bgSession: Any?             // iOS17+ CLBackgroundActivitySession: app'i arka planda DİRİ tutar
+                                            // (yoksa iOS runloop'u askıya alıp "belli süre sonra kapanıyor")
 
     // ALGILAMA HASSASİYETİ -> (distanceFilter metre, heartbeat sn). Free=basit; premium 3'ünden seçer.
     static func sensParams(_ s: String) -> (Double, TimeInterval) {
@@ -63,8 +68,20 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private func beginUpdates() {
         let st = mgr.authorizationStatus
         if st == .notDetermined || st == .authorizedWhenInUse { mgr.requestAlwaysAuthorization() }
+        // allowsBackgroundLocationUpdates yalnızca Info.plist'te UIBackgroundModes=location varsa açılabilir (yoksa crash).
+        let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        if modes.contains("location") {
+            mgr.allowsBackgroundLocationUpdates = true
+            mgr.pausesLocationUpdatesAutomatically = false
+        }
         mgr.startUpdatingLocation()
-        mgr.startMonitoringSignificantLocationChanges()   // app kapansa bile hareketle uyanır
+        mgr.startMonitoringSignificantLocationChanges()   // app kapansa/force-quit sonrası hareketle uyanır
+        // ASIL DÜZELTME: arka planda app'i diri tut. Bu olmadan iOS bir süre sonra runloop'u askıya
+        // alıyor -> heartbeat Timer'ı duruyor -> "belli süre sonra takip kapanıyor". CLBackgroundActivitySession
+        // mavi konum göstergesini sürdürerek app'i arka planda çalışır tutar (iOS 17+). Yalnızca izin varken kur.
+        if #available(iOS 17.0, *), st == .authorizedAlways || st == .authorizedWhenInUse {
+            if bgSession == nil { bgSession = CLBackgroundActivitySession() }
+        }
         startHeartbeat()
     }
 
@@ -97,6 +114,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         mgr.stopUpdatingLocation()
         mgr.stopMonitoringSignificantLocationChanges()
         heartbeat?.invalidate(); heartbeat = nil
+        if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
         set(false)
     }
 
@@ -113,6 +131,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         if !active {                                   // oto-takip kapalıysa GPS'i tamamen durdur
             mgr.stopUpdatingLocation()
             mgr.stopMonitoringSignificantLocationChanges()
+            if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
         }
         DispatchQueue.main.async { self.recording = false; self.rideStart = nil }
         return r
@@ -121,6 +140,14 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private func set(_ v: Bool) {
         DispatchQueue.main.async { self.active = v }
         UserDefaults.standard.set(v, forKey: "nd_tracking")
+    }
+
+    // İzin sonradan "Her Zaman"/"Kullanırken"e dönerse (kullanıcı Ayarlar'dan verdi) takibi yeniden kur.
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        let st = m.authorizationStatus
+        if (active || recording), st == .authorizedAlways || st == .authorizedWhenInUse, deviceId != nil {
+            beginUpdates()
+        }
     }
 
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
@@ -153,7 +180,17 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
             .init(name: "bearing", value: String(max(0, loc.course))),
         ]
         guard let url = comps.url else { return }
-        var req = URLRequest(url: url); req.httpMethod = "POST"
-        URLSession.shared.dataTask(with: req).resume()
+        var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 20
+        // Arka plana geçerken gönderim yarıda kalmasın: kısa bir background-task koruması.
+        var bgTask = UIBackgroundTaskIdentifier.invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "nd-gps-send") {
+            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+        }
+        URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                DispatchQueue.main.async { self?.lastSentAt = Date(); self?.sentCount += 1 }
+            }
+            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
+        }.resume()
     }
 }

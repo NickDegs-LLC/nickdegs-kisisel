@@ -154,6 +154,28 @@ struct ProfileView: View {
                             }
                         }.padding(14).glassPanel(18).tint(Brand.accent)
 
+                        // TEŞHİS: takip çalışıyor mu, en son ne zaman nokta gönderildi (kullanıcı gözüyle görür).
+                        if tracker.active {
+                            HStack(spacing: 10) {
+                                Circle().fill(tracker.lastSentAt != nil ? Color.green : Color.orange)
+                                    .frame(width: 9, height: 9)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L("Arka plan takibi açık","Background tracking on"))
+                                        .font(.system(size: 13, weight: .medium))
+                                    if let ts = tracker.lastSentAt {
+                                        Text(L("Son konum: ","Last location: ") + ts.formatted(date: .omitted, time: .standard)
+                                             + "  ·  \(tracker.sentCount) " + L("nokta","points"))
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    } else {
+                                        Text(L("Henüz konum gönderilmedi — birkaç saniye hareket et.",
+                                               "No location sent yet — move for a few seconds."))
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }.padding(.horizontal, 14).padding(.vertical, 10).glassPanel(14)
+                        }
+
                         // ALGILAMA HASSASİYETİ: Traccar sinyal aralığını kullanıcı dostu gizler.
                         // Free=basit (kilitli); premium Hassas/Dengeli/Basit seçer.
                         section(L("Algılama hassasiyeti","Detection sensitivity"))
