@@ -157,10 +157,12 @@ struct ProfileView: View {
                         // TEŞHİS: takip çalışıyor mu, en son ne zaman nokta gönderildi (kullanıcı gözüyle görür).
                         if tracker.active {
                             HStack(spacing: 10) {
-                                Circle().fill(tracker.lastSentAt != nil ? Color.green : Color.orange)
+                                Circle().fill(tracker.idleMode ? Color.blue : (tracker.lastSentAt != nil ? Color.green : Color.orange))
                                     .frame(width: 9, height: 9)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Arka plan takibi açık","Background tracking on"))
+                                    Text(tracker.idleMode
+                                         ? L("Beklemede — hareket edince otomatik devam eder","Standby — resumes automatically when you move")
+                                         : L("Arka plan takibi açık","Background tracking on"))
                                         .font(.system(size: 13, weight: .medium))
                                     if let ts = tracker.lastSentAt {
                                         Text(L("Son konum: ","Last location: ") + ts.formatted(date: .omitted, time: .standard)

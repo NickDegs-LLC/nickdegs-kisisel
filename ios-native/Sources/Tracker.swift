@@ -17,6 +17,12 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var lastError: String?       // TEŞHİS: son gönderim/konum hatası
     private var lastAcc: Double = -1        // son fix doğruluğu (telemetri)
     private var lastDebug: Date = .distantPast
+    // BEKLEME MODU (pil + durum çubuğu oku): hareketsizlikte tam GPS kapatılır -> mavi ok KAYBOLUR;
+    // significant-location hareketi yakalayınca otomatik tam moda dönülür (sürüş kaçmaz).
+    @Published var idleMode = false
+    private var idleAnchor: CLLocation?     // beklemeye girilen konum (çıkış eşiği için)
+    private var lastMovementAt = Date()
+    private let idleAfter: TimeInterval = 5 * 60   // 5 dk hareketsizlik -> bekleme
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -88,7 +94,23 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         if #available(iOS 17.0, *), st == .authorizedAlways || st == .authorizedWhenInUse {
             if bgSession == nil { bgSession = CLBackgroundActivitySession() }
         }
+        DispatchQueue.main.async { self.idleMode = false }
+        idleAnchor = nil; lastMovementAt = Date()
         startHeartbeat()
+    }
+
+    // BEKLEME: tam GPS + diri-oturum kapat (mavi ok kaybolur); significant-change açık kalır (hareketle uyanır).
+    private func enterIdle() {
+        DispatchQueue.main.async { self.idleMode = true }
+        idleAnchor = lastLoc
+        mgr.stopUpdatingLocation()
+        if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
+        // significantLocationChanges AÇIK kalıyor — hareket edince didUpdateLocations tetiklenir.
+    }
+
+    private func maybeEnterIdle() {
+        guard active, !recording, !idleMode else { return }
+        if Date().timeIntervalSince(lastMovementAt) > idleAfter { enterIdle() }
     }
 
     // 15 sn HEARTBEAT: hareket az olsa/iOS arka planda seyreltse bile son konumu en geç 15 sn'de
@@ -101,6 +123,8 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
                 guard let self else { return }
                 self.maybeDebugReport()   // telemetri konumdan BAĞIMSIZ aksın (konum hiç gelmiyorsa da görelim)
                 self.syncDiag(self.mgr)
+                self.maybeEnterIdle()     // hareketsizlikte beklemeye geç (mavi ok kaybolsun)
+                guard !self.idleMode else { return }
                 guard let loc = self.lastLoc, loc.timestamp.timeIntervalSinceNow > -(iv*2) else { return }
                 self.sendLoc(loc, force: true)
             }
@@ -185,12 +209,22 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastAcc = loc.horizontalAccuracy
         syncDiag(m)
         maybeDebugReport()
+        // hareket algıla (hız >5.4 km/h veya son gönderilenden >30 m)
+        let moving = loc.speed > 1.5 || (lastLoc.map { loc.distance(from: $0) > 30 } ?? true)
+        if moving { lastMovementAt = Date() }
+        // BEKLEMEDEYSEK: bu fix significant-change'den geldi — gerçekten uzaklaştıysak tam moda dön.
+        if idleMode {
+            if let a = idleAnchor, loc.distance(from: a) > 150 || loc.speed > 3 { beginUpdates() }
+            else if idleAnchor == nil { beginUpdates() }
+            else { return }                      // hâlâ yerinde: beklemede kal (ok kapalı)
+        }
         // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir).
         // 50→100 m gevşetildi: şehir içi/moto kaskında 50-80 m fix'ler atılıyordu; 100 m video için hâlâ makul.
         guard loc.horizontalAccuracy > 0, loc.horizontalAccuracy <= 100 else { return }  // doğruluk kötü = at
         guard loc.timestamp.timeIntervalSinceNow > -15 else { return }                    // bayat fix = at
         lastLoc = loc
         sendLoc(loc, force: false)
+        maybeEnterIdle()
     }
 
     // TEŞHİS TELEMETRİSİ: ~60 sn'de bir sunucuya durum raporu — Barış'ın telefonundaki sorunu
@@ -206,7 +240,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         let body: [String: Any] = [
             "auth": mgr.authorizationStatus.rawValue, "precise": !preciseOff,
             "recv": recvCount, "sent": sentCount, "acc": Int(lastAcc),
-            "err": lastError ?? "", "active": active, "recording": recording]
+            "err": lastError ?? "", "active": active, "recording": recording, "idle": idleMode]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req).resume()
     }
