@@ -21,6 +21,8 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     // significant-location hareketi yakalayınca otomatik tam moda dönülür (sürüş kaçmaz).
     @Published var idleMode = false
     private var idleAnchor: CLLocation?     // beklemeye girilen konum (çıkış eşiği için)
+    private var idleSpeedHits = 0           // ardışık araç-hızı fix sayacı (tek sahte doppler uyandırmasın)
+    private var idleExitAt: Date?           // beklemeden son çıkış anı (sahte uyanma sigortası için)
     private var lastMovementAt = Date()
     private let idleAfter: TimeInterval = 2 * 60   // 2 dk araç-hareketi yoksa -> bekleme (ok söner)
     // SADECE ARAÇ eşikleri (Barış 07-09: uygulama araç odaklı — yürüyüş OTOMATİK takip AÇMAZ,
@@ -115,6 +117,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private func enterIdle() {
         DispatchQueue.main.async { self.idleMode = true }
         idleAnchor = lastLoc
+        idleSpeedHits = 0
         mgr.stopUpdatingLocation()
         if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
         // significantLocationChanges AÇIK kalıyor — hareket edince didUpdateLocations tetiklenir.
@@ -122,7 +125,11 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func maybeEnterIdle() {
         guard active, !recording, !idleMode else { return }
-        if Date().timeIntervalSince(lastMovementAt) > idleAfter { enterIdle() }
+        // SAHTE UYANMA SİGORTASI: beklemeden yeni çıkıldıysa (ilk 3 dk) ve araç hareketi teyit
+        // gelmediyse 75 sn'de geri beklemeye dön — yanlış alarm okunu uzun süre yakmasın.
+        let fresh = idleExitAt.map { Date().timeIntervalSince($0) < 180 } ?? false
+        let limit: TimeInterval = fresh ? 75 : idleAfter
+        if Date().timeIntervalSince(lastMovementAt) > limit { enterIdle() }
     }
 
     // 15 sn HEARTBEAT: hareket az olsa/iOS arka planda seyreltse bile son konumu en geç 15 sn'de
@@ -225,18 +232,27 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         // üretir ama doğruluğu kötüdür, elenir) veya araç-düzeyi konum sıçraması.
         // Yürüyüş hızı hareket SAYILMAZ -> yürüyüşte takip otomatik AÇILMAZ (manuel gezi kaydı kullanılır).
         let goodFix = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= 50
-        let moving = (goodFix && loc.speed > moveSpeed) || (lastLoc.map { loc.distance(from: $0) > moveDist } ?? false)
+        // Konum sıçraması da DOĞRULUK KAPILI + iki fix'in belirsizliği düşülür: ev içinde konum
+        // "başka sokağa ışınlanınca" aradaki mesafe araç hareketi SAYILMAZ (Barış vakası, 2026-07-09).
+        let jumped = lastLoc.map { p in
+            goodFix && max(0, loc.distance(from: p) - loc.horizontalAccuracy - p.horizontalAccuracy) > moveDist
+        } ?? false
+        let moving = (goodFix && loc.speed > moveSpeed) || jumped
         if moving { lastMovementAt = Date() }
         // BEKLEMEDEYSEK: yalnızca ARAÇ başlangıcında tam moda dön —
-        // (1) bisiklet/motor hızı (doğruluk kapılı) VEYA (2) 250 m+ yolu araç temposuyla katetmiş olmak
-        // (yürüyüş 250 m'yi ~3-4 dk'da yürür -> ortalama hız düşük kalır -> UYANDIRMAZ).
+        // (1) ARDIŞIK 2 fix'te bisiklet/motor hızı (tek sahte doppler hızı uyandırmaz) VEYA
+        // (2) 250 m+ NET yolu (belirsizlikler düşülmüş) araç temposuyla katetmek — iki uç da doğruluk kapılı.
         if idleMode {
-            var vehicleStart = goodFix && loc.speed > idleExitSpeed
-            if !vehicleStart, let a = idleAnchor {
-                let d = loc.distance(from: a); let dt = loc.timestamp.timeIntervalSince(a.timestamp)
-                vehicleStart = d > idleExitDist && dt > 0 && (d / dt) > 2.2   // ~8 km/h+ ortalama = araç
+            if goodFix && loc.speed > idleExitSpeed { idleSpeedHits += 1 } else { idleSpeedHits = 0 }
+            var vehicleStart = idleSpeedHits >= 2
+            if !vehicleStart, let a = idleAnchor, goodFix,
+               a.horizontalAccuracy > 0, a.horizontalAccuracy <= 65 {
+                let d = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
+                let dt = loc.timestamp.timeIntervalSince(a.timestamp)
+                // ort. hız üst sınırı 70 m/s: zaman damgası tuhaflığından doğan "ışınlanma"yı eler
+                vehicleStart = d > idleExitDist && dt > 0 && (d / dt) > 2.2 && (d / dt) < 70
             }
-            if vehicleStart { beginUpdates() }
+            if vehicleStart { idleSpeedHits = 0; idleExitAt = Date(); beginUpdates() }
             else { return }                      // ev içi kıpırdanma / yürüyüş: beklemede kal (ok kapalı)
         }
         // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir).
