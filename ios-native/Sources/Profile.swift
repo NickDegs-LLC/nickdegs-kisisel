@@ -33,9 +33,12 @@ struct ProfileView: View {
     @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
     @State private var prof: Profile?
     @State private var friends: [Friend] = []
+    @State private var incoming: [Friend] = []
+    @State private var outgoing: [Friend] = []
     @State private var stats: Stats?
     @State private var showAvatar = false
     @State private var showAddFriend = false
+    @State private var showHandle = false
     @State private var showPaywall = false
     @State private var showDelete = false
     @State private var showRename = false
@@ -69,6 +72,20 @@ struct ProfileView: View {
                                     Text(prof?.name ?? store.me).font(.system(size: 25, weight: .bold))
                                     Image(systemName: "pencil").font(.caption).foregroundStyle(.secondary)
                                 }
+                            }.buttonStyle(.plain)
+                            // @kullanıcıadı — arkadaşların seni bununla bulur
+                            Button { showHandle = true } label: {
+                                HStack(spacing: 5) {
+                                    if let h = prof?.handle, !h.isEmpty {
+                                        Text("@\(h)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
+                                        Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary)
+                                    } else {
+                                        Image(systemName: "at").font(.caption.bold())
+                                        Text(L("Kullanıcı adı seç","Pick a username")).font(.system(size: 14, weight: .semibold))
+                                    }
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background((prof?.handle ?? "").isEmpty ? AnyShapeStyle(Brand.accent.opacity(0.18)) : AnyShapeStyle(.clear), in: Capsule())
                             }.buttonStyle(.plain)
                             Text(L("İsmin video başında görünür","Your name appears at the start of videos")).font(.caption).foregroundStyle(.secondary)
                         }.padding(.top, 8)
@@ -108,15 +125,53 @@ struct ProfileView: View {
                             .shadow(color: (ultraMember ? Brand.gold : Brand.accent).opacity(0.38), radius: 14, y: 6)
                         }.buttonStyle(.plain).smoothAppear()
 
+                        // Gelen arkadaşlık istekleri — onayla/reddet
+                        if !incoming.isEmpty {
+                            section(L("Arkadaşlık istekleri","Friend requests"))
+                            ForEach(incoming) { f in
+                                HStack(spacing: 12) {
+                                    AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold))
+                                        if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
+                                    }
+                                    Spacer()
+                                    Button {
+                                        Task { await store.respondFriend(f.username, accept: true); await reloadFriends() }
+                                    } label: {
+                                        Image(systemName: "checkmark").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
+                                            .frame(width: 38, height: 38).background(Brand.accent, in: Circle())
+                                    }.buttonStyle(.plain)
+                                    Button {
+                                        Task { await store.respondFriend(f.username, accept: false); await reloadFriends() }
+                                    } label: {
+                                        Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(.secondary)
+                                            .frame(width: 38, height: 38).background(.white.opacity(0.08), in: Circle())
+                                    }.buttonStyle(.plain)
+                                }.padding(12).glassPanel(18).smoothAppear()
+                            }
+                        }
+
                         section(L("Arkadaşlar","Friends"))
                         ForEach(friends) { f in
                             HStack(spacing: 12) {
                                 AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold))
-                                    Text("@\(f.username)").font(.caption).foregroundStyle(.secondary)
+                                    if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
                                 }
                                 Spacer()
+                            }.padding(12).glassPanel(18).smoothAppear()
+                        }
+                        ForEach(outgoing) { f in
+                            HStack(spacing: 12) {
+                                AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44).opacity(0.6)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold)).foregroundStyle(.secondary)
+                                    Text(L("İstek gönderildi — onay bekleniyor","Request sent — awaiting approval")).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "hourglass").foregroundStyle(.secondary)
                             }.padding(12).glassPanel(18).smoothAppear()
                         }
                         Button { showAddFriend = true } label: {
@@ -323,7 +378,7 @@ struct ProfileView: View {
             .navigationTitle(L("Profil","Profile"))
         }
         .task {
-            prof = await store.profile(); friends = await store.friends(); stats = await store.stats()
+            prof = await store.profile(); await reloadFriends(); stats = await store.stats()
             if prof?.premium == true { UserDefaults.standard.set(true, forKey: "nd_gift"); premium = true }
             let s = await store.summarySettings(); sumEnabled = s.enabled; sumHour = s.hour; sumVid = s.video
             if AppEnv.demo {
@@ -333,7 +388,8 @@ struct ProfileView: View {
             }
         }
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
-        .sheet(isPresented: $showAddFriend) { AddFriendSheet(onDone: { Task { friends = await store.friends() } }) }
+        .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
+        .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
@@ -356,6 +412,11 @@ struct ProfileView: View {
         }
     }
 
+    func reloadFriends() async {
+        friends = await store.friends()
+        let r = await store.friendRequests()
+        incoming = r.incoming; outgoing = r.outgoing
+    }
     func stat(_ v: String, _ k: String) -> some View {
         VStack(spacing: 4) {
             Text(v).font(.system(size: 27, weight: .bold)).foregroundStyle(Brand.gradient)
@@ -464,36 +525,142 @@ extension UIImage {
     }
 }
 
-struct AddFriendSheet: View {
+// Kullanıcı adı seçme/değiştirme — benzersiz @handle (arkadaşların seni bununla bulur)
+struct HandleSheet: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
+    var current: String
     var onDone: () -> Void
-    @State private var uname = ""; @State private var link = ""; @State private var err = false
+    @State private var text = ""
+    @State private var err: String? = nil
+    @State private var saving = false
     var body: some View {
         ZStack {
             AuroraBackground()
             VStack(alignment: .leading, spacing: 16) {
-                Text(L("Arkadaş ekle","Add friend")).font(.title2.bold())
-                Text(L("KULLANICI ADIYLA","BY USERNAME")).font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    TextField("@" + L("kullanıcı","username"), text: $uname)
-                        .textInputAutocapitalization(.never).padding(12).glassPanel(14)
-                    Button(L("Ekle","Add")) {
-                        Task { if await store.addFriend(uname.trimmingCharacters(in: CharacterSet(charactersIn: " @"))) { onDone(); dismiss() } else { err = true } }
-                    }.buttonStyle(.glassy).fixedSize()
+                Text(L("Kullanıcı adın","Your username")).font(.title2.bold())
+                Text(L("Benzersiz @kullanıcıadın — arkadaşların seni bununla bulup ekler.",
+                       "Your unique @username — friends find and add you with it."))
+                    .font(.footnote).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text("@").font(.title3.bold()).foregroundStyle(Brand.accent)
+                    TextField(L("kullaniciadi","username"), text: $text)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .keyboardType(.asciiCapable)
+                        .onChange(of: text) { _, v in
+                            text = String(v.lowercased().filter { "abcdefghijklmnopqrstuvwxyz0123456789_.".contains($0) }.prefix(20))
+                        }
+                }.padding(14).glassPanel(16)
+                Text(L("3–20 karakter: küçük harf, rakam, _ ve .","3–20 chars: lowercase letters, numbers, _ and ."))
+                    .font(.caption2).foregroundStyle(.secondary)
+                if let e = err {
+                    Text(e == "taken" ? L("Bu kullanıcı adı alınmış — başka bir tane dene","This username is taken — try another")
+                         : e == "invalid" ? L("Geçersiz kullanıcı adı","Invalid username")
+                         : L("Bağlantı hatası — tekrar dene","Connection error — try again"))
+                        .font(.footnote).foregroundStyle(.red)
                 }
-                if err { Text(L("Kullanıcı bulunamadı","User not found")).font(.footnote).foregroundStyle(.red) }
-                Divider().padding(.vertical, 8)
-                Text(L("DAVET BAĞLANTISI","INVITE LINK")).font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Text(link.isEmpty ? "…" : link).font(.footnote).lineLimit(1).padding(12).glassPanel(14)
-                    ShareLink(item: link) { Image(systemName: "square.and.arrow.up") }.disabled(link.isEmpty)
-                }
+                Button {
+                    saving = true
+                    Task {
+                        err = await store.setHandle(text)
+                        saving = false
+                        if err == nil { onDone(); dismiss() }
+                    }
+                } label: {
+                    Text(saving ? "…" : L("Kaydet","Save")).frame(maxWidth: .infinity)
+                }.buttonStyle(.glassy).disabled(text.count < 3 || saving)
                 Spacer()
             }.padding(24)
         }
-        .task { link = await store.invite() }
+        .task { text = current }
         .presentationDetents([.medium])
+    }
+}
+
+// Arkadaş ekle: @kullanıcıadıyla ARA -> istek gönder (onaylanınca arkadaş olunur)
+struct AddFriendSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    var myHandle: String
+    var onDone: () -> Void
+    @State private var q = ""
+    @State private var results: [FoundUser] = []
+    @State private var localStatus: [String:String] = [:]   // yereldeki anlık durum (istek attı/onayladı)
+    @State private var searched = false
+    var shareText: String {
+        L("Move Log'da beni ekle","Add me on Move Log") + ": @\(myHandle) · https://apps.apple.com/app/id6780779399"
+    }
+    var body: some View {
+        ZStack {
+            AuroraBackground()
+            VStack(alignment: .leading, spacing: 14) {
+                Text(L("Arkadaş ekle","Add friend")).font(.title2.bold())
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(L("@kullanıcıadı ile ara","Search by @username"), text: $q)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .onChange(of: q) { _, v in
+                            Task {
+                                let t = v.trimmingCharacters(in: CharacterSet(charactersIn: " @"))
+                                guard t.count >= 2 else { results = []; searched = false; return }
+                                try? await Task.sleep(for: .milliseconds(350))   // debounce
+                                guard q.trimmingCharacters(in: CharacterSet(charactersIn: " @")) == t else { return }
+                                results = await store.findUsers(t); searched = true
+                            }
+                        }
+                }.padding(12).glassPanel(14)
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(results) { u in
+                            HStack(spacing: 12) {
+                                AvatarView(name: u.name, avatar: u.avatar, size: 44)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(u.name).font(.system(size: 16, weight: .semibold))
+                                    if !u.handle.isEmpty { Text("@\(u.handle)").font(.caption).foregroundStyle(.secondary) }
+                                }
+                                Spacer()
+                                statusButton(u)
+                            }.padding(12).glassPanel(18)
+                        }
+                        if searched && results.isEmpty {
+                            Text(L("Sonuç yok — kullanıcı adını kontrol et","No results — check the username"))
+                                .font(.footnote).foregroundStyle(.secondary).padding(.top, 12)
+                        }
+                    }
+                }
+                if !myHandle.isEmpty {
+                    Divider().padding(.vertical, 2)
+                    Text(L("ARKADAŞINI DAVET ET","INVITE A FRIEND")).font(.caption).foregroundStyle(.secondary)
+                    ShareLink(item: shareText) {
+                        Label(L("Kullanıcı adımı paylaş","Share my username") + " (@\(myHandle))",
+                              systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassy)
+                }
+            }.padding(24)
+        }
+        .presentationDetents([.large])
+    }
+    @ViewBuilder func statusButton(_ u: FoundUser) -> some View {
+        let st = localStatus[u.username] ?? u.status
+        switch st {
+        case "friend":
+            Label(L("Arkadaş","Friend"), systemImage: "checkmark").font(.caption.bold()).foregroundStyle(.secondary)
+        case "outgoing":
+            Text(L("İstek gönderildi","Request sent")).font(.caption.bold()).foregroundStyle(.secondary)
+        case "incoming":
+            Button(L("Onayla","Accept")) {
+                Task { await store.respondFriend(u.username, accept: true); localStatus[u.username] = "friend"; onDone() }
+            }.buttonStyle(.glassy).fixedSize()
+        default:
+            Button(L("Ekle","Add")) {
+                Task {
+                    if let s = await store.friendRequest(u.username) {
+                        localStatus[u.username] = (s == "friends") ? "friend" : "outgoing"; onDone()
+                    }
+                }
+            }.buttonStyle(.glassy).fixedSize()
+        }
     }
 }
 

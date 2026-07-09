@@ -23,13 +23,19 @@ struct Position: Codable, Identifiable, Hashable {
     var avatar: Avatar? = nil           // harita pini profil fotoğrafını göstersin
     var id: String { device }
 }
-struct Profile: Codable { var username: String?; var name: String; var avatar: Avatar; var premium: Bool = false; var ultra: Bool = false }
+struct Profile: Codable { var username: String?; var name: String; var handle: String? = nil; var avatar: Avatar; var premium: Bool = false; var ultra: Bool = false }
 struct Announcement: Identifiable { var title: String; var body: String; var url: String; var ts: Int; var id: Int { ts } }
 struct ActivitySummary: Codable, Identifiable, Hashable { var date: String; var summary: String; var videoId: String? = nil; var from: Double? = nil; var to: Double? = nil; var id: String { date } }
 struct SummaryVid: Equatable { var mode = "flyover"; var speed = "medium"; var aspect = "16:9"; var cam = "orta"; var music = ""; var line = "#00E5FF" }
 struct SummaryCfg { var enabled = true; var hour = 21; var video = SummaryVid() }
 struct Friend: Codable, Identifiable, Hashable {
-    var username: String; var name: String?; var avatar: Avatar?; var online: Bool?
+    var username: String; var name: String?; var handle: String? = nil; var avatar: Avatar?; var online: Bool?
+    var id: String { username }
+}
+// Kullanıcı arama sonucu (@handle ile bul + istek durumu)
+struct FoundUser: Codable, Identifiable, Hashable {
+    var username: String; var name: String; var handle: String; var avatar: Avatar?
+    var status: String   // none | outgoing | incoming | friend
     var id: String { username }
 }
 struct Message: Codable, Identifiable, Hashable {
@@ -206,6 +212,50 @@ enum AuthGate { case checking, valid, needLogin, offline }
         guard let d = try? await req("/api/invite", method: "POST"),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return "" }
         return (o["link"] as? String) ?? ""
+    }
+    // Durum kodlu istek (handle çakışması gibi hataları ayırt etmek için)
+    private func reqCode(_ path: String, method: String = "GET", body: [String:Any]? = nil) async -> (Int, Data) {
+        var r = URLRequest(url: URL(string: API + path)!)
+        r.httpMethod = method
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        if let body { r.httpBody = try? JSONSerialization.data(withJSONObject: body) }
+        guard let (data, resp) = try? await URLSession.shared.data(for: r) else { return (0, Data()) }
+        return ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+    }
+    // Benzersiz @kullanıcıadı ayarla. nil=başarılı; değilse hata türü: "taken" | "invalid" | "network"
+    func setHandle(_ h: String) async -> String? {
+        let (code, _) = await reqCode("/api/handle", method: "PUT", body: ["handle": h])
+        switch code {
+        case 200: return nil
+        case 409: return "taken"
+        case 400: return "invalid"
+        default:  return "network"
+        }
+    }
+    // @kullanıcıadı / isimle kullanıcı ara
+    func findUsers(_ q: String) async -> [FoundUser] {
+        let esc = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
+        guard let d = try? await req("/api/users/find?q=" + esc) else { return [] }
+        return (try? dec().decode([String:[FoundUser]].self, from: d)["users"]) ?? []
+    }
+    // Arkadaşlık isteği gönder -> "requested" | "friends" | nil(hata)
+    func friendRequest(_ u: String) async -> String? {
+        let (code, d) = await reqCode("/api/friends/request", method: "POST", body: ["username": u])
+        guard code == 200, let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return nil }
+        return o["status"] as? String
+    }
+    // Gelen + giden bekleyen istekler
+    func friendRequests() async -> (incoming: [Friend], outgoing: [Friend]) {
+        guard let d = try? await req("/api/friends/requests"),
+              let o = try? dec().decode([String:[Friend]].self, from: d) else { return ([], []) }
+        return (o["incoming"] ?? [], o["outgoing"] ?? [])
+    }
+    // Gelen isteği onayla/reddet
+    @discardableResult
+    func respondFriend(_ u: String, accept: Bool) async -> Bool {
+        let (code, _) = await reqCode("/api/friends/respond", method: "POST", body: ["username": u, "accept": accept])
+        return code == 200
     }
     func chatList() async -> [Convo] {
         if AppEnv.demo { return DemoData.convos }
