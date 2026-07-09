@@ -11,6 +11,12 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var rideStart: Date?         // manuel gezi başlangıcı
     @Published var lastSentAt: Date?        // TEŞHİS: en son Traccar'a başarıyla nokta gönderilen an (UI gösterir)
     @Published var sentCount = 0            // TEŞHİS: bu oturumda gönderilen nokta sayısı
+    @Published var recvCount = 0            // TEŞHİS: iOS'tan alınan konum sayısı (filtre öncesi)
+    @Published var preciseOff = false       // TEŞHİS: "Tam Konum" kapalı (reducedAccuracy) — nokta ~km hatalı gelir
+    @Published var authAlways = true        // TEŞHİS: konum izni "Her Zaman" mı
+    @Published var lastError: String?       // TEŞHİS: son gönderim/konum hatası
+    private var lastAcc: Double = -1        // son fix doğruluğu (telemetri)
+    private var lastDebug: Date = .distantPast
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -150,18 +156,56 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     // İzin sonradan "Her Zaman"/"Kullanırken"e dönerse (kullanıcı Ayarlar'dan verdi) takibi yeniden kur.
     func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
         let st = m.authorizationStatus
+        syncDiag(m)
         if (active || recording), st == .authorizedAlways || st == .authorizedWhenInUse, deviceId != nil {
             beginUpdates()
         }
     }
 
+    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
+        DispatchQueue.main.async { self.lastError = "konum: " + error.localizedDescription }
+    }
+
+    // TEŞHİS: izin + Tam Konum durumunu yayınla (UI uyarı gösterir; asıl "hiç nokta gitmiyor" vakası
+    // Tam Konum kapalıyken doğruluğun ~km'ye düşüp TÜM noktaların filtrelenmesiydi).
+    private func syncDiag(_ m: CLLocationManager) {
+        let po = m.accuracyAuthorization == .reducedAccuracy
+        let aa = m.authorizationStatus == .authorizedAlways
+        DispatchQueue.main.async { self.preciseOff = po; self.authAlways = aa }
+        // Tam Konum kapalıysa geçici tam doğruluk iste (iOS kullanıcıya sorar)
+        if po { m.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "TrackRide") }
+    }
+
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         guard let loc = locs.last else { return }
-        // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir)
-        guard loc.horizontalAccuracy > 0, loc.horizontalAccuracy <= 50 else { return }   // doğruluk kötü = at
+        DispatchQueue.main.async { self.recvCount += 1 }
+        lastAcc = loc.horizontalAccuracy
+        syncDiag(m)
+        maybeDebugReport()
+        // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir).
+        // 50→100 m gevşetildi: şehir içi/moto kaskında 50-80 m fix'ler atılıyordu; 100 m video için hâlâ makul.
+        guard loc.horizontalAccuracy > 0, loc.horizontalAccuracy <= 100 else { return }  // doğruluk kötü = at
         guard loc.timestamp.timeIntervalSinceNow > -15 else { return }                    // bayat fix = at
         lastLoc = loc
         sendLoc(loc, force: false)
+    }
+
+    // TEŞHİS TELEMETRİSİ: ~60 sn'de bir sunucuya durum raporu — Barış'ın telefonundaki sorunu
+    // sunucudan görebilmek için (izin, tam-konum, alınan/gönderilen sayaç, son doğruluk, hata).
+    private func maybeDebugReport() {
+        guard Date().timeIntervalSince(lastDebug) > 60 else { return }
+        lastDebug = Date()
+        let tokenStr = UserDefaults.standard.string(forKey: "nd_token") ?? ""
+        guard !tokenStr.isEmpty, let url = URL(string: "https://kisisel-api.nickdegs.com/api/trackdebug") else { return }
+        var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 15
+        req.setValue("Bearer " + tokenStr, forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "auth": mgr.authorizationStatus.rawValue, "precise": !preciseOff,
+            "recv": recvCount, "sent": sentCount, "acc": Int(lastAcc),
+            "err": lastError ?? "", "active": active, "recording": recording]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     // Konumu Traccar'a gönder. force=false: ışınlanma filtresi uygula (mesafe-tabanlı normal akış).
@@ -191,9 +235,13 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         bgTask = UIApplication.shared.beginBackgroundTask(withName: "nd-gps-send") {
             if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
         }
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
+        URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
             if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                DispatchQueue.main.async { self?.lastSentAt = Date(); self?.sentCount += 1 }
+                DispatchQueue.main.async { self?.lastSentAt = Date(); self?.sentCount += 1; self?.lastError = nil }
+            } else if let err {
+                DispatchQueue.main.async { self?.lastError = "gönderim: " + err.localizedDescription }
+            } else if let http = resp as? HTTPURLResponse {
+                DispatchQueue.main.async { self?.lastError = "gönderim: HTTP \(http.statusCode)" }
             }
             if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
         }.resume()

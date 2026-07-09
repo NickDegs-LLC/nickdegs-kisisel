@@ -6,7 +6,7 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "1.2"
+    MARKETING_VERSION: "1.3"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: SZF4T3P583
     SWIFT_VERSION: "5.0"
@@ -26,6 +26,9 @@ targets:
       properties:
         UIBackgroundModes: [location, fetch, processing]
         BGTaskSchedulerPermittedIdentifiers: [com.nickdegs.kisisel.refresh]
+        # "Tam Konum" kapalıysa geçici tam doğruluk isteği için (requestTemporaryFullAccuracyAuthorization)
+        NSLocationTemporaryUsageDescriptionDictionary:
+          TrackRide: "Rota kaydı için tam konum doğruluğu gerekir; kapalıyken rotan kilometrelerce hatalı görünür ve kaydedilemez."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel

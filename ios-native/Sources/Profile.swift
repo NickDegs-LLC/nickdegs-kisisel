@@ -164,8 +164,13 @@ struct ProfileView: View {
                                         .font(.system(size: 13, weight: .medium))
                                     if let ts = tracker.lastSentAt {
                                         Text(L("Son konum: ","Last location: ") + ts.formatted(date: .omitted, time: .standard)
-                                             + "  ·  \(tracker.sentCount) " + L("nokta","points"))
+                                             + "  ·  \(tracker.sentCount)/\(tracker.recvCount) " + L("nokta","points"))
                                             .font(.caption2).foregroundStyle(.secondary)
+                                    } else if tracker.recvCount > 0 {
+                                        Text(L("GPS alınıyor (\(tracker.recvCount)) ama gönderilemiyor",
+                                               "GPS received (\(tracker.recvCount)) but not sending")
+                                             + (tracker.lastError.map { " — " + $0 } ?? ""))
+                                            .font(.caption2).foregroundStyle(.orange)
                                     } else {
                                         Text(L("Henüz konum gönderilmedi — birkaç saniye hareket et.",
                                                "No location sent yet — move for a few seconds."))
@@ -174,6 +179,28 @@ struct ProfileView: View {
                                 }
                                 Spacer()
                             }.padding(.horizontal, 14).padding(.vertical, 10).glassPanel(14)
+
+                            // KRİTİK UYARILAR: Tam Konum kapalı / izin "Her Zaman" değil → rota kaydı ÇALIŞMAZ.
+                            if tracker.preciseOff || !tracker.authAlways {
+                                Button {
+                                    if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(tracker.preciseOff
+                                                 ? L("Tam Konum kapalı — rota kaydı çalışmaz","Precise Location is off — tracking won't work")
+                                                 : L("Konum izni 'Her Zaman' değil","Location permission isn't 'Always'"))
+                                                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.orange)
+                                            Text(L("Dokun: Ayarlar → Konum → Her Zaman + Tam Konum",
+                                                   "Tap: Settings → Location → Always + Precise"))
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                    }.padding(.horizontal, 14).padding(.vertical, 10).contentShape(Rectangle())
+                                }.buttonStyle(.borderless).glassPanel(14)
+                            }
                         }
 
                         // ALGILAMA HASSASİYETİ: Traccar sinyal aralığını kullanıcı dostu gizler.
