@@ -22,14 +22,13 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var idleMode = false
     private var idleAnchor: CLLocation?     // beklemeye girilen konum (çıkış eşiği için)
     private var lastMovementAt = Date()
-    private let idleAfter: TimeInterval = 3 * 60   // 3 dk gerçek-hareketsizlik -> bekleme
-    // GERÇEK hareket eşikleri (Barış 07-09: ev içi ufak yürüyüş oku söndürmeli):
-    // ARAÇ/aktivite hızı (>2.0 m/s ≈ 7 km/h) veya belirgin yer değiştirme (>80 m) sayılır;
-    // ev içi GPS titremesi / oda-arası yürüyüş SAYILMAZ.
-    private let moveSpeed: Double = 2.0
-    private let moveDist: Double = 80
-    private let idleExitSpeed: Double = 2.5   // bekleme çıkışı: koşu/bisiklet/araç hızı
-    private let idleExitDist: Double = 250    // veya evden gerçekten uzaklaşma (yürüyüş kaydı da böyle başlar)
+    private let idleAfter: TimeInterval = 2 * 60   // 2 dk araç-hareketi yoksa -> bekleme (ok söner)
+    // SADECE ARAÇ eşikleri (Barış 07-09: uygulama araç odaklı — yürüyüş OTOMATİK takip AÇMAZ,
+    // yürüyüş kaydı MANUEL "Gezi kaydı başlat" ile yapılır; ev içi yürüyüş/GPS titremesi asla uyandırmaz):
+    private let moveSpeed: Double = 4.2       // ≈15 km/h — minimum bisiklet/motor temposu
+    private let moveDist: Double = 150        // ardışık fix arası sıçrama (araç düzeyi)
+    private let idleExitSpeed: Double = 3.6   // ≈13 km/h — bekleme çıkışı bisiklet/motor hızı
+    private let idleExitDist: Double = 250    // veya 250 m'yi araç temposuyla katetmek (aşağıda hız-doğrulamalı)
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -68,7 +67,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             guard let self, self.active, !self.recording, !self.idleMode else { return }
-            if Date().timeIntervalSince(self.lastMovementAt) > 90 { self.enterIdle() }
+            if Date().timeIntervalSince(self.lastMovementAt) > 60 { self.enterIdle() }   // cebe koyunca ok hemen sönsün
         }
         mgr.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         // Konum aralığı ALGILAMA HASSASİYETİNE göre (Hassas/Dengeli/Basit). Free=basit, premium seçer.
@@ -222,16 +221,23 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastAcc = loc.horizontalAccuracy
         syncDiag(m)
         maybeDebugReport()
-        // GERÇEK hareket algıla: araç/aktivite hızı veya belirgin yer değiştirme.
-        // Ev içi ufak yürüyüş/GPS titremesi hareket SAYILMAZ -> ok kısa sürede söner, boşuna yanmaz.
-        let moving = loc.speed > moveSpeed || (lastLoc.map { loc.distance(from: $0) > moveDist } ?? false)
+        // ARAÇ hareketi algıla: bisiklet/motor hızı (DOĞRULUK KAPILI — ev içi GPS titremesi sahte hız
+        // üretir ama doğruluğu kötüdür, elenir) veya araç-düzeyi konum sıçraması.
+        // Yürüyüş hızı hareket SAYILMAZ -> yürüyüşte takip otomatik AÇILMAZ (manuel gezi kaydı kullanılır).
+        let goodFix = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= 50
+        let moving = (goodFix && loc.speed > moveSpeed) || (lastLoc.map { loc.distance(from: $0) > moveDist } ?? false)
         if moving { lastMovementAt = Date() }
-        // BEKLEMEDEYSEK: yalnızca gerçek aktivite başlangıcında tam moda dön
-        // (koşu/bisiklet/araç hızı VEYA konumdan >250 m uzaklaşma — dışarıda yürüyüş kaydı da böyle başlar).
+        // BEKLEMEDEYSEK: yalnızca ARAÇ başlangıcında tam moda dön —
+        // (1) bisiklet/motor hızı (doğruluk kapılı) VEYA (2) 250 m+ yolu araç temposuyla katetmiş olmak
+        // (yürüyüş 250 m'yi ~3-4 dk'da yürür -> ortalama hız düşük kalır -> UYANDIRMAZ).
         if idleMode {
-            if let a = idleAnchor, loc.distance(from: a) > idleExitDist || loc.speed > idleExitSpeed { beginUpdates() }
-            else if idleAnchor == nil, loc.speed > idleExitSpeed { beginUpdates() }
-            else { return }                      // ev içi kıpırdanma: beklemede kal (ok kapalı)
+            var vehicleStart = goodFix && loc.speed > idleExitSpeed
+            if !vehicleStart, let a = idleAnchor {
+                let d = loc.distance(from: a); let dt = loc.timestamp.timeIntervalSince(a.timestamp)
+                vehicleStart = d > idleExitDist && dt > 0 && (d / dt) > 2.2   // ~8 km/h+ ortalama = araç
+            }
+            if vehicleStart { beginUpdates() }
+            else { return }                      // ev içi kıpırdanma / yürüyüş: beklemede kal (ok kapalı)
         }
         // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir).
         // 50→100 m gevşetildi: şehir içi/moto kaskında 50-80 m fix'ler atılıyordu; 100 m video için hâlâ makul.
