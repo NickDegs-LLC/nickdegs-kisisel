@@ -98,7 +98,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
             self.heartbeat?.invalidate()
             let iv = self.hbInterval
             self.heartbeat = Timer.scheduledTimer(withTimeInterval: iv, repeats: true) { [weak self] _ in
-                guard let self, let loc = self.lastLoc, loc.timestamp.timeIntervalSinceNow > -(iv*2) else { return }
+                guard let self else { return }
+                self.maybeDebugReport()   // telemetri konumdan BAĞIMSIZ aksın (konum hiç gelmiyorsa da görelim)
+                self.syncDiag(self.mgr)
+                guard let loc = self.lastLoc, loc.timestamp.timeIntervalSinceNow > -(iv*2) else { return }
                 self.sendLoc(loc, force: true)
             }
         }
