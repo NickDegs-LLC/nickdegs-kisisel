@@ -16,6 +16,7 @@ struct MapTab: View {
     @AppStorage("nd_map_satellite") private var satellite = false
     @State private var showPaywall = false
     @AppStorage("nd_people_grid") private var peopleGrid = false
+    @AppStorage("nd_people_hidden") private var peopleHidden = false   // arkadaş listesi alta indirildi mi
     @State private var cam: MapCameraPosition = .userLocation(fallback: .region(MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 41.0, longitude: 29.0),
         span: MKCoordinateSpan(latitudeDelta: 0.4, longitudeDelta: 0.4))))
@@ -79,32 +80,38 @@ struct MapTab: View {
 
                 VStack(spacing: 10) {
                     if !positions.isEmpty {
-                        // Görünüm seçeneği (liste / ızgara)
-                        Picker("", selection: $peopleGrid) {
-                            Image(systemName: "list.bullet").tag(false)
-                            Image(systemName: "square.grid.2x2").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 132)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-
-                        // Find My tarzı kişi listesi
-                        ScrollView(showsIndicators: false) {
-                            if peopleGrid {
-                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                                    ForEach(positions) { p in personCard(p, compact: true) }
-                                }.padding(.horizontal, 16)
-                            } else {
-                                VStack(spacing: 10) {
-                                    ForEach(positions) { p in personCard(p, compact: false) }
-                                }.padding(.horizontal, 16)
+                        // TUTAMAÇ — aşağı kaydır/dokun: liste gizlenir, harita tamamen kontrol edilir
+                        grabber
+                        if !peopleHidden {
+                            // Görünüm seçeneği (liste / ızgara)
+                            Picker("", selection: $peopleGrid) {
+                                Image(systemName: "list.bullet").tag(false)
+                                Image(systemName: "square.grid.2x2").tag(true)
                             }
+                            .pickerStyle(.segmented)
+                            .frame(width: 132)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+
+                            // Find My tarzı kişi listesi
+                            ScrollView(showsIndicators: false) {
+                                if peopleGrid {
+                                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                                        ForEach(positions) { p in personCard(p, compact: true) }
+                                    }.padding(.horizontal, 16)
+                                } else {
+                                    VStack(spacing: 10) {
+                                        ForEach(positions) { p in personCard(p, compact: false) }
+                                    }.padding(.horizontal, 16)
+                                }
+                            }
+                            .frame(maxHeight: 260)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-                        .frame(maxHeight: 260)
                     }
                     recordBar.padding(.horizontal, 16).padding(.bottom, 6)
                 }
+                .animation(.snappy(duration: 0.28), value: peopleHidden)
             }
             .navigationTitle(L("Canlı GPS","Live GPS"))
         }
@@ -129,6 +136,32 @@ struct MapTab: View {
         }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .onChange(of: premium) { _, v in if !v { satellite = false } }
+    }
+
+    // Arkadaş listesi tutamacı: aşağı kaydır -> gizle, yukarı kaydır/dokun -> geri getir.
+    // Gizliyken küçük bir kapsül kalır (N arkadaş) — harita alt yarıda da tam kontrol edilebilir.
+    var grabber: some View {
+        VStack(spacing: 5) {
+            Capsule().fill(.secondary.opacity(0.6)).frame(width: 42, height: 5)
+            if peopleHidden {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.up").font(.system(size: 11, weight: .bold))
+                    Text("\(positions.count) " + L("arkadaş","friends")).font(.system(size: 13, weight: .semibold))
+                }.foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, peopleHidden ? 10 : 7)
+        .padding(.horizontal, peopleHidden ? 18 : 0)
+        .frame(maxWidth: peopleHidden ? nil : .infinity)
+        .background { if peopleHidden { Capsule().fill(.ultraThinMaterial) } }
+        .contentShape(Rectangle())
+        .onTapGesture { peopleHidden.toggle() }
+        .gesture(
+            DragGesture(minimumDistance: 12).onEnded { v in
+                if v.translation.height > 18 { peopleHidden = true }
+                else if v.translation.height < -18 { peopleHidden = false }
+            }
+        )
     }
 
     @ViewBuilder var recordBar: some View {
