@@ -23,14 +23,21 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var idleAnchor: CLLocation?     // beklemeye girilen konum (çıkış eşiği için)
     private var idleSpeedHits = 0           // ardışık araç-hızı fix sayacı (tek sahte doppler uyandırmasın)
     private var idleExitAt: Date?           // beklemeden son çıkış anı (sahte uyanma sigortası için)
+    private var progAnchor: CLLocation?     // NET YER DEĞİŞTİRME çapası — hareketin asıl ölçütü (v4)
     private var lastMovementAt = Date()
     private let idleAfter: TimeInterval = 2 * 60   // 2 dk araç-hareketi yoksa -> bekleme (ok söner)
     // SADECE ARAÇ eşikleri (Barış 07-09: uygulama araç odaklı — yürüyüş OTOMATİK takip AÇMAZ,
-    // yürüyüş kaydı MANUEL "Gezi kaydı başlat" ile yapılır; ev içi yürüyüş/GPS titremesi asla uyandırmaz):
-    private let moveSpeed: Double = 4.2       // ≈15 km/h — minimum bisiklet/motor temposu
-    private let moveDist: Double = 150        // ardışık fix arası sıçrama (araç düzeyi)
+    // yürüyüş kaydı MANUEL "Gezi kaydı başlat" ile yapılır; ev içi yürüyüş/GPS titremesi asla uyandırmaz).
+    // v4 (07-10): v3'ün acc≤50 kapısı CEPTEKİ telefonda SÜRÜŞÜ öldürdü (moto'da doğruluk tipik 50-80m;
+    // hareket sayılmadı -> sürüş ORTASINDA beklemeye düştü, 50dk veri gitti). Yeni ölçüt:
+    //  • NET YER DEĞİŞTİRME: çapadan uzaklık - iki fix'in belirsizliği > progDist => hareket (evde
+    //    ışınlanma belirsizlik düşümüyle elenir; sürüşte yer değiştirme sürekli birikir, acc 150'ye kadar OK)
+    //  • DOPPLER hızı yalnızca speedAccuracy 0..3 m/s ise güvenilir (ev içi sahte hızların speedAccuracy'si kötü)
+    private let moveSpeed: Double = 4.2       // ≈15 km/h — minimum bisiklet/motor temposu (doppler, speedAcc kapılı)
+    private let progDist: Double = 120        // çapadan NET ilerleme (belirsizlik düşülmüş) = gerçek hareket
+    private let accCap: Double = 150          // hareket değerlendirmesine giren max yatay doğruluk
     private let idleExitSpeed: Double = 3.6   // ≈13 km/h — bekleme çıkışı bisiklet/motor hızı
-    private let idleExitDist: Double = 250    // veya 250 m'yi araç temposuyla katetmek (aşağıda hız-doğrulamalı)
+    private let idleExitDist: Double = 250    // veya 250 m NET yolu araç temposuyla katetmek (hız-doğrulamalı)
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -109,7 +116,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
             if bgSession == nil { bgSession = CLBackgroundActivitySession() }
         }
         DispatchQueue.main.async { self.idleMode = false }
-        idleAnchor = nil; lastMovementAt = Date()
+        idleAnchor = nil; progAnchor = nil; lastMovementAt = Date()
         startHeartbeat()
     }
 
@@ -117,7 +124,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private func enterIdle() {
         DispatchQueue.main.async { self.idleMode = true }
         idleAnchor = lastLoc
-        idleSpeedHits = 0
+        idleSpeedHits = 0; progAnchor = nil
         mgr.stopUpdatingLocation()
         if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
         // significantLocationChanges AÇIK kalıyor — hareket edince didUpdateLocations tetiklenir.
@@ -228,31 +235,36 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastAcc = loc.horizontalAccuracy
         syncDiag(m)
         maybeDebugReport()
-        // ARAÇ hareketi algıla: bisiklet/motor hızı (DOĞRULUK KAPILI — ev içi GPS titremesi sahte hız
-        // üretir ama doğruluğu kötüdür, elenir) veya araç-düzeyi konum sıçraması.
+        // ARAÇ HAREKETİ v4 — iki bağımsız GÜVENİLİR sinyal (cepte/kaskta acc 50-80m'yi de kapsar):
+        //  (a) DOPPLER hızı: speedAccuracy 0..3 m/s ise gerçek (ev içi sahte hızın speedAccuracy'si kötü/-1)
+        //  (b) NET YER DEĞİŞTİRME: prog çapasından uzaklık - iki fix'in belirsizliği > progDist
+        //      (evde ışınlanma belirsizlik düşümüyle ~0'a iner; sürüşte sürekli birikir)
         // Yürüyüş hızı hareket SAYILMAZ -> yürüyüşte takip otomatik AÇILMAZ (manuel gezi kaydı kullanılır).
-        let goodFix = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= 50
-        // Konum sıçraması da DOĞRULUK KAPILI + iki fix'in belirsizliği düşülür: ev içinde konum
-        // "başka sokağa ışınlanınca" aradaki mesafe araç hareketi SAYILMAZ (Barış vakası, 2026-07-09).
-        let jumped = lastLoc.map { p in
-            goodFix && max(0, loc.distance(from: p) - loc.horizontalAccuracy - p.horizontalAccuracy) > moveDist
-        } ?? false
-        let moving = (goodFix && loc.speed > moveSpeed) || jumped
+        let okFix = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= accCap
+        let trustedSpeed = (loc.speedAccuracy >= 0 && loc.speedAccuracy <= 3) ? loc.speed : -1
+        var progressed = false
+        if okFix {
+            if let a = progAnchor, a.horizontalAccuracy > 0 {
+                let net = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
+                if net > progDist { progressed = true; progAnchor = loc }
+            } else { progAnchor = loc }
+        }
+        let moving = trustedSpeed > moveSpeed || progressed
         if moving { lastMovementAt = Date() }
         // BEKLEMEDEYSEK: yalnızca ARAÇ başlangıcında tam moda dön —
-        // (1) ARDIŞIK 2 fix'te bisiklet/motor hızı (tek sahte doppler hızı uyandırmaz) VEYA
-        // (2) 250 m+ NET yolu (belirsizlikler düşülmüş) araç temposuyla katetmek — iki uç da doğruluk kapılı.
+        // (1) ARDIŞIK 2 fix'te güvenilir araç hızı (tek sahte doppler uyandırmaz) VEYA
+        // (2) 250 m+ NET yolu araç temposuyla katetmek (belirsizlikler düşülmüş, acc≤150 iki uçta).
         if idleMode {
-            if goodFix && loc.speed > idleExitSpeed { idleSpeedHits += 1 } else { idleSpeedHits = 0 }
+            if trustedSpeed > idleExitSpeed { idleSpeedHits += 1 } else if trustedSpeed >= 0 { idleSpeedHits = 0 }
             var vehicleStart = idleSpeedHits >= 2
-            if !vehicleStart, let a = idleAnchor, goodFix,
-               a.horizontalAccuracy > 0, a.horizontalAccuracy <= 65 {
+            if !vehicleStart, let a = idleAnchor, okFix,
+               a.horizontalAccuracy > 0, a.horizontalAccuracy <= accCap {
                 let d = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
                 let dt = loc.timestamp.timeIntervalSince(a.timestamp)
                 // ort. hız üst sınırı 70 m/s: zaman damgası tuhaflığından doğan "ışınlanma"yı eler
                 vehicleStart = d > idleExitDist && dt > 0 && (d / dt) > 2.2 && (d / dt) < 70
             }
-            if vehicleStart { idleSpeedHits = 0; idleExitAt = Date(); beginUpdates() }
+            if vehicleStart { idleSpeedHits = 0; idleExitAt = Date(); progAnchor = loc; beginUpdates() }
             else { return }                      // ev içi kıpırdanma / yürüyüş: beklemede kal (ok kapalı)
         }
         // GPS gürültü / ışınlanma filtresi (kötü sinyali minimuma indir).
