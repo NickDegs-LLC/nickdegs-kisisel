@@ -853,17 +853,39 @@ struct PaywallSheet: View {
     }
 
     func planButton(_ p: Product, period: String, badge: String?) -> some View {
-        Button {
+        // ÜCRETSİZ DENEME rozeti: StoreKit intro offer'dan canlı okunur (yıllıkta 7 gün FREE_TRIAL var,
+        // ASC'den kaldırılırsa rozet kendiliğinden kaybolur — app güncellemesi gerekmez).
+        let trial: String? = {
+            guard let intro = p.subscription?.introductoryOffer, intro.paymentMode == .freeTrial else { return nil }
+            let v = intro.period.value
+            let unit: String
+            switch intro.period.unit {
+            case .day:   unit = v == 7 ? L("7 gün","7 days") : "\(v) " + L("gün","days")
+            case .week:  unit = v == 1 ? L("7 gün","7 days") : "\(v) " + L("hafta","weeks")
+            case .month: unit = "\(v) " + L("ay","mo")
+            default:     unit = "\(v)"
+            }
+            return unit
+        }()
+        return Button {
             Task { let ok = await iap.buy(p); premium = iap.purchased; if ok { dismiss() } else { failed = true } }
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(p.displayName).font(.system(size: 16, weight: .semibold))
-                    Text("\(p.displayPrice) / \(period)").font(.subheadline).foregroundStyle(.secondary)
+                    if let trial {
+                        Text(trial + " " + L("ücretsiz dene, sonra","free trial, then") + " \(p.displayPrice) / \(period)")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    } else {
+                        Text("\(p.displayPrice) / \(period)").font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if iap.working { ProgressView() }
-                else if let badge {
+                else if trial != nil {
+                    Text(L("ÜCRETSİZ DENE","FREE TRIAL")).font(.caption2.bold()).foregroundStyle(.white)
+                        .padding(.horizontal, 9).padding(.vertical, 5).background(Brand.gradient, in: Capsule())
+                } else if let badge {
                     Text(badge).font(.caption2.bold()).foregroundStyle(.white)
                         .padding(.horizontal, 9).padding(.vertical, 5).background(Brand.gradient, in: Capsule())
                 }

@@ -112,6 +112,12 @@ private let TRANS: [String: [String:String]] = [
  "INVITE A FRIEND": ["tr":"ARKADAŞINI DAVET ET","de":"FREUND EINLADEN","fr":"INVITER UN AMI","es":"INVITA A UN AMIGO","it":"INVITA UN AMICO","pt":"CONVIDE UM AMIGO","ru":"ПРИГЛАСИТЬ ДРУГА","ja":"友だちを招待","zh":"邀请好友","ko":"친구 초대","ar":"ادعُ صديقًا"],
  "Share my username": ["tr":"Kullanıcı adımı paylaş","de":"Meinen Benutzernamen teilen","fr":"Partager mon pseudo","es":"Compartir mi usuario","it":"Condividi il mio username","pt":"Compartilhar meu usuário","ru":"Поделиться моим ником","ja":"ユーザー名を共有","zh":"分享我的用户名","ko":"내 사용자 이름 공유","ar":"شارك اسم المستخدم الخاص بي"],
  "friends": ["tr":"arkadaş","de":"Freunde","fr":"amis","es":"amigos","it":"amici","pt":"amigos","ru":"друзей","ja":"人の友だち","zh":"位好友","ko":"명의 친구","ar":"أصدقاء"],
+ // --- 7 gün ücretsiz deneme rozeti (2026-07-10) ---
+ "7 days": ["tr":"7 gün","de":"7 Tage","fr":"7 jours","es":"7 días","it":"7 giorni","pt":"7 dias","ru":"7 дней","ja":"7日間","zh":"7天","ko":"7일","ar":"7 أيام"],
+ "days": ["tr":"gün","de":"Tage","fr":"jours","es":"días","it":"giorni","pt":"dias","ru":"дней","ja":"日間","zh":"天","ko":"일","ar":"أيام"],
+ "weeks": ["tr":"hafta","de":"Wochen","fr":"semaines","es":"semanas","it":"settimane","pt":"semanas","ru":"недель","ja":"週間","zh":"周","ko":"주","ar":"أسابيع"],
+ "free trial, then": ["tr":"ücretsiz dene, sonra","de":"gratis testen, danach","fr":"d'essai gratuit, puis","es":"de prueba gratis, luego","it":"di prova gratuita, poi","pt":"de teste grátis, depois","ru":"бесплатно, затем","ja":"無料体験、その後","zh":"免费试用，之后","ko":"무료 체험, 이후","ar":"تجربة مجانية، ثم"],
+ "FREE TRIAL": ["tr":"ÜCRETSİZ DENE","de":"GRATIS TESTEN","fr":"ESSAI GRATUIT","es":"PRUEBA GRATIS","it":"PROVA GRATIS","pt":"TESTE GRÁTIS","ru":"ПРОБНЫЙ ПЕРИОД","ja":"無料体験","zh":"免费试用","ko":"무료 체험","ar":"تجربة مجانية"],
  "Add me on Move Log":["tr":"Move Log'da beni ekle","de":"Füg mich bei Move Log hinzu","fr":"Ajoute-moi sur Move Log","es":"Agrégame en Move Log","it":"Aggiungimi su Move Log","pt":"Adicione-me no Move Log","ru":"Добавь меня в Move Log","ja":"Move Logで友だち追加してね","zh":"在 Move Log 上加我","ko":"Move Log에서 나를 추가하세요","ar":"أضفني على Move Log"],
 ]
 
