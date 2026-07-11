@@ -1,4 +1,5 @@
 import CoreLocation
+import CoreMotion
 import UIKit
 
 // Move Log'un kendi GPS göndericisi: arka planda konumu Traccar'a yollar (ayrı OsmAnd app gerekmez).
@@ -40,6 +41,53 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let idleExitSpeed: Double = 3.6   // ≈13 km/h — bekleme çıkışı bisiklet/motor hızı
     private let idleExitDist: Double = 300    // çapadan NET yer değiştirme tabanı (sahte uyanma başına katlanır)
     private var wakeFails = 0                 // teyitsiz uyanma sayısı — eşiği katlar, gerçek hareket sıfırlar
+
+    // --- CORE MOTION (v6, BİRİNCİL sinyal): hareket işlemcisi cepte bile araç/bisiklet/yürüyüş
+    // ayrımını GPS'siz ve İKONSUZ bilir; geçmişi 7 gün sistemce kayıtlıdır (app kapalıyken bile).
+    // Uyanma + bekleme kararlarını artık bu verir; GPS sezgileri yalnızca izin yoksa yedek.
+    private let motionMgr = CMMotionActivityManager()
+    private var motionLive = false
+    private var lastMotionQuery = Date.distantPast
+    private var motionUsable: Bool {
+        CMMotionActivityManager.isActivityAvailable() &&
+        CMMotionActivityManager.authorizationStatus() != .denied &&
+        CMMotionActivityManager.authorizationStatus() != .restricted
+    }
+    private func startMotionLive() {
+        guard motionUsable, !motionLive else { return }
+        motionLive = true
+        motionMgr.startActivityUpdates(to: .main) { [weak self] a in
+            guard let self, let a else { return }
+            if (a.automotive || a.cycling) && a.confidence != .low {
+                self.lastMovementAt = Date(); self.wakeFails = 0   // araçtayız: bekleme sayacı hep taze
+            }
+        }
+    }
+    private func stopMotionLive() {
+        guard motionLive else { return }
+        motionLive = false
+        motionMgr.stopActivityUpdates()
+    }
+    // Son 10 dakikada araç/bisiklet hareketi var mı? (işlemci geçmişinden — app uyurken de kayıtlı)
+    private func vehicleRecently(_ done: @escaping (Bool) -> Void) {
+        guard motionUsable else { done(false); return }
+        motionMgr.queryActivityStarting(from: Date().addingTimeInterval(-600), to: Date(), to: .main) { acts, _ in
+            done((acts ?? []).contains { ($0.automotive || $0.cycling) && $0.confidence != .low })
+        }
+    }
+    // Beklemedeyken araç kontrolü — SLC fix'i, BGTask ve sunucunun sessiz push'u tetikler (30 sn'de bir).
+    private func tryMotionWake() {
+        guard active, idleMode, motionUsable,
+              Date().timeIntervalSince(lastMotionQuery) > 30 else { return }
+        lastMotionQuery = Date()
+        vehicleRecently { [weak self] vehicle in
+            guard let self, vehicle, self.active, self.idleMode else { return }
+            self.idleSpeedHits = 0; self.idleExitAt = Date(); self.wakeFails = 0
+            self.beginUpdates()
+        }
+    }
+    // Sunucu bekçisinin sessiz push'u: "cihaz yer değiştirmiş görünüyor, araçtaysan uyan".
+    func pokeWake() { tryMotionWake() }
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -119,6 +167,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         DispatchQueue.main.async { self.idleMode = false }
         idleAnchor = nil; progAnchor = nil; lastMovementAt = Date()
+        startMotionLive()   // v6: araçta olduğumuz sürece bekleme sayacını hareket işlemcisi tazeler
         startHeartbeat()
     }
 
@@ -127,6 +176,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         DispatchQueue.main.async { self.idleMode = true }
         idleAnchor = lastLoc
         idleSpeedHits = 0; progAnchor = nil
+        stopMotionLive()
         mgr.stopUpdatingLocation()
         if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
         // significantLocationChanges AÇIK kalıyor — hareket edince didUpdateLocations tetiklenir.
@@ -175,8 +225,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     // BGTask/arka plan uyanışında takibi dirilt: açıksa CLLocationManager'ı yeniden kur (idempotent).
+    // v6: BEKLEMEDEYSEK tam uyandırma YOK (ikon boşuna yanmasın) — yalnız araçtaysak uyan.
     func revive() {
-        if active, deviceId != nil { beginUpdates() }
+        guard active, deviceId != nil else { return }
+        if idleMode { tryMotionWake() } else { beginUpdates() }
     }
 
     func stop() {
@@ -269,6 +321,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         // (çapa saatler önceye ait olabilir; mesafe/8saat hiçbir zaman 2.2 m/s tutmaz, sürüş hiç uyanamıyordu).
         // Yanlış uyanmalar 75 sn sigortasıyla geri kapanır + her sahte uyanma eşiği katlar (300/600/1200/2400 m).
         if idleMode {
+            tryMotionWake()   // v6 BİRİNCİL: hareket işlemcisi "araçta" diyorsa uyan (asenkron, ikonsuz sorgu)
             if trustedSpeed > idleExitSpeed { idleSpeedHits += 1 } else if trustedSpeed >= 0 { idleSpeedHits = 0 }
             var vehicleStart = idleSpeedHits >= 2
             if !vehicleStart, let a = idleAnchor,

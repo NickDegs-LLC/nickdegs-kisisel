@@ -43,6 +43,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UserDefaults.standard.set(token, forKey: "nd_apns")
         NotificationCenter.default.post(name: .ndApns, object: token)
     }
+    // SUNUCU BEKÇİSİ (v6): sunucu beklemedeki cihazda büyük yer değiştirme görürse SESSİZ push atar —
+    // app arka planda dürtülür, hareket işlemcisine bakar, araçtaysak takip uyanır (kullanıcı hiçbir şey görmez).
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        Tracker.shared.pokeWake()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { completionHandler(.newData) }
+    }
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {}
 }
 

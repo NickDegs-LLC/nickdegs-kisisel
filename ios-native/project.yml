@@ -24,11 +24,13 @@ targets:
     info:
       path: Info.plist
       properties:
-        UIBackgroundModes: [location, fetch, processing]
+        UIBackgroundModes: [location, fetch, processing, remote-notification]
         BGTaskSchedulerPermittedIdentifiers: [com.nickdegs.kisisel.refresh]
         # "Tam Konum" kapalıysa geçici tam doğruluk isteği için (requestTemporaryFullAccuracyAuthorization)
         NSLocationTemporaryUsageDescriptionDictionary:
           TrackRide: "Rota kaydı için tam konum doğruluğu gerekir; kapalıyken rotan kilometrelerce hatalı görünür ve kaydedilemez."
+        # v6: hareket işlemcisi (araç/bisiklet algılama) — takip ancak GERÇEKTEN araçtayken uyanır/uyur
+        NSMotionUsageDescription: "Sürüşlerini otomatik algılamak için hareket verisi kullanılır: takip yalnızca araçta/bisikletteyken açılır, dururken pil ve gizlilik için kapanır."
     dependencies:
       - target: MoveLogWatch   # watch app iOS paketine gömülür (Watch/ dizinine)
     settings:
