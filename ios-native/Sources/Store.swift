@@ -80,6 +80,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
                     me = (o["username"] as? String) ?? me
                 }
                 gate = .valid
+                PhoneWatchLink.shared.push()        // saate güncel kimliği ilet
                 Task { await attestIfPossible() }   // App Attest (fire-and-forget; fail-open, kilitlemez)
             } else if code == 401 || code == 403 {
                 logout(); gate = .needLogin            // geçersiz/iptal/kopya token
@@ -133,6 +134,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
             if let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
                 token = t; me = user
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
+                PhoneWatchLink.shared.push()
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -160,6 +162,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
                let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
                 token = t; me = (o["user"] as? String) ?? ""
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
+                PhoneWatchLink.shared.push()
             } else { loginError = true }
         } catch { loginError = true }
     }

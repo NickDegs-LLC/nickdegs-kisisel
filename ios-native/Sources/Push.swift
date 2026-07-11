@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Konumla arka plan açılışında (uygulama kapalıyken hareketle uyandırma) takibi hemen dirilt.
         // Tracker.shared.init zaten 'active' ise startUpdatingLocation + significant-change'i sürdürür.
         _ = Tracker.shared
+        PhoneWatchLink.shared.activate()   // Apple Watch'a kimlik/cihaz bilgisi köprüsü
         // BG refresh: iOS periyodik uyanışında takibi dirilt + bir sonrakini planla ("asla durmasın" emniyeti).
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.refreshId, using: nil) { task in
             Tracker.shared.revive()

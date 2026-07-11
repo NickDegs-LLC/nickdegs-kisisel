@@ -50,12 +50,14 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH login.keychain
           security find-identity -v -p codesigning $KEYCHAIN_PATH
 
-      - name: Install Provisioning Profile
+      - name: Install Provisioning Profiles
         env:
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          PROVISIONING_PROFILE_WATCH_BASE64: ${{ secrets.PROVISIONING_PROFILE_WATCH_BASE64 }}
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/nickdegs.mobileprovision
+          echo "$PROVISIONING_PROFILE_WATCH_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/nickdegs-watch.mobileprovision
 
       - name: Decode ASC API Key
         env:
@@ -77,10 +79,8 @@ jobs:
             -archivePath $RUNNER_TEMP/MoveLog.xcarchive \
             -destination "generic/platform=iOS" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            TARGETED_DEVICE_FAMILY=1 \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="NickDegs Kisisel AppStore" \
             DEVELOPMENT_TEAM=SZF4T3P583 \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
 
@@ -103,7 +103,10 @@ jobs:
             <key>uploadSymbols</key><true/>
             <key>manageAppVersionAndBuildNumber</key><false/>
             <key>provisioningProfiles</key>
-            <dict><key>com.nickdegs.kisisel</key><string>${PROFILE_NAME}</string></dict>
+            <dict>
+              <key>com.nickdegs.kisisel</key><string>${PROFILE_NAME}</string>
+              <key>com.nickdegs.kisisel.watchkitapp</key><string>NickDegs Watch AppStore</string>
+            </dict>
           </dict>
           </plist>
           EOF

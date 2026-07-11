@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.nickdegs
   deploymentTarget:
     iOS: "18.0"
+    watchOS: "10.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -10,7 +11,6 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: SZF4T3P583
     SWIFT_VERSION: "5.0"
-    TARGETED_DEVICE_FAMILY: "1"
 targets:
   MoveLog:
     type: application
@@ -29,10 +29,14 @@ targets:
         # "Tam Konum" kapalıysa geçici tam doğruluk isteği için (requestTemporaryFullAccuracyAuthorization)
         NSLocationTemporaryUsageDescriptionDictionary:
           TrackRide: "Rota kaydı için tam konum doğruluğu gerekir; kapalıyken rotan kilometrelerce hatalı görünür ve kaydedilemez."
+    dependencies:
+      - target: MoveLogWatch   # watch app iOS paketine gömülür (Watch/ dizinine)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel
         TARGETED_DEVICE_FAMILY: "1"
+        # Manuel imza hedef-BAZLI (CI'daki eski CLI global override watch profilini ezerdi)
+        PROVISIONING_PROFILE_SPECIFIER: "NickDegs Kisisel AppStore"
         CODE_SIGN_ENTITLEMENTS: MoveLog.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "Move Log"
@@ -44,6 +48,33 @@ targets:
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Move Log, yalnızca bir gezi kaydı açıkken konumunu arka planda kullanır; böylece ekran kapalıyken bile tüm rotan kaydedilir ve otomatik rota videona dönüştürülür. Örneğin motosiklet sürüşünde uygulama arka plandayken rotan kaydedilerek rota filmin oluşturulur. Arka plan konumu yalnızca aktif kayıt ve senin açtığın canlı konum paylaşımı sırasında kullanılır."
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  # APPLE WATCH uygulaması: bilekten kayıt + canlı hız/mesafe/süre/NABIZ (HealthKit) + Traccar'a gönderim.
+  # Tek-hedef modern watchOS app (WKApplication) — iOS app'e gömülür, bağımsız da çalışır.
+  MoveLogWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Watch/Sources
+      - path: Watch/Resources
+    info:
+      path: Watch/Info.plist
+      properties:
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.nickdegs.kisisel
+        WKRunsIndependentlyOfCompanionApp: true
+        NSHealthShareUsageDescription: "Sürüş sırasında nabzını rota videona ve aktivite özetine eklemek için."
+        NSHealthUpdateUsageDescription: "Antrenman oturumunu (sürüş kaydını) başlatmak için."
+        NSLocationWhenInUseUsageDescription: "Bilekten başlattığın kayıtta rotanı çizmek için konum kullanılır."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel.watchkitapp
+        TARGETED_DEVICE_FAMILY: "4"
+        PROVISIONING_PROFILE_SPECIFIER: "NickDegs Watch AppStore"
+        CODE_SIGN_ENTITLEMENTS: Watch/MoveLogWatch.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "Move Log"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
   MoveLogUITests:
