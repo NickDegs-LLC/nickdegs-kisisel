@@ -35,9 +35,11 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     //  • DOPPLER hızı yalnızca speedAccuracy 0..3 m/s ise güvenilir (ev içi sahte hızların speedAccuracy'si kötü)
     private let moveSpeed: Double = 4.2       // ≈15 km/h — minimum bisiklet/motor temposu (doppler, speedAcc kapılı)
     private let progDist: Double = 120        // çapadan NET ilerleme (belirsizlik düşülmüş) = gerçek hareket
+    private let progPace: Double = 2.5        // m/s — dilim temposu: yürüyüş (~1.4) ikonu tutmaz, araç tutar
     private let accCap: Double = 150          // hareket değerlendirmesine giren max yatay doğruluk
     private let idleExitSpeed: Double = 3.6   // ≈13 km/h — bekleme çıkışı bisiklet/motor hızı
-    private let idleExitDist: Double = 250    // veya 250 m NET yolu araç temposuyla katetmek (hız-doğrulamalı)
+    private let idleExitDist: Double = 300    // çapadan NET yer değiştirme tabanı (sahte uyanma başına katlanır)
+    private var wakeFails = 0                 // teyitsiz uyanma sayısı — eşiği katlar, gerçek hareket sıfırlar
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -136,7 +138,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         // gelmediyse 75 sn'de geri beklemeye dön — yanlış alarm okunu uzun süre yakmasın.
         let fresh = idleExitAt.map { Date().timeIntervalSince($0) < 180 } ?? false
         let limit: TimeInterval = fresh ? 75 : idleAfter
-        if Date().timeIntervalSince(lastMovementAt) > limit { enterIdle() }
+        if Date().timeIntervalSince(lastMovementAt) > limit {
+            if fresh { wakeFails = min(wakeFails + 1, 3) }   // teyitsiz uyanma: sonraki uyanma eşiği katlanır
+            enterIdle()
+        }
     }
 
     // 15 sn HEARTBEAT: hareket az olsa/iOS arka planda seyreltse bile son konumu en geç 15 sn'de
@@ -246,23 +251,32 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         if okFix {
             if let a = progAnchor, a.horizontalAccuracy > 0 {
                 let net = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
-                if net > progDist { progressed = true; progAnchor = loc }
+                if net > progDist {
+                    // ARAÇ TEMPOSU şartı (v5): 120 m'lik dilim ≥2.5 m/s katedilmişse hareket say —
+                    // yürüyüş (~1.4 m/s) ikonu YAKMAZ, ağır trafikteki araç (≥9 km/h) yakar.
+                    let dt = loc.timestamp.timeIntervalSince(a.timestamp)
+                    if dt > 0 && net / dt > progPace { progressed = true }
+                    progAnchor = loc
+                }
             } else { progAnchor = loc }
         }
         let moving = trustedSpeed > moveSpeed || progressed
-        if moving { lastMovementAt = Date() }
-        // BEKLEMEDEYSEK: yalnızca ARAÇ başlangıcında tam moda dön —
-        // (1) ARDIŞIK 2 fix'te güvenilir araç hızı (tek sahte doppler uyandırmaz) VEYA
-        // (2) 250 m+ NET yolu araç temposuyla katetmek (belirsizlikler düşülmüş, acc≤150 iki uçta).
+        if moving { lastMovementAt = Date(); wakeFails = 0 }   // gerçek hareket teyidi sahte-uyanma sayacını sıfırlar
+        // BEKLEMEDEYSEK (v5): yalnızca ARAÇ başlangıcında tam moda dön —
+        // (1) ARDIŞIK 2 fix'te güvenilir araç hızı VEYA (2) çapadan NET yer değiştirme.
+        // v5 düzeltmesi (2026-07-11 cepte-sürüş-hiç-başlamadı vakası): doğruluk TAVANI YOK
+        // (belirsizlik düşümü kendini ölçekler — kaba fix daha çok yol ister) ve ORTALAMA HIZ ŞARTI YOK
+        // (çapa saatler önceye ait olabilir; mesafe/8saat hiçbir zaman 2.2 m/s tutmaz, sürüş hiç uyanamıyordu).
+        // Yanlış uyanmalar 75 sn sigortasıyla geri kapanır + her sahte uyanma eşiği katlar (300/600/1200/2400 m).
         if idleMode {
             if trustedSpeed > idleExitSpeed { idleSpeedHits += 1 } else if trustedSpeed >= 0 { idleSpeedHits = 0 }
             var vehicleStart = idleSpeedHits >= 2
-            if !vehicleStart, let a = idleAnchor, okFix,
-               a.horizontalAccuracy > 0, a.horizontalAccuracy <= accCap {
-                let d = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
-                let dt = loc.timestamp.timeIntervalSince(a.timestamp)
-                // ort. hız üst sınırı 70 m/s: zaman damgası tuhaflığından doğan "ışınlanma"yı eler
-                vehicleStart = d > idleExitDist && dt > 0 && (d / dt) > 2.2 && (d / dt) < 70
+            if !vehicleStart, let a = idleAnchor,
+               loc.horizontalAccuracy > 0, a.horizontalAccuracy > 0 {
+                if let w = idleExitAt, Date().timeIntervalSince(w) > 2 * 3600 { wakeFails = 0 }   // eski sayaç bayatlar
+                let need = idleExitDist * pow(2, Double(min(wakeFails, 3)))
+                let net = loc.distance(from: a) - loc.horizontalAccuracy - a.horizontalAccuracy
+                vehicleStart = net > need
             }
             if vehicleStart { idleSpeedHits = 0; idleExitAt = Date(); progAnchor = loc; beginUpdates() }
             else { return }                      // ev içi kıpırdanma / yürüyüş: beklemede kal (ok kapalı)
