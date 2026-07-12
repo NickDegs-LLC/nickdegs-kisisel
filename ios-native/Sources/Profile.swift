@@ -51,6 +51,7 @@ struct ProfileView: View {
     @State private var sumQueued = false
     @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
     @State private var showClubs = false
+    @State private var showLeaders = false
 
     var body: some View {
         NavigationStack {
@@ -395,6 +396,21 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
+                        // LİDERLİK (1.7): haftalık km yarışı — arkadaşlar + kulüp arkadaşları
+                        Button { showLeaders = true } label: {
+                            HStack(spacing: 12) {
+                                Text("🏆").font(.system(size: 26))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L("Liderlik tablosu","Leaderboard")).font(.system(size: 16, weight: .semibold))
+                                    Text(L("Bu hafta kim daha çok sürdü? Arkadaşlar + gruplar arası km yarışı",
+                                           "Who rode the most this week? A km race among friends and groups"))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }.padding(14).contentShape(Rectangle())
+                        }.buttonStyle(.plain).glassPanel(18)
+
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
                             Text(L("Açık","Light")).tag("light")
@@ -451,6 +467,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
         .sheet(isPresented: $showClubs) { ClubsSheet() }
+        .sheet(isPresented: $showLeaders) { LeaderboardSheet() }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

@@ -471,6 +471,15 @@ enum AuthGate { case checking, valid, needLogin, offline }
         guard let d = try? await req("/api/clubs/rename", method: "POST", body: ["id": id, "name": name]) else { return nil }
         return try? dec().decode(Club.self, from: d)
     }
+    // LİDERLİK TABLOSU (1.7): haftalık km — arkadaşlar + kulüp arkadaşları
+    func leaderboard() async -> ([LeaderRow], Int) {
+        guard let d = try? await req("/api/leaderboard"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
+              let wk = o["week"],
+              let wd = try? JSONSerialization.data(withJSONObject: wk),
+              let rows = try? dec().decode([LeaderRow].self, from: wd) else { return ([], 0) }
+        return (rows, (o["me"] as? Int) ?? 0)
+    }
     // Şimdiye kadarki günü hemen özetle (on-demand)
     @discardableResult
     func summaryNow(premium: Bool) async -> Bool {
