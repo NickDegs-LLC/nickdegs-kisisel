@@ -1,4 +1,6 @@
 import SwiftUI
+import StoreKit
+import UIKit
 import AVKit
 import AVFoundation
 import UIKit
@@ -209,7 +211,24 @@ struct VideosView: View {
         }
         .sheet(item: $playerBox) { box in
             VideoPlayer(player: box.player).ignoresSafeArea()
-                .onAppear { box.player.play() }.onDisappear { box.player.pause() }
+                .onAppear { box.player.play() }
+                .onDisappear {
+                    box.player.pause()
+                    maybeAskReview()   // ASO: ilk videosunu izleyen mutlu anında puan istenir (iOS yılda 3 kez sınırlar)
+                }
+        }
+    }
+
+    // PUAN İSTEME: kullanıcı bir videoyu izleyip kapattığında — ürünün en tatmin edici anı.
+    // Yalnızca 1 kez tetiklenir (nd_review_asked); iOS zaten gösterimi yılda 3 ile sınırlar.
+    func maybeAskReview() {
+        let d = UserDefaults.standard
+        guard !d.bool(forKey: "nd_review_asked") else { return }
+        d.set(true, forKey: "nd_review_asked")
+        if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                AppStore.requestReview(in: scene)
+            }
         }
     }
 
