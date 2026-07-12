@@ -3,7 +3,8 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject var store: Store
     @AppStorage("nd_scheme") var scheme = "dark"
-    @State private var cc = "+90"
+    @State private var region = CountryDial.defaultRegion   // ülke seçici (WhatsApp tarzı) — cihaz bölgesi varsayılan
+    @State private var showCountry = false
     @State private var phone = ""
     @State private var code = ""
     @State private var codeSent = false
@@ -14,8 +15,7 @@ struct LoginView: View {
     enum Field { case phone, code }
 
     private var fullPhone: String {
-        let c = cc.hasPrefix("+") ? cc : "+" + cc
-        return c + phone.filter(\.isNumber)
+        "+" + (CountryDial.dial[region] ?? "90") + phone.filter(\.isNumber)
     }
 
     var body: some View {
@@ -40,10 +40,15 @@ struct LoginView: View {
                 if !codeSent {
                     // 1) Telefon numarası
                     HStack(spacing: 10) {
-                        TextField("+90", text: $cc)
-                            .frame(width: 64)
-                            .multilineTextAlignment(.center)
-                            .keyboardType(.phonePad)
+                        // ÜLKE SEÇİCİ (2026-07-12): eski elle-yazılan "+90" kutusu yabancı kullanıcıyı
+                        // engelliyordu — bayraklı/aranabilir liste, cihaz bölgesine göre otomatik varsayılan.
+                        Button { focus = nil; showCountry = true } label: {
+                            HStack(spacing: 5) {
+                                Text(CountryDial.flag(region))
+                                Text("+" + (CountryDial.dial[region] ?? "")).foregroundStyle(.primary)
+                                Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }.buttonStyle(.plain)
                         Divider().frame(height: 22)
                         TextField(L("Telefon numarası", "Phone number"), text: $phone)
                             .keyboardType(.phonePad)
@@ -127,6 +132,7 @@ struct LoginView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        .sheet(isPresented: $showCountry) { CountryPickerSheet(region: $region) }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()

@@ -118,6 +118,9 @@ private let TRANS: [String: [String:String]] = [
  "weeks": ["tr":"hafta","de":"Wochen","fr":"semaines","es":"semanas","it":"settimane","pt":"semanas","ru":"недель","ja":"週間","zh":"周","ko":"주","ar":"أسابيع"],
  "free trial, then": ["tr":"ücretsiz dene, sonra","de":"gratis testen, danach","fr":"d'essai gratuit, puis","es":"de prueba gratis, luego","it":"di prova gratuita, poi","pt":"de teste grátis, depois","ru":"бесплатно, затем","ja":"無料体験、その後","zh":"免费试用，之后","ko":"무료 체험, 이후","ar":"تجربة مجانية، ثم"],
  "FREE TRIAL": ["tr":"ÜCRETSİZ DENE","de":"GRATIS TESTEN","fr":"ESSAI GRATUIT","es":"PRUEBA GRATIS","it":"PROVA GRATIS","pt":"TESTE GRÁTIS","ru":"ПРОБНЫЙ ПЕРИОД","ja":"無料体験","zh":"免费试用","ko":"무료 체험","ar":"تجربة مجانية"],
+ "Choose country": ["tr":"Ülke seç","de":"Land wählen","fr":"Choisir le pays","es":"Elegir país","it":"Scegli paese","pt":"Escolher país","ru":"Выберите страну","ja":"国を選択","zh":"选择国家/地区","ko":"국가 선택","ar":"اختر الدولة"],
+ "Search country or code": ["tr":"Ülke veya kod ara","de":"Land oder Vorwahl suchen","fr":"Rechercher pays ou indicatif","es":"Buscar país o código","it":"Cerca paese o prefisso","pt":"Buscar país ou código","ru":"Поиск страны или кода","ja":"国名または番号を検索","zh":"搜索国家或区号","ko":"국가 또는 코드 검색","ar":"ابحث عن الدولة أو الرمز"],
+ "Cancel": ["tr":"Vazgeç","de":"Abbrechen","fr":"Annuler","es":"Cancelar","it":"Annulla","pt":"Cancelar","ru":"Отмена","ja":"キャンセル","zh":"取消","ko":"취소","ar":"إلغاء"],
  "Add me on Move Log":["tr":"Move Log'da beni ekle","de":"Füg mich bei Move Log hinzu","fr":"Ajoute-moi sur Move Log","es":"Agrégame en Move Log","it":"Aggiungimi su Move Log","pt":"Adicione-me no Move Log","ru":"Добавь меня в Move Log","ja":"Move Logで友だち追加してね","zh":"在 Move Log 上加我","ko":"Move Log에서 나를 추가하세요","ar":"أضفني على Move Log"],
 ]
 
