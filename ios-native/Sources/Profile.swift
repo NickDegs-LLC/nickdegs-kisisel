@@ -39,6 +39,7 @@ struct ProfileView: View {
     @State private var showAvatar = false
     @State private var showAddFriend = false
     @State private var showHandle = false
+    @State private var showFeedback = false
     @State private var showPaywall = false
     @State private var showDelete = false
     @State private var showRename = false
@@ -367,6 +368,21 @@ struct ProfileView: View {
                             }
                         }.padding(14).glassPanel(18).tint(Brand.accent)
 
+                        // FİKİR KUTUSU (1.7): motorcular uygulamayı birlikte şekillendirir
+                        Button { showFeedback = true } label: {
+                            HStack(spacing: 12) {
+                                Text("💡").font(.system(size: 26))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L("Fikrini söyle","Share your idea")).font(.system(size: 16, weight: .semibold))
+                                    Text(L("Bu uygulama motorcuların — fikrin doğrudan geliştiriciye ulaşır",
+                                           "This app belongs to riders — your idea goes straight to the developer"))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }.padding(14).contentShape(Rectangle())
+                        }.buttonStyle(.plain).glassPanel(18)
+
                         Button(L("Çıkış","Sign out")) { store.logout() }
                             .buttonStyle(.glassy).padding(.top, 8).tint(.red)
 
@@ -390,6 +406,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
+        .sheet(isPresented: $showFeedback) { FeedbackSheet() }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
@@ -522,6 +539,61 @@ extension UIImage {
         if f >= 1 { return self }
         let sz = CGSize(width: size.width * f, height: size.height * f)
         return UIGraphicsImageRenderer(size: sz).image { _ in draw(in: CGRect(origin: .zero, size: sz)) }
+    }
+}
+
+// FİKİR KUTUSU: kullanıcının özellik fikri doğrudan geliştiriciye gider (Telegram/WhatsApp'a anında)
+struct FeedbackSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    @State private var text = ""
+    @State private var sending = false
+    @State private var done = false
+    @State private var failed = false
+    var body: some View {
+        ZStack {
+            AuroraBackground()
+            VStack(alignment: .leading, spacing: 14) {
+                if done {
+                    VStack(spacing: 12) {
+                        Text("🙌").font(.system(size: 52))
+                        Text(L("Fikrin bana ulaştı — teşekkürler!","Got your idea — thank you!"))
+                            .font(.title3.bold()).multilineTextAlignment(.center)
+                        Text(L("Mantıklı bulursam bir sonraki güncellemede görebilirsin.",
+                               "If it makes sense, you might see it in the next update."))
+                            .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button(L("Kapat","Close")) { dismiss() }.buttonStyle(.glassy).padding(.top, 8)
+                    }.frame(maxWidth: .infinity).padding(.top, 40)
+                } else {
+                    Text("💡 " + L("Fikrini söyle","Share your idea")).font(.title2.bold())
+                    Text(L("Aklındaki özelliği, öneriyi veya derdini yaz — doğrudan geliştiriciye ulaşır. Samimi ol, biz de öyleyiz. 🏍️",
+                           "Write the feature, suggestion or gripe on your mind — it goes straight to the developer. Be real, we are too. 🏍️"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                    TextEditor(text: $text)
+                        .frame(minHeight: 130).padding(10).scrollContentBackground(.hidden)
+                        .glassPanel(16)
+                    HStack {
+                        Text("\(text.count)/1000").font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        if failed { Text(L("Gönderilemedi — tekrar dene","Couldn't send — try again")).font(.caption2).foregroundStyle(.red) }
+                    }
+                    Button {
+                        sending = true; failed = false
+                        Task {
+                            let ok = await store.sendFeedback(String(text.prefix(1000)))
+                            sending = false
+                            if ok { withAnimation { done = true } } else { failed = true }
+                        }
+                    } label: {
+                        HStack { if sending { ProgressView().tint(.white) }
+                            Text(L("Gönder","Send")) }.frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassyProminent())
+                    .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
+                    Spacer()
+                }
+            }.padding(24)
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

@@ -254,6 +254,12 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let o = try? dec().decode([String:[Friend]].self, from: d) else { return ([], []) }
         return (o["incoming"] ?? [], o["outgoing"] ?? [])
     }
+    // Fikir kutusu: kullanıcı fikri doğrudan geliştiriciye gider
+    @discardableResult
+    func sendFeedback(_ text: String) async -> Bool {
+        let (code, _) = await reqCode("/api/feedback", method: "POST", body: ["text": text])
+        return code == 200
+    }
     // Gelen isteği onayla/reddet
     @discardableResult
     func respondFriend(_ u: String, accept: Bool) async -> Bool {
