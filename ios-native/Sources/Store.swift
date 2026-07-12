@@ -426,6 +426,18 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let _ = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return true
     }
+    // GRUP SÜRÜŞ video tercihi (1.7): both=ortak+kendi | group=sadece ortak | solo=sadece kendi
+    func groupVideoPref() async -> String {
+        guard let d = try? await req("/api/groupvideo"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return "both" }
+        return (o["pref"] as? String) ?? "both"
+    }
+    @discardableResult
+    func setGroupVideoPref(_ pref: String) async -> Bool {
+        guard let d = try? await req("/api/groupvideo", method: "PUT", body: ["pref": pref]),
+              let _ = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
+        return true
+    }
     // Şimdiye kadarki günü hemen özetle (on-demand)
     @discardableResult
     func summaryNow(premium: Bool) async -> Bool {
