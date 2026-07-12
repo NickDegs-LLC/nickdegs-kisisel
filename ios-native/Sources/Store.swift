@@ -32,6 +32,11 @@ struct Friend: Codable, Identifiable, Hashable {
     var username: String; var name: String?; var handle: String? = nil; var avatar: Avatar?; var online: Bool?
     var id: String { username }
 }
+// MOTORCU GRUBU / KULÜP (1.8): davet koduyla katıl, arkadaşlık şartsız otomatik grup videosu
+struct Club: Codable, Identifiable, Hashable {
+    var id: String; var name: String; var owner: String; var member_count: Int; var created: Int
+    var code: String? = nil; var members: [Friend]? = nil
+}
 // Kullanıcı arama sonucu (@handle ile bul + istek durumu)
 struct FoundUser: Codable, Identifiable, Hashable {
     var username: String; var name: String; var handle: String; var avatar: Avatar?
@@ -437,6 +442,34 @@ enum AuthGate { case checking, valid, needLogin, offline }
         guard let d = try? await req("/api/groupvideo", method: "PUT", body: ["pref": pref]),
               let _ = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return true
+    }
+    // MOTORCU GRUPLARI (1.8)
+    func clubs() async -> [Club] {
+        (try? dec().decode([String:[Club]].self, from: await req("/api/clubs"))["clubs"]) ?? []
+    }
+    func createClub(_ name: String) async -> Club? {
+        guard let d = try? await req("/api/clubs", method: "POST", body: ["name": name]) else { return nil }
+        return try? dec().decode(Club.self, from: d)
+    }
+    func joinClub(_ code: String) async -> Club? {
+        guard let d = try? await req("/api/clubs/join", method: "POST", body: ["code": code]) else { return nil }
+        return try? dec().decode(Club.self, from: d)
+    }
+    func clubDetail(_ id: String) async -> Club? {
+        guard let d = try? await req("/api/clubs/\(id)") else { return nil }
+        return try? dec().decode(Club.self, from: d)
+    }
+    @discardableResult
+    func leaveClub(_ id: String) async -> Bool {
+        (try? await req("/api/clubs/leave", method: "POST", body: ["id": id])) != nil
+    }
+    @discardableResult
+    func kickClubMember(_ id: String, _ user: String) async -> Bool {
+        (try? await req("/api/clubs/kick", method: "POST", body: ["id": id, "user": user])) != nil
+    }
+    func renameClub(_ id: String, _ name: String) async -> Club? {
+        guard let d = try? await req("/api/clubs/rename", method: "POST", body: ["id": id, "name": name]) else { return nil }
+        return try? dec().decode(Club.self, from: d)
     }
     // Şimdiye kadarki günü hemen özetle (on-demand)
     @discardableResult

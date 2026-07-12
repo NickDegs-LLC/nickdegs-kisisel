@@ -50,6 +50,7 @@ struct ProfileView: View {
     @State private var showSumVid = false
     @State private var sumQueued = false
     @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
+    @State private var showClubs = false
 
     var body: some View {
         NavigationStack {
@@ -379,6 +380,21 @@ struct ProfileView: View {
                         }.padding(14).glassPanel(18)
                         .onTapGesture { if !premium { showPaywall = true } }
 
+                        // MOTORCU GRUPLARI (1.8): kulüp kur/katıl — arkadaşlık şartsız otomatik grup videosu
+                        Button { showClubs = true } label: {
+                            HStack(spacing: 12) {
+                                Text("🏍️").font(.system(size: 26))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L("Motorcu grupların","Your rider groups")).font(.system(size: 16, weight: .semibold))
+                                    Text(L("Grup kur, davet koduyla topla — birlikte sürünce video hepinizde",
+                                           "Create a group, invite with a code — ride together, everyone gets the video"))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }.padding(14).contentShape(Rectangle())
+                        }.buttonStyle(.plain).glassPanel(18)
+
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
                             Text(L("Açık","Light")).tag("light")
@@ -434,6 +450,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
+        .sheet(isPresented: $showClubs) { ClubsSheet() }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
