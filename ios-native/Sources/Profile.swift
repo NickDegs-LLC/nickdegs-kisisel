@@ -52,6 +52,10 @@ struct ProfileView: View {
     @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
     @State private var showClubs = false
     @State private var showLeaders = false
+    @State private var showSafety = false
+    @State private var showBadges = false
+    @State private var showWrapped = false
+    @State private var showSharedRoutes = false
 
     var body: some View {
         NavigationStack {
@@ -411,6 +415,46 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
+                        // 1.8: güvenlik + rozet + wrapped + gelen rotalar
+                        section(L("Sürüş dünyan","Your riding world"))
+                        VStack(spacing: 0) {
+                            Button { showSafety = true } label: {
+                                HStack(spacing: 12) {
+                                    Text("🛡️").font(.system(size: 22))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(L("Güvenli sürüş","Ride safety")).font(.system(size: 15, weight: .semibold))
+                                        Text(L("'Sağ salim vardı' bildirimi sevdiğine gitsin","Auto 'safe and sound' note to your person"))
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }.padding(.vertical, 10).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                            Divider()
+                            Button { showBadges = true } label: {
+                                HStack(spacing: 12) {
+                                    Text("🏅").font(.system(size: 22))
+                                    Text(L("Rozetlerim","My badges")).font(.system(size: 15, weight: .semibold))
+                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }.padding(.vertical, 10).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                            Divider()
+                            Button { showSharedRoutes = true } label: {
+                                HStack(spacing: 12) {
+                                    Text("🗺️").font(.system(size: 22))
+                                    Text(L("Sana gelen rotalar","Routes shared with you")).font(.system(size: 15, weight: .semibold))
+                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }.padding(.vertical, 10).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                            Divider()
+                            Button { showWrapped = true } label: {
+                                HStack(spacing: 12) {
+                                    Text("🎁").font(.system(size: 22))
+                                    Text(L("Yıl özetim","My year wrapped")).font(.system(size: 15, weight: .semibold))
+                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }.padding(.vertical, 10).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }.padding(.horizontal, 14).padding(.vertical, 4).glassPanel(18)
+
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
                             Text(L("Açık","Light")).tag("light")
@@ -468,6 +512,10 @@ struct ProfileView: View {
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
         .sheet(isPresented: $showClubs) { ClubsSheet() }
         .sheet(isPresented: $showLeaders) { LeaderboardSheet() }
+        .sheet(isPresented: $showSafety) { SafetySheet() }
+        .sheet(isPresented: $showBadges) { BadgesSheet() }
+        .sheet(isPresented: $showWrapped) { WrappedSheet() }
+        .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

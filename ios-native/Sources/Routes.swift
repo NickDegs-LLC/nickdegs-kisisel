@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct PlayerBox: Identifiable { let id = UUID(); let player: AVPlayer }
 
 struct RoutesView: View {
+    @State private var shareRide: Ride? = nil
     @EnvironmentObject var store: Store
     @State private var rides: [Ride] = []
     @State private var playerBox: PlayerBox?
@@ -151,7 +152,10 @@ struct RoutesView: View {
                                 }
                             }
                             .padding(14).glassPanel(20).smoothAppear()
-                            .contextMenu {   // uzun bas → sil
+                            .contextMenu {   // uzun bas → paylaş/sil
+                                Button { shareRide = r } label: {
+                                    Label(L("Rotayı arkadaşına gönder", "Send route to a friend"), systemImage: "paperplane")
+                                }
                                 Button(role: .destructive) { pendingDelete = r } label: {
                                     Label(L("Geçmişten sil", "Delete"), systemImage: "trash")
                                 }
@@ -161,6 +165,7 @@ struct RoutesView: View {
                 }
                 .refreshable { await reload() }
             }
+            .sheet(item: $shareRide) { r in ShareRouteSheet(rideId: r.id) }
             .navigationTitle("Move Log")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

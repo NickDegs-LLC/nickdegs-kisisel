@@ -37,6 +37,16 @@ struct Club: Codable, Identifiable, Hashable {
     var id: String; var name: String; var owner: String; var member_count: Int; var created: Int
     var code: String? = nil; var members: [Friend]? = nil
 }
+// 1.8: paylaşılan rota (gelen kutusu)
+struct SharedRoute: Codable, Identifiable, Hashable {
+    var id: String; var from_name: String; var from: String
+    var km: Double?; var date: String?; var ts: Int; var ride_id: String; var ridden: Bool
+}
+// 1.8: yıl özeti
+struct WrappedStats: Codable {
+    var year: Int; var km: Double; var rides: Int; var hours: Double
+    var longest_km: Double; var night_rides: Int; var badges: [String]
+}
 // Kullanıcı arama sonucu (@handle ile bul + istek durumu)
 struct FoundUser: Codable, Identifiable, Hashable {
     var username: String; var name: String; var handle: String; var avatar: Avatar?
@@ -479,6 +489,46 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let wd = try? JSONSerialization.data(withJSONObject: wk),
               let rows = try? dec().decode([LeaderRow].self, from: wd) else { return ([], 0) }
         return (rows, (o["me"] as? Int) ?? 0)
+    }
+    // 1.8: GÜVENLİK PAKETİ
+    func safety() async -> (buddy: String, arrive: Bool, longstop: Bool, buddyName: String) {
+        guard let d = try? await req("/api/safety"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return ("", true, true, "") }
+        let bp = o["buddy_profile"] as? [String:Any]
+        return (o["buddy"] as? String ?? "", o["arrive"] as? Bool ?? true,
+                o["longstop"] as? Bool ?? true, bp?["name"] as? String ?? "")
+    }
+    @discardableResult
+    func setSafety(buddy: String?, arrive: Bool?, longstop: Bool?) async -> Bool {
+        var b: [String:Any] = [:]
+        if let x = buddy { b["buddy"] = x }
+        if let x = arrive { b["arrive"] = x }
+        if let x = longstop { b["longstop"] = x }
+        return (try? await req("/api/safety", method: "PUT", body: b)) != nil
+    }
+    // 1.8: ROZETLER
+    func badges() async -> [String] {
+        guard let d = try? await req("/api/badges"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return [] }
+        return o["badges"] as? [String] ?? []
+    }
+    // 1.8: RIDE WRAPPED
+    func wrapped() async -> WrappedStats? {
+        guard let d = try? await req("/api/wrapped") else { return nil }
+        return try? dec().decode(WrappedStats.self, from: d)
+    }
+    // 1.8: ROTA PAYLAŞIMI
+    @discardableResult
+    func shareRoute(_ rideId: String, toUser: String? = nil, toClub: String? = nil) async -> Bool {
+        var b: [String:Any] = ["ride_id": rideId]
+        if let u = toUser { b["to_user"] = u }
+        if let c = toClub { b["to_club"] = c }
+        guard let d = try? await req("/api/routes/share", method: "POST", body: b),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
+        return (o["ok"] as? Bool) ?? false
+    }
+    func sharedRoutes() async -> [SharedRoute] {
+        (try? dec().decode([String:[SharedRoute]].self, from: await req("/api/routes/shared"))["routes"]) ?? []
     }
     // Şimdiye kadarki günü hemen özetle (on-demand)
     @discardableResult
