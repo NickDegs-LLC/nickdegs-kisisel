@@ -34,16 +34,16 @@ struct Friend: Codable, Identifiable, Hashable {
 }
 // MOTORCU GRUBU / KULÜP (1.8): davet koduyla katıl, arkadaşlık şartsız otomatik grup videosu
 struct Club: Codable, Identifiable, Hashable {
-    var id: String; var name: String; var owner: String; var member_count: Int; var created: Int
+    var id: String; var name: String; var owner: String; var memberCount: Int; var created: Int
     var code: String? = nil; var members: [Friend]? = nil
 }
 // 1.8: canlı takip telemetrisi
 struct LiveTelemetry: Codable {
     var lat: Double; var lon: Double; var spd: Double; var hr: Int?
-    var alt: Int; var age: Int; var today_km: Double; var name: String
+    var alt: Int; var age: Int; var todayKm: Double; var name: String
     var batt: Int? = nil; var charging: Bool? = nil; var course: Int? = nil; var acc: Int? = nil
-    var trail: [[Double]]? = nil; var ride_min: Int? = nil
-    var avg_kmh: Double? = nil; var max_kmh: Double? = nil
+    var trail: [[Double]]? = nil; var rideMin: Int? = nil
+    var avgKmh: Double? = nil; var maxKmh: Double? = nil
     var temp: Double? = nil; var wcode: Int? = nil
 }
 struct ClubRider: Codable, Identifiable {
@@ -53,13 +53,13 @@ struct ClubRider: Codable, Identifiable {
 }
 // 1.8: paylaşılan rota (gelen kutusu)
 struct SharedRoute: Codable, Identifiable, Hashable {
-    var id: String; var from_name: String; var from: String
-    var km: Double?; var date: String?; var ts: Int; var ride_id: String; var ridden: Bool
+    var id: String; var fromName: String; var from: String
+    var km: Double?; var date: String?; var ts: Int; var rideId: String; var ridden: Bool
 }
 // 1.8: yıl özeti
 struct WrappedStats: Codable {
     var year: Int; var km: Double; var rides: Int; var hours: Double
-    var longest_km: Double; var night_rides: Int; var badges: [String]
+    var longestKm: Double; var nightRides: Int; var badges: [String]
 }
 // Kullanıcı arama sonucu (@handle ile bul + istek durumu)
 struct FoundUser: Codable, Identifiable, Hashable {

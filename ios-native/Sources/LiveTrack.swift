@@ -73,10 +73,10 @@ struct LiveTrackView: View {
                                             .font(.system(size: 12)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    if let rm = t.ride_min, rm > 0 {
+                                    if let rm = t.rideMin, rm > 0 {
                                         Text("⏱️ \(rm) " + L("dk","min")).font(.system(size: 12)).foregroundStyle(.secondary)
                                     }
-                                    if let av = t.avg_kmh, let mx = t.max_kmh, mx > 0 {
+                                    if let av = t.avgKmh, let mx = t.maxKmh, mx > 0 {
                                         Text(String(format: "⌀%.0f · ↑%.0f", av, mx)).font(.system(size: 12)).foregroundStyle(.secondary)
                                     }
                                 }.padding(.horizontal, 12).padding(.vertical, 7).glassPanel(12)
@@ -85,7 +85,7 @@ struct LiveTrackView: View {
                                 chip("🏍️", String(format: "%.0f", t.spd), "km/h")
                                 chip("❤️", t.hr != nil ? "\(t.hr!)" : "—", L("nabız","bpm"))
                                 chip((t.charging ?? false) ? "⚡" : "🔋", t.batt != nil ? "%\(t.batt!)" : "—", L("batarya","battery"))
-                                chip("🛣️", String(format: "%.1f", t.today_km), L("bugün km","km today"))
+                                chip("🛣️", String(format: "%.1f", t.todayKm), L("bugün km","km today"))
                                 chip("📡", t.age < 60 ? "\(t.age)s" : "\(t.age/60)dk", L("sinyal","signal"))
                             }
                             if t.age > 180 {

@@ -117,7 +117,7 @@ struct ClubsSheet: View {
                                     Text("🏍️").font(.system(size: 24))
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(c.name).font(.system(size: 16, weight: .semibold))
-                                        Text("\(c.member_count) " + L("üye","members"))
+                                        Text("\(c.memberCount) " + L("üye","members"))
                                             .font(.caption2).foregroundStyle(.secondary)
                                     }
                                     Spacer()

@@ -157,8 +157,8 @@ struct WrappedSheet: View {
                             stat("🛣️", L("Toplam yol","Total distance"), String(format: "%.0f km", w.km))
                             stat("🏍️", L("Sürüş sayısı","Rides"), "\(w.rides)")
                             stat("⏱️", L("Selede geçen saat","Hours in the saddle"), String(format: "%.1f", w.hours))
-                            stat("🚀", L("En uzun sürüş","Longest ride"), String(format: "%.1f km", w.longest_km))
-                            stat("🌙", L("Gece sürüşleri","Night rides"), "\(w.night_rides)")
+                            stat("🚀", L("En uzun sürüş","Longest ride"), String(format: "%.1f km", w.longestKm))
+                            stat("🌙", L("Gece sürüşleri","Night rides"), "\(w.nightRides)")
                             stat("🏅", L("Rozetler","Badges"), "\(w.badges.count)/\(BADGE_META.count)")
                             Text(L("Yıl bitmeden bu sayıları büyütmek serbest 😄","Feel free to grow these numbers before the year ends 😄"))
                                 .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
@@ -267,7 +267,7 @@ struct SharedRoutesSheet: View {
                             HStack(spacing: 12) {
                                 Text("🗺️").font(.system(size: 24))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(r.from_name).font(.system(size: 15, weight: .semibold))
+                                    Text(r.fromName).font(.system(size: 15, weight: .semibold))
                                     Text("\(String(format: "%.1f", r.km ?? 0)) km · \(r.date ?? "")")
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
