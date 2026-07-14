@@ -385,6 +385,13 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
             .init(name: "accuracy", value: String(loc.horizontalAccuracy)),
             .init(name: "bearing", value: String(max(0, loc.course))),
         ]
+        // 1.8 CANLI TAKİP: batarya + şarj durumu (arkadaş panelinde 🔋 gösterilir)
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let bl = UIDevice.current.batteryLevel
+        if bl >= 0 { comps.queryItems?.append(.init(name: "batt", value: String(Int(bl * 100)))) }
+        if UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full {
+            comps.queryItems?.append(.init(name: "charge", value: "true"))
+        }
         guard let url = comps.url else { return }
         var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 20
         // Arka plana geçerken gönderim yarıda kalmasın: kısa bir background-task koruması.

@@ -41,6 +41,7 @@ struct Club: Codable, Identifiable, Hashable {
 struct LiveTelemetry: Codable {
     var lat: Double; var lon: Double; var spd: Double; var hr: Int?
     var alt: Int; var age: Int; var today_km: Double; var name: String
+    var batt: Int? = nil; var charging: Bool? = nil; var course: Int? = nil; var acc: Int? = nil
 }
 // 1.8: paylaşılan rota (gelen kutusu)
 struct SharedRoute: Codable, Identifiable, Hashable {
