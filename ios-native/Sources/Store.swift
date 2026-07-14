@@ -553,6 +553,32 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let rd = try? JSONSerialization.data(withJSONObject: rr) else { return [] }
         return (try? dec().decode([ClubRider].self, from: rd)) ?? []
     }
+    // 1.9-C İNTERKOM
+    func intercomToken(_ cid: String) async -> (url: String, token: String, room: String)? {
+        guard let d = try? await req("/api/intercom/\(cid)/token"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
+              let u = o["url"] as? String, let t = o["token"] as? String else { return nil }
+        return (u, t, o["room"] as? String ?? "")
+    }
+    // 1.9-B TELSİZ
+    func pttSend(club: String, data: Data) async -> Bool {
+        guard let url = URL(string: API + "/api/ptt/send?club=\(club)") else { return false }
+        var rq = URLRequest(url: url); rq.httpMethod = "POST"
+        rq.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
+        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        rq.httpBody = data
+        guard let (_, resp) = try? await URLSession.shared.data(for: rq),
+              let http = resp as? HTTPURLResponse else { return false }
+        return (200..<300).contains(http.statusCode)
+    }
+    func pttGet(_ id: String) async -> Data? {
+        guard let url = URL(string: API + "/api/ptt/\(id)") else { return nil }
+        var rq = URLRequest(url: url)
+        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        guard let (d, resp) = try? await URLSession.shared.data(for: rq),
+              let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        return d
+    }
     // 1.8: ROTA PAYLAŞIMI
     @discardableResult
     func shareRoute(_ rideId: String, toUser: String? = nil, toClub: String? = nil) async -> Bool {

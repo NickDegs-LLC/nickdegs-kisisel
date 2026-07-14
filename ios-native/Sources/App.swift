@@ -23,7 +23,12 @@ struct MoveLogApp: App {
                 case .offline: AuthGateView(checking: false) { Task { await store.validate() } }
                 }
             }
-            .task { if store.gate == .checking { await store.validate() } }
+            .task {
+                if store.gate == .checking { await store.validate() }
+                ConvoyVoice.shared.store = store          // 1.9: sesli konvoy anonsları
+                PttEngine.shared.store = store            // 1.9-B: telsiz
+                if ConvoyVoice.shared.enabled { ConvoyVoice.shared.start() }
+            }
             .environmentObject(store)
             .environmentObject(iap)
             .environmentObject(cloud)

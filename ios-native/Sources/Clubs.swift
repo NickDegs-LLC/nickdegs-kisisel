@@ -10,6 +10,7 @@ struct ClubLiveView: View {
     @State private var riders: [ClubRider] = []
     @State private var cam: MapCameraPosition = .automatic
     @State private var timer: Timer? = nil
+    @ObservedObject private var ptt = PttEngine.shared
 
     var body: some View {
         NavigationStack {
@@ -33,11 +34,34 @@ struct ClubLiveView: View {
             .navigationTitle("🏍️ " + clubName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(L("Kapat","Close")) { dismiss() } } }
+            .overlay(alignment: .top) {
+                IntercomBar(clubId: clubId).padding(.horizontal, 12).padding(.top, 6)
+            }
             .overlay(alignment: .bottom) {
-                if riders.isEmpty {
-                    Text(L("Şu an konum paylaşan üye yok","No members sharing location right now"))
-                        .font(.caption).padding(10).glassPanel(12).padding()
-                }
+                VStack(spacing: 10) {
+                    if riders.isEmpty {
+                        Text(L("Şu an konum paylaşan üye yok","No members sharing location right now"))
+                            .font(.caption).padding(10).glassPanel(12)
+                    }
+                    // 1.9-B TELSİZ: bas-konuş — klip kulüptekilerin kulaklığında otomatik çalar
+                    ZStack {
+                        Circle().fill(ptt.recording ? Color.red : Brand.accent)
+                            .frame(width: 74, height: 74)
+                            .shadow(color: (ptt.recording ? Color.red : Brand.accent).opacity(0.5), radius: 12)
+                        Image(systemName: ptt.sending ? "paperplane.fill" : "mic.fill")
+                            .font(.system(size: 28, weight: .bold)).foregroundStyle(.white)
+                    }
+                    .scaleEffect(ptt.recording ? 1.15 : 1)
+                    .animation(.spring(duration: 0.25), value: ptt.recording)
+                    .onLongPressGesture(minimumDuration: 0.15, maximumDistance: 60,
+                        pressing: { down in
+                            if down { ptt.startRecording() }
+                            else if ptt.recording { ptt.stopAndSend(club: clubId) }
+                        }, perform: {})
+                    Text(ptt.recording ? L("Bırakınca gönderilir","Release to send")
+                                       : L("Basılı tut, konuş — telsiz gibi","Hold and talk — like a radio"))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }.padding(.bottom, 14)
             }
         }
         .task {

@@ -5,9 +5,13 @@ options:
     iOS: "18.0"
     watchOS: "10.0"
   createIntermediateGroups: true
+packages:
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift.git
+    from: "2.0.0"
 settings:
   base:
-    MARKETING_VERSION: "1.8"
+    MARKETING_VERSION: "1.9"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: SZF4T3P583
     SWIFT_VERSION: "5.0"
@@ -24,7 +28,7 @@ targets:
     info:
       path: Info.plist
       properties:
-        UIBackgroundModes: [location, fetch, processing, remote-notification]
+        UIBackgroundModes: [location, fetch, processing, remote-notification, audio]
         BGTaskSchedulerPermittedIdentifiers: [com.nickdegs.kisisel.refresh]
         # "Tam Konum" kapalıysa geçici tam doğruluk isteği için (requestTemporaryFullAccuracyAuthorization)
         NSLocationTemporaryUsageDescriptionDictionary:
@@ -33,6 +37,7 @@ targets:
         NSMotionUsageDescription: "Sürüşlerini otomatik algılamak için hareket verisi kullanılır: takip yalnızca araçta/bisikletteyken açılır, dururken pil ve gizlilik için kapanır."
     dependencies:
       - target: MoveLogWatch   # watch app iOS paketine gömülür (Watch/ dizinine)
+      - package: LiveKit       # 1.9-C canlı interkom sesli oda
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel
@@ -46,6 +51,7 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Profil ve sohbet fotoğraflarını seçmek için."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Rota videolarını galerine kaydetmek için."
         INFOPLIST_KEY_NSCameraUsageDescription: "Fotoğraf çekip paylaşmak için."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Telsiz modu ve interkomda kulübünle konuşmak için."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Move Log; yürüyüş, bisiklet, motosiklet ve koşu rotalarını haritada kaydetmek, mesafe ve hızını hesaplamak ve izin verdiğin aile/arkadaşlarına canlı konumunu göstermek için konumunu kullanır. Örneğin bisiklet rotanı çizer ve eklediğin kişilerin nerede olduğunu görmesini sağlar."
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Move Log, yalnızca bir gezi kaydı açıkken konumunu arka planda kullanır; böylece ekran kapalıyken bile tüm rotan kaydedilir ve otomatik rota videona dönüştürülür. Örneğin motosiklet sürüşünde uygulama arka plandayken rotan kaydedilerek rota filmin oluşturulur. Arka plan konumu yalnızca aktif kayıt ve senin açtığın canlı konum paylaşımı sırasında kullanılır."
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO

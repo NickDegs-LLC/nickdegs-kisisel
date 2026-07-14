@@ -453,6 +453,20 @@ struct ProfileView: View {
                                 }.padding(.vertical, 10).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                             Divider()
+                            Divider()
+                            Toggle(isOn: Binding(
+                                get: { ConvoyVoice.shared.enabled },
+                                set: { ConvoyVoice.shared.setEnabled($0) })) {
+                                HStack(spacing: 12) {
+                                    Text("🔊").font(.system(size: 22))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(L("Sesli konvoy anonsları","Voice convoy announcements")).font(.system(size: 15, weight: .semibold))
+                                        Text(L("Kulaklığına otomatik: 'Semra 400 metre geride'","Auto to your headset: 'Semra fell 400m behind'"))
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }.tint(Brand.accent).padding(.vertical, 8)
+                            Divider()
                             Button { showWrapped = true } label: {
                                 HStack(spacing: 12) {
                                     Text("🎁").font(.system(size: 22))

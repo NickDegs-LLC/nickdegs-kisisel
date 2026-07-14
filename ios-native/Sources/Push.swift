@@ -47,7 +47,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     // app arka planda dürtülür, hareket işlemcisine bakar, araçtaysak takip uyanır (kullanıcı hiçbir şey görmez).
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        if (userInfo["live"] as? Int) == 1 { Tracker.shared.liveWake() }   // 1.8: canlı izleme uyandırması
+        if let ptt = userInfo["ptt"] as? String {                          // 1.9-B: telsiz klibi geldi
+            let parts = ptt.split(separator: ":", maxSplits: 1).map(String.init)
+            PttEngine.shared.playIncoming(id: parts.first ?? "", from: parts.count > 1 ? parts[1] : "Rider")
+        } else if (userInfo["live"] as? Int) == 1 { Tracker.shared.liveWake() }   // 1.8: canlı izleme
         else { Tracker.shared.pokeWake() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { completionHandler(.newData) }
     }
