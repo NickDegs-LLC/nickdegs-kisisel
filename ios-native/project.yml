@@ -28,7 +28,7 @@ targets:
     info:
       path: Info.plist
       properties:
-        UIBackgroundModes: [location, fetch, processing, remote-notification, audio]
+        UIBackgroundModes: [location, fetch, processing, remote-notification]
         BGTaskSchedulerPermittedIdentifiers: [com.nickdegs.kisisel.refresh]
         # "Tam Konum" kapalıysa geçici tam doğruluk isteği için (requestTemporaryFullAccuracyAuthorization)
         NSLocationTemporaryUsageDescriptionDictionary:
