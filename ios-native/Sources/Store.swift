@@ -37,6 +37,11 @@ struct Club: Codable, Identifiable, Hashable {
     var id: String; var name: String; var owner: String; var member_count: Int; var created: Int
     var code: String? = nil; var members: [Friend]? = nil
 }
+// 1.8: canlı takip telemetrisi
+struct LiveTelemetry: Codable {
+    var lat: Double; var lon: Double; var spd: Double; var hr: Int?
+    var alt: Int; var age: Int; var today_km: Double; var name: String
+}
 // 1.8: paylaşılan rota (gelen kutusu)
 struct SharedRoute: Codable, Identifiable, Hashable {
     var id: String; var from_name: String; var from: String
@@ -516,6 +521,17 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func wrapped() async -> WrappedStats? {
         guard let d = try? await req("/api/wrapped") else { return nil }
         return try? dec().decode(WrappedStats.self, from: d)
+    }
+    // 1.8: CANLI TAKİP
+    @discardableResult
+    func liveStart(_ friend: String) async -> Bool {
+        guard let d = try? await req("/api/live/start", method: "POST", body: ["user": friend]),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
+        return (o["fresh"] as? Bool) ?? false
+    }
+    func liveGet(_ friend: String) async -> LiveTelemetry? {
+        guard let d = try? await req("/api/live/\(friend)") else { return nil }
+        return try? dec().decode(LiveTelemetry.self, from: d)
     }
     // 1.8: ROTA PAYLAŞIMI
     @discardableResult

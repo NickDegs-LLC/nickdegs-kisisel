@@ -56,6 +56,7 @@ struct ProfileView: View {
     @State private var showBadges = false
     @State private var showWrapped = false
     @State private var showSharedRoutes = false
+    @State private var liveFriend: Friend? = nil
 
     var body: some View {
         NavigationStack {
@@ -169,6 +170,12 @@ struct ProfileView: View {
                                     if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
                                 }
                                 Spacer()
+                                // 1.8 CANLI TAKİP: "Bul" tadında canlı izleme (hız + nabız + konum)
+                                Button { liveFriend = f } label: {
+                                    Image(systemName: "dot.radiowaves.left.and.right")
+                                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
+                                        .frame(width: 38, height: 38).glassPanel(19)
+                                }.buttonStyle(.borderless)
                             }.padding(12).glassPanel(18).smoothAppear()
                         }
                         ForEach(outgoing) { f in
@@ -516,6 +523,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showBadges) { BadgesSheet() }
         .sheet(isPresented: $showWrapped) { WrappedSheet() }
         .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
+        .sheet(item: $liveFriend) { f in LiveTrackView(friend: f) }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

@@ -47,7 +47,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     // app arka planda dürtülür, hareket işlemcisine bakar, araçtaysak takip uyanır (kullanıcı hiçbir şey görmez).
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        Tracker.shared.pokeWake()
+        if (userInfo["live"] as? Int) == 1 { Tracker.shared.liveWake() }   // 1.8: canlı izleme uyandırması
+        else { Tracker.shared.pokeWake() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { completionHandler(.newData) }
     }
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {}

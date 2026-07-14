@@ -88,6 +88,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     // Sunucu bekçisinin sessiz push'u: "cihaz yer değiştirmiş görünüyor, araçtaysan uyan".
     func pokeWake() { tryMotionWake() }
+    // 1.8 CANLI TAKİP: arkadaş izlemeye başlayınca sunucu live:1 sessiz push atar ->
+    // hareket şartı ARANMADAN konum akışı başlar (izleyen taze veri görsün). 8 dk sonra
+    // v6'nın normal boşta-kapanma mantığı devralır (hareket yoksa kendiliğinden söner).
+    func liveWake() { beginUpdates() }
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
