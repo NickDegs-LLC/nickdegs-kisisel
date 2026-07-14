@@ -188,6 +188,9 @@ struct ClubDetailView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var showLive = false
+    @AppStorage("nd_ultra") private var ultraMember = false
+    @State private var showPaywall = false
+    @State private var pwPremium = false
 
     var isOwner: Bool { club?.owner == me && !me.isEmpty }
     var shareText: String {
@@ -210,12 +213,15 @@ struct ClubDetailView: View {
                             }.tint(Brand.accent)
                         }
                     }
-                    Button { showLive = true } label: {
+                    Button { if ultraMember { showLive = true } else { showPaywall = true } } label: {
                         HStack {
                             Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Brand.accent)
-                            Text(L("Canlı konvoy haritası","Live convoy map")).font(.system(size: 15, weight: .semibold))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(L("Canlı konvoy haritası + interkom","Live convoy map + intercom")).font(.system(size: 15, weight: .semibold))
+                                if !ultraMember { Text(L("Ultra ile aç","Unlock with Ultra")).font(.caption2).foregroundStyle(Brand.accent) }
+                            }
                             Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                            Image(systemName: ultraMember ? "chevron.right" : "lock.fill").font(.caption).foregroundStyle(.secondary)
                         }.padding(13).contentShape(Rectangle())
                     }.buttonStyle(.plain).glassPanel(16)
                     if let code = club?.code {
@@ -269,6 +275,7 @@ struct ClubDetailView: View {
             me = (await store.profile())?.username ?? ""
         }
         .sheet(isPresented: $showLive) { ClubLiveView(clubId: clubId, clubName: club?.name ?? "") }
+        .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $pwPremium) }
         .alert(L("Gruptan ayrıl?","Leave the group?"), isPresented: $showLeave) {
             Button(L("Ayrıl","Leave"), role: .destructive) {
                 Task { _ = await store.leaveClub(clubId); onChanged(); dismiss() }

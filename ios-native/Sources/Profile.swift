@@ -171,7 +171,7 @@ struct ProfileView: View {
                                 }
                                 Spacer()
                                 // 1.8 CANLI TAKİP: "Bul" tadında canlı izleme (hız + nabız + konum)
-                                Button { liveFriend = f } label: {
+                                Button { if ultraMember { liveFriend = f } else { showPaywall = true } } label: {
                                     Image(systemName: "dot.radiowaves.left.and.right")
                                         .font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
                                         .frame(width: 38, height: 38).glassPanel(19)
@@ -425,7 +425,7 @@ struct ProfileView: View {
                         // 1.8: güvenlik + rozet + wrapped + gelen rotalar
                         section(L("Sürüş dünyan","Your riding world"))
                         VStack(spacing: 0) {
-                            Button { showSafety = true } label: {
+                            Button { if ultraMember { showSafety = true } else { showPaywall = true } } label: {
                                 HStack(spacing: 12) {
                                     Text("🛡️").font(.system(size: 22))
                                     VStack(alignment: .leading, spacing: 1) {
@@ -456,7 +456,7 @@ struct ProfileView: View {
                             Divider()
                             Toggle(isOn: Binding(
                                 get: { ConvoyVoice.shared.enabled },
-                                set: { ConvoyVoice.shared.setEnabled($0) })) {
+                                set: { v in if ultraMember { ConvoyVoice.shared.setEnabled(v) } else { showPaywall = true } })) {
                                 HStack(spacing: 12) {
                                     Text("🔊").font(.system(size: 22))
                                     VStack(alignment: .leading, spacing: 1) {
@@ -880,6 +880,16 @@ struct PaywallSheet: View {
 
     struct Perk: Identifiable { let id = UUID(); let icon: String; let title: String; let sub: String }
     var perks: [Perk] {[
+        .init(icon: "dot.radiowaves.left.and.right", title: L("Canlı interkom & telsiz","Live intercom & radio"),
+              sub: L("Kulübünle canlı sesli konuş — cihazsız, ücretsiz","Talk live with your club — no device needed")),
+        .init(icon: "waveform", title: L("Sesli konvoy anonsları","Voice convoy announcements"),
+              sub: L("Kulaklığına: 'Semra 400m geride'","To your headset: 'Semra 400m behind'")),
+        .init(icon: "location.fill.viewfinder", title: L("Canlı takip & konvoy haritası","Live tracking & convoy map"),
+              sub: L("Arkadaşını hız/nabız/bataryayla canlı izle","Watch friends live: speed, HR, battery")),
+        .init(icon: "shield.lefthalf.filled", title: L("Güvenli sürüş","Ride safety"),
+              sub: L("Sevdiğine otomatik 'sağ salim vardım'","Auto 'safe and sound' to your person")),
+        .init(icon: "rosette", title: L("Rozetler, liderlik & meydan okuma","Badges, leaderboard & challenges"),
+              sub: L("Toplulukla yarış, rota gönder","Compete, share routes")),
         .init(icon: "video.fill", title: L("3B flyover videolar","3D flyover videos"),
               sub: L("Arazi yüksekliğiyle sinematik rota videoları","Cinematic 3D terrain route videos")),
         .init(icon: "drop.fill", title: L("Filigransız & 1080p","No watermark & 1080p"),
