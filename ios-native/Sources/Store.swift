@@ -42,6 +42,14 @@ struct LiveTelemetry: Codable {
     var lat: Double; var lon: Double; var spd: Double; var hr: Int?
     var alt: Int; var age: Int; var today_km: Double; var name: String
     var batt: Int? = nil; var charging: Bool? = nil; var course: Int? = nil; var acc: Int? = nil
+    var trail: [[Double]]? = nil; var ride_min: Int? = nil
+    var avg_kmh: Double? = nil; var max_kmh: Double? = nil
+    var temp: Double? = nil; var wcode: Int? = nil
+}
+struct ClubRider: Codable, Identifiable {
+    var user: String; var name: String; var lat: Double; var lon: Double
+    var spd: Double; var age: Int; var course: Int
+    var id: String { user }
 }
 // 1.8: paylaşılan rota (gelen kutusu)
 struct SharedRoute: Codable, Identifiable, Hashable {
@@ -533,6 +541,17 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func liveGet(_ friend: String) async -> LiveTelemetry? {
         guard let d = try? await req("/api/live/\(friend)") else { return nil }
         return try? dec().decode(LiveTelemetry.self, from: d)
+    }
+    @discardableResult
+    func liveWave(_ friend: String) async -> Bool {
+        (try? await req("/api/live/wave", method: "POST", body: ["user": friend])) != nil
+    }
+    func liveClub(_ cid: String) async -> [ClubRider] {
+        guard let d = try? await req("/api/live/club/\(cid)"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
+              let rr = o["riders"],
+              let rd = try? JSONSerialization.data(withJSONObject: rr) else { return [] }
+        return (try? dec().decode([ClubRider].self, from: rd)) ?? []
     }
     // 1.8: ROTA PAYLAŞIMI
     @discardableResult

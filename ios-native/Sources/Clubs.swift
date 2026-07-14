@@ -1,4 +1,64 @@
 import SwiftUI
+import MapKit
+
+// 1.8 KULÜP CANLI HARİTASI: tüm üyeler tek haritada — gerçek konvoy görünümü, 5 sn'de bir tazelenir.
+struct ClubLiveView: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    var clubId: String
+    var clubName: String
+    @State private var riders: [ClubRider] = []
+    @State private var cam: MapCameraPosition = .automatic
+    @State private var timer: Timer? = nil
+
+    var body: some View {
+        NavigationStack {
+            Map(position: $cam) {
+                ForEach(riders) { r in
+                    Annotation(r.name, coordinate: .init(latitude: r.lat, longitude: r.lon)) {
+                        VStack(spacing: 2) {
+                            ZStack {
+                                Circle().fill((r.age < 300 ? Brand.accent : Color.gray).opacity(0.25)).frame(width: 40, height: 40)
+                                AvatarView(name: r.name, avatar: nil, size: 30)
+                            }
+                            if r.spd > 5 {
+                                Text(String(format: "%.0f", r.spd)).font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("🏍️ " + clubName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(L("Kapat","Close")) { dismiss() } } }
+            .overlay(alignment: .bottom) {
+                if riders.isEmpty {
+                    Text(L("Şu an konum paylaşan üye yok","No members sharing location right now"))
+                        .font(.caption).padding(10).glassPanel(12).padding()
+                }
+            }
+        }
+        .task {
+            await refresh(fit: true)
+            timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in Task { await refresh(fit: false) } }
+        }
+        .onDisappear { timer?.invalidate() }
+    }
+
+    func refresh(fit: Bool) async {
+        riders = await store.liveClub(clubId)
+        if fit, let f = riders.first {
+            let lats = riders.map(\.lat), lons = riders.map(\.lon)
+            let c = CLLocationCoordinate2D(latitude: (lats.min()! + lats.max()!) / 2, longitude: (lons.min()! + lons.max()!) / 2)
+            let span = MKCoordinateSpan(latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.6),
+                                        longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.6))
+            _ = f
+            cam = .region(.init(center: c, span: span))
+        }
+    }
+}
 
 // MOTORCU GRUPLARI (1.8): kulüp kur -> 6 haneli davet koduyla katıl -> arkadaşlık ŞARTSIZ,
 // aynı gruptakiler birlikte sürünce otomatik grup videosu (sunucu algılar, herkese gelir).
@@ -103,6 +163,7 @@ struct ClubDetailView: View {
     @State private var showLeave = false
     @State private var renaming = false
     @State private var newName = ""
+    @State private var showLive = false
 
     var isOwner: Bool { club?.owner == me && !me.isEmpty }
     var shareText: String {
@@ -125,6 +186,14 @@ struct ClubDetailView: View {
                             }.tint(Brand.accent)
                         }
                     }
+                    Button { showLive = true } label: {
+                        HStack {
+                            Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Brand.accent)
+                            Text(L("Canlı konvoy haritası","Live convoy map")).font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                        }.padding(13).contentShape(Rectangle())
+                    }.buttonStyle(.plain).glassPanel(16)
                     if let code = club?.code {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(L("Davet kodu","Invite code")).font(.caption).foregroundStyle(.secondary)
@@ -175,6 +244,7 @@ struct ClubDetailView: View {
             club = await store.clubDetail(clubId)
             me = (await store.profile())?.username ?? ""
         }
+        .sheet(isPresented: $showLive) { ClubLiveView(clubId: clubId, clubName: club?.name ?? "") }
         .alert(L("Gruptan ayrıl?","Leave the group?"), isPresented: $showLeave) {
             Button(L("Ayrıl","Leave"), role: .destructive) {
                 Task { _ = await store.leaveClub(clubId); onChanged(); dismiss() }
