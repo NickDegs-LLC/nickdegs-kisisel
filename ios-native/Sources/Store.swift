@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import CoreLocation
 import DeviceCheck
 import CryptoKit
@@ -547,6 +548,18 @@ enum AuthGate { case checking, valid, needLogin, offline }
     @discardableResult
     func liveWave(_ friend: String) async -> Bool {
         (try? await req("/api/live/wave", method: "POST", body: ["user": friend])) != nil
+    }
+    // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
+    func beacon() async {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let lvl = UIDevice.current.batteryLevel
+        let st = UIDevice.current.batteryState
+        var body: [String: Any] = ["charging": st == .charging || st == .full]
+        if lvl >= 0 { body["batt"] = Int((lvl * 100).rounded()) }
+        if let loc = CLLocationManager().location {
+            body["lat"] = loc.coordinate.latitude; body["lon"] = loc.coordinate.longitude
+        }
+        _ = try? await req("/api/live/beacon", method: "POST", body: body)
     }
     func liveClub(_ cid: String) async -> [ClubRider] {
         guard let d = try? await req("/api/live/club/\(cid)"),
