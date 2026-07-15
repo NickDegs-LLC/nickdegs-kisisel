@@ -42,6 +42,7 @@ private sealed class Route {
     object Friends : Route()
     object Clubs : Route()
     data class ClubDetail(val id: String) : Route()
+    data class Intercom(val id: String, val name: String) : Route()
     object Leaderboard : Route()
     object Safety : Route()
     object Badges : Route()
@@ -57,7 +58,9 @@ fun CommunityScreen(store: Store) {
         is Route.Hub -> HubView(store, ultra = store.ultra) { route = it }
         is Route.Friends -> FriendsView(store) { route = Route.Hub }
         is Route.Clubs -> ClubsView(store, onOpen = { route = Route.ClubDetail(it) }) { route = Route.Hub }
-        is Route.ClubDetail -> ClubDetailView(store, r.id) { route = Route.Clubs }
+        is Route.ClubDetail -> ClubDetailView(store, r.id,
+            onIntercom = { name -> route = Route.Intercom(r.id, name) }) { route = Route.Clubs }
+        is Route.Intercom -> IntercomView(store, r.id, r.name) { route = Route.ClubDetail(r.id) }
         is Route.Leaderboard -> LeaderboardView(store) { route = Route.Hub }
         is Route.Safety -> SafetyView(store) { route = Route.Hub }
         is Route.Badges -> BadgesView(store) { route = Route.Hub }
@@ -275,7 +278,7 @@ private fun ClubsView(store: Store, onOpen: (String) -> Unit, onBack: () -> Unit
 }
 
 @Composable
-private fun ClubDetailView(store: Store, id: String, onBack: () -> Unit) {
+private fun ClubDetailView(store: Store, id: String, onIntercom: (String) -> Unit, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var club by remember { mutableStateOf<Club?>(null) }
     LaunchedEffect(id) { club = store.clubDetail(id) }
@@ -287,6 +290,18 @@ private fun ClubDetailView(store: Store, id: String, onBack: () -> Unit) {
             if (!c.code.isNullOrEmpty()) Card {
                 Text(L("Davet kodu", "Invite code"), color = sub, fontSize = 12.sp)
                 Text(c.code, color = Brand.accent, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            }
+            // 1.9 CANLI İNTERKOM — Ultra; kulüp sesli odası
+            if (store.ultra) Card(onClick = { onIntercom(c.name) }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.RecordVoiceOver, null, tint = Brand.accent, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(L("Canlı interkom", "Live intercom"), color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(L("Kulübünle gerçek zamanlı sesli konuş", "Talk live with your club"), color = sub, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.ChevronRight, null, tint = sub)
+                }
             }
             // 1.9 TELSİZ (PTT) — Ultra; bas-kaydet-gönder
             if (store.ultra) PttBar(store, id)
@@ -570,5 +585,63 @@ private fun PttBar(store: Store, clubId: String) {
             }
         }
         if (status.isNotEmpty()) Text(status, color = sub, fontSize = 12.sp)
+    }
+}
+
+// ---------------- CANLI İNTERKOM (LiveKit sesli oda) ----------------
+@Composable
+private fun IntercomView(store: Store, clubId: String, clubName: String, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    var state by remember { mutableStateOf("connecting") }   // connecting|connected|error|denied
+    var count by remember { mutableStateOf(0) }
+    val room = remember { io.livekit.android.LiveKit.create(ctx.applicationContext) }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun hasMic() = androidx.core.content.ContextCompat.checkSelfPermission(
+        ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    DisposableEffect(clubId) { onDispose { try { room.disconnect() } catch (e: Exception) {} } }
+    LaunchedEffect(clubId) {
+        if (!hasMic()) permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        var tries = 0
+        while (!hasMic() && tries < 30) { delay(500); tries++ }
+        if (!hasMic()) { state = "denied"; return@LaunchedEffect }
+        val tok = store.intercomToken(clubId) ?: run { state = "error"; return@LaunchedEffect }
+        try {
+            room.connect(tok.first, tok.second)
+            room.localParticipant.setMicrophoneEnabled(true)
+            state = "connected"
+            while (true) { count = room.remoteParticipants.size; delay(2000) }
+        } catch (e: Exception) { state = "error" }
+    }
+
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("$clubName — İnterkom", "$clubName — Intercom"), onBack)
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center) {
+            when (state) {
+                "connecting" -> {
+                    CircularProgressIndicator(color = Brand.accent)
+                    Spacer(Modifier.height(16.dp)); Text(L("Bağlanıyor…", "Connecting…"), color = sub)
+                }
+                "connected" -> {
+                    Box(Modifier.size(120.dp).background(Brand.accent.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Mic, null, tint = Brand.accent, modifier = Modifier.size(56.dp))
+                    }
+                    Spacer(Modifier.height(20.dp))
+                    Text(L("Bağlısın — konuşabilirsin", "You're live — start talking"),
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(L("Odada $count kişi daha", "$count others in the room"), color = sub)
+                    Spacer(Modifier.height(24.dp))
+                    Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))) {
+                        Text(L("Ayrıl", "Leave"))
+                    }
+                }
+                "denied" -> Text(L("Mikrofon izni gerekli.", "Microphone permission required."),
+                    color = gold, textAlign = TextAlign.Center)
+                else -> Text(L("Bağlanılamadı. Tekrar dene.", "Couldn't connect. Try again."),
+                    color = gold, textAlign = TextAlign.Center)
+            }
+        }
     }
 }
