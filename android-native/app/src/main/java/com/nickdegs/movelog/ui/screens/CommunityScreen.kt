@@ -48,6 +48,9 @@ private sealed class Route {
     object Badges : Route()
     object Wrapped : Route()
     object Shared : Route()
+    object Username : Route()
+    object IdeaBox : Route()
+    object GroupVideo : Route()
     data class Live(val friend: String, val name: String) : Route()
 }
 
@@ -66,6 +69,9 @@ fun CommunityScreen(store: Store) {
         is Route.Badges -> BadgesView(store) { route = Route.Hub }
         is Route.Wrapped -> WrappedView(store) { route = Route.Hub }
         is Route.Shared -> SharedView(store) { route = Route.Hub }
+        is Route.Username -> UsernameView(store) { route = Route.Hub }
+        is Route.IdeaBox -> IdeaBoxView(store) { route = Route.Hub }
+        is Route.GroupVideo -> GroupVideoView(store) { route = Route.Hub }
         is Route.Live -> LiveTrackView(store, r.friend, r.name) { route = Route.Hub }
     }
 }
@@ -99,6 +105,9 @@ private fun HubView(store: Store, ultra: Boolean, nav: (Route) -> Unit) {
         HubItem(Icons.Filled.MilitaryTech, L("Rozetler", "Badges"), L("Kazandığın başarımlar", "Your achievements"), Route.Badges),
         HubItem(Icons.Filled.CardGiftcard, L("Yıl Özeti", "Year Wrapped"), L("Yıllık sürüş istatistiklerin", "Your year in rides"), Route.Wrapped),
         HubItem(Icons.Filled.Route, L("Paylaşılan Rotalar", "Shared Routes"), L("Sana gönderilen rotalar", "Routes shared with you"), Route.Shared),
+        HubItem(Icons.Filled.AlternateEmail, L("Kullanıcı Adı", "Username"), L("@adını belirle, seni bulsunlar", "Set your @handle so friends find you"), Route.Username),
+        HubItem(Icons.Filled.Movie, L("Grup Videosu", "Group Video"), L("Ortak sürüş videosu tercihi", "Shared ride video preference"), Route.GroupVideo),
+        HubItem(Icons.Filled.Lightbulb, L("Fikir Kutusu", "Idea Box"), L("Fikrin doğrudan geliştiriciye", "Your idea straight to the developer"), Route.IdeaBox),
     )
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
         Bar(L("Sürüş Dünyan", "Your Riding World"), null)
@@ -585,6 +594,93 @@ private fun PttBar(store: Store, clubId: String) {
             }
         }
         if (status.isNotEmpty()) Text(status, color = sub, fontSize = 12.sp)
+    }
+}
+
+// ---------------- KULLANICI ADI (@handle) ----------------
+@Composable
+private fun UsernameView(store: Store, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var handle by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("Kullanıcı Adı", "Username"), onBack)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(L("Benzersiz @kullanıcı adın — arkadaşların seni bununla bulur.",
+                   "Your unique @username — friends find you with it."), color = sub, fontSize = 13.sp)
+            OutlinedTextField(value = handle, onValueChange = { handle = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '.' } },
+                singleLine = true, label = { Text(L("@kullanıcı adı", "@username")) }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                scope.launch {
+                    busy = true
+                    val err = store.setHandle(handle.trim())
+                    busy = false
+                    msg = when (err) {
+                        null -> L("Kaydedildi ✓", "Saved ✓")
+                        "taken" -> L("Bu ad alınmış — başka dene", "That's taken — try another")
+                        "invalid" -> L("Geçersiz (3–20: harf, rakam, _ .)", "Invalid (3–20: letters, digits, _ .)")
+                        else -> L("Bağlantı hatası", "Connection error")
+                    }
+                }
+            }, enabled = !busy && handle.length >= 3, colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
+                modifier = Modifier.fillMaxWidth()) { Text(L("Kaydet", "Save")) }
+            if (msg.isNotEmpty()) Text(msg, color = if (msg.contains("✓")) Color(0xFF34C759) else gold)
+        }
+    }
+}
+
+// ---------------- FİKİR KUTUSU ----------------
+@Composable
+private fun IdeaBoxView(store: Store, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf("") }
+    var sent by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("Fikir Kutusu", "Idea Box"), onBack)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (sent) {
+                Icon(Icons.Filled.CheckCircle, null, tint = Color(0xFF34C759), modifier = Modifier.size(48.dp))
+                Text(L("Fikrin bana ulaştı — teşekkürler!", "Got your idea — thank you!"), color = Color.White, fontWeight = FontWeight.Bold)
+                Text(L("Mantıklıysa bir sonraki güncellemede görebilirsin.", "If it makes sense, you might see it in the next update."), color = sub, fontSize = 13.sp)
+            } else {
+                Text(L("Aklındaki özelliği, öneriyi ya da derdini yaz — doğrudan geliştiriciye ulaşır. Samimi ol, biz de öyleyiz. 🏍️",
+                       "Write the feature, suggestion or gripe on your mind — it goes straight to the developer. Be real, we are too. 🏍️"),
+                    color = sub, fontSize = 13.sp)
+                OutlinedTextField(value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().height(160.dp),
+                    label = { Text(L("Fikrini söyle", "Share your idea")) })
+                Button(onClick = { scope.launch { if (store.sendFeedback(text.trim())) sent = true } },
+                    enabled = text.trim().length >= 3, colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
+                    modifier = Modifier.fillMaxWidth()) { Text(L("Gönder", "Send")) }
+            }
+        }
+    }
+}
+
+// ---------------- GRUP VİDEOSU TERCİHİ ----------------
+@Composable
+private fun GroupVideoView(store: Store, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var pref by remember { mutableStateOf("both") }
+    LaunchedEffect(Unit) { pref = store.groupVideoPref() }
+    val opts = listOf(
+        "both" to L("Ortak + kendi videom", "Shared + my own"),
+        "group" to L("Sadece ortak video", "Shared only"),
+        "solo" to L("Sadece kendi videom", "My own only"))
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("Grup Videosu", "Group Video"), onBack)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(L("Bir arkadaşınla sürünce hangi videolar üretilsin?", "When you ride with a friend, which videos are made?"),
+                color = sub, fontSize = 13.sp)
+            opts.forEach { (key, label) ->
+                Card(onClick = { pref = key; scope.launch { store.setGroupVideoPref(key) } }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = pref == key, onClick = { pref = key; scope.launch { store.setGroupVideoPref(key) } })
+                        Text(label, color = Color.White)
+                    }
+                }
+            }
+        }
     }
 }
 
