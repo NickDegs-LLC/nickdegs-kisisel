@@ -51,7 +51,7 @@ dependencies {
     implementation("androidx.wear.compose:compose-material:1.4.1")
     implementation("androidx.wear.compose:compose-foundation:1.4.1")
     implementation("androidx.health:health-services-client:1.0.0")       // nabız (Health Services)
-    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")   // ListenableFuture await
+    implementation("com.google.guava:guava:33.2.1-android")              // Health Services ListenableFuture (stub değil, gerçek sınıf)
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.google.android.gms:play-services-wearable:19.0.0")   // telefon ile kimlik köprüsü
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
