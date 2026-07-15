@@ -146,6 +146,8 @@ enum AuthGate { case checking, valid, needLogin, offline }
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Sunucunun push/metin dilini kullanıcının cihaz diline sabitle (örtük URLSession header'ına güvenme).
+        r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, resp) = try await URLSession.shared.data(for: r)

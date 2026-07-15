@@ -16,10 +16,16 @@ enum AppEnv {
 }
 
 let SUPPORTED = ["en","tr","de","fr","es","it","pt","ru","ja","zh","ko","ar"]
+// Cihazın TERCİH SIRASINDAKİ tüm dillerini tara; desteklediğimiz İLK dili döndür.
+// (ör. cihaz ["nl","de"] ise Almanca yakalanır.) Hiçbiri desteklenmiyorsa DAİMA "en" —
+// asla Türkçe'ye düşme. Türkçe sadece cihaz gerçekten tr istediğinde gelir.
 func currentLang() -> String {
     if let o = AppEnv.langOverride, SUPPORTED.contains(o) { return o }
-    let code = Locale.preferredLanguages.first?.split(separator: "-").first.map(String.init) ?? "en"
-    return SUPPORTED.contains(code) ? code : "en"
+    for pref in Locale.preferredLanguages {
+        let code = String(pref.split(separator: "-").first ?? "").lowercased()
+        if SUPPORTED.contains(code) { return code }
+    }
+    return "en"
 }
 
 // İngilizce anahtara göre 12-dil çeviri (eksikse İngilizce'ye düşer)
