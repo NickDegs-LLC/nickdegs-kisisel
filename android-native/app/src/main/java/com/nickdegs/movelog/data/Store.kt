@@ -516,6 +516,27 @@ class Store(app: Application) : AndroidViewModel(app) {
     }
     suspend fun liveWave(friend: String): Boolean =
         req("/api/live/wave", "POST", JSONObject().put("user", friend)) != null
+    // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
+    suspend fun sendBeacon() {
+        val ctx = getApplication<Application>()
+        val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager ?: return
+        val batt = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (batt < 0 || batt > 100) return
+        var lat: Double? = null; var lon: Double? = null
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(ctx,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                val loc = kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { c ->
+                    com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(ctx)
+                        .lastLocation.addOnSuccessListener { c.resume(it) {} }.addOnFailureListener { c.resume(null) {} }
+                }
+                lat = loc?.latitude; lon = loc?.longitude
+            }
+        } catch (e: Exception) {}
+        val b = JSONObject().put("batt", batt).put("charging", bm.isCharging)
+        if (lat != null && lon != null) b.put("lat", lat).put("lon", lon)
+        req("/api/live/beacon", "POST", b)
+    }
     suspend fun liveClub(cid: String): List<ClubRider> {
         val d = req("/api/live/club/$cid") ?: return emptyList()
         val arr = JSONObject(d).optJSONArray("riders") ?: JSONArray()

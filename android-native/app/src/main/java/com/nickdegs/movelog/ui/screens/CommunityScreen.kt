@@ -574,6 +574,14 @@ private fun LiveTrackView(store: Store, friend: String, name: String, onBack: ()
         val t = tel
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (t == null) { CircularProgressIndicator(color = Brand.accent); return@Column }
+            val ago = when {
+                t.age < 60 -> L("az önce", "just now")
+                t.age < 3600 -> L("${t.age / 60} dk önce", "${t.age / 60} min ago")
+                t.age < 86400 -> L("${t.age / 3600} saat önce", "${t.age / 3600} h ago")
+                else -> L("${t.age / 86400} gün önce", "${t.age / 86400} d ago")
+            }
+            Text(if (t.age < 120) L("● Canlı", "● Live") else L("Son görülme: $ago", "Last seen: $ago"),
+                color = if (t.age < 120) Color(0xFF34C759) else gold, fontWeight = FontWeight.SemiBold)
             WrapStat(L("Hız", "Speed"), "${"%.0f".format(t.spd)} km/h")
             t.hr?.let { WrapStat(L("Nabız", "Heart rate"), "$it bpm") }
             WrapStat(L("Bugün", "Today"), "${"%.1f".format(t.todayKm)} km")

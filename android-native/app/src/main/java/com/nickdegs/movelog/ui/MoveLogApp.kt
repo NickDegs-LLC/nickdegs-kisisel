@@ -25,6 +25,8 @@ fun MoveLogApp(store: Store) {
     val scope = rememberCoroutineScope()
     // AÇILIŞ KAPISI: yalnızca sunucu-doğrulanmış kimlikle aç. İnternetsiz/kopya token ile ÇALIŞMAZ.
     LaunchedEffect(Unit) { if (store.auth == com.nickdegs.movelog.data.AuthState.CHECKING) store.validate() }
+    // Açılışta canlı-takip beacon'ı: batarya+konum bildir (arkadaşlar son durumu görsün, kayıt gerekmez)
+    LaunchedEffect(store.auth) { if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) store.sendBeacon() }
     when (store.auth) {
         com.nickdegs.movelog.data.AuthState.CHECKING -> { GateScreen(true) { }; return }
         com.nickdegs.movelog.data.AuthState.NEED_LOGIN -> { LoginScreen(store); return }
