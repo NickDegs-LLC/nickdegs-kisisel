@@ -41,6 +41,7 @@ fun MoveLogApp(store: Store) {
         Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
         Tab(L("Harita", "Map"), Icons.Filled.LocationOn),
+        Tab(L("Topluluk", "Community"), Icons.Filled.Groups),
         Tab(L("Profil", "Profile"), Icons.Filled.Person),
     )
 
@@ -70,6 +71,7 @@ fun MoveLogApp(store: Store) {
                 1 -> VideosScreen(store)
                 2 -> SummariesScreen(store)
                 3 -> MapChatScreen(store)
+                4 -> CommunityScreen(store)
                 else -> ProfileScreen(store)
             }
         }

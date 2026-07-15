@@ -117,6 +117,8 @@ class Store(app: Application) : AndroidViewModel(app) {
                 c.requestMethod = method
                 c.connectTimeout = 15000; c.readTimeout = 30000
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                // Sunucunun push/metin dilini cihaz diline sabitle (iOS ile aynı)
+                c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
                 if (body != null) {
                     c.setRequestProperty("Content-Type", "application/json")
                     c.doOutput = true
@@ -127,6 +129,24 @@ class Store(app: Application) : AndroidViewModel(app) {
                     ?.bufferedReader()?.readText()
                 if (code in 200..299) txt else null
             } catch (e: Exception) { null }
+        }
+
+    // Durum kodlu istek (handle çakışması gibi hataları ayırt etmek için) — iOS reqCode karşılığı
+    private suspend fun reqCode(path: String, method: String = "GET", body: JSONObject? = null): Pair<Int, String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val c = (URL(API + path).openConnection() as HttpURLConnection)
+                c.requestMethod = method; c.connectTimeout = 15000; c.readTimeout = 30000
+                if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
+                if (body != null) {
+                    c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
+                    OutputStreamWriter(c.outputStream).use { it.write(body.toString()) }
+                }
+                val code = c.responseCode
+                val txt = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
+                code to txt
+            } catch (e: Exception) { 0 to "" }
         }
 
     // ---- Auth (telefon + SMS tek-kullanımlık kod; iOS ile aynı) ----
@@ -375,6 +395,217 @@ class Store(app: Application) : AndroidViewModel(app) {
                 o.optDouble("speedKmh", o.optDouble("spd", 0.0)), o.optBoolean("online", false))
         }
     }
+
+    // ==================== 1.4+ ARKADAŞLIK / KULLANICI ADI / FİKİR KUTUSU ====================
+    // Benzersiz @kullanıcıadı ayarla: null=başarılı; "taken"|"invalid"|"network"
+    suspend fun setHandle(handle: String): String? {
+        val (code, _) = reqCode("/api/handle", "PUT", JSONObject().put("handle", handle))
+        return when (code) { 200 -> null; 409 -> "taken"; 400 -> "invalid"; else -> "network" }
+    }
+    suspend fun findUsers(q: String): List<FoundUser> {
+        val esc = java.net.URLEncoder.encode(q, "UTF-8")
+        val d = req("/api/users/find?q=$esc") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("users") ?: JSONArray()
+        return (0 until arr.length()).map { parseFound(arr.getJSONObject(it)) }
+    }
+    // "requested" | "friends" | null(hata)
+    suspend fun friendRequest(username: String): String? {
+        val (code, d) = reqCode("/api/friends/request", "POST",
+            JSONObject().put("username", username.trim().removePrefix("@")))
+        if (code != 200) return null
+        return JSONObject(d).optString("status", null)
+    }
+    // (incoming, outgoing) bekleyen istekler
+    suspend fun friendRequests(): Pair<List<FoundUser>, List<FoundUser>> {
+        val d = req("/api/friends/requests") ?: return emptyList<FoundUser>() to emptyList()
+        val o = JSONObject(d)
+        fun list(k: String): List<FoundUser> {
+            val arr = o.optJSONArray(k) ?: JSONArray()
+            return (0 until arr.length()).map { parseFound(arr.getJSONObject(it)) }
+        }
+        return list("incoming") to list("outgoing")
+    }
+    suspend fun respondFriend(username: String, accept: Boolean): Boolean =
+        reqCode("/api/friends/respond", "POST",
+            JSONObject().put("username", username).put("accept", accept)).first == 200
+    suspend fun sendFeedback(text: String): Boolean =
+        reqCode("/api/feedback", "POST", JSONObject().put("text", text)).first == 200
+    suspend fun invite(): String {
+        val d = req("/api/invite", "POST", JSONObject()) ?: return ""
+        return JSONObject(d).optString("link", "")
+    }
+    // GRUP SÜRÜŞ video tercihi (1.7): both | group | solo
+    suspend fun groupVideoPref(): String {
+        val d = req("/api/groupvideo") ?: return "both"
+        return JSONObject(d).optString("pref", "both")
+    }
+    suspend fun setGroupVideoPref(pref: String): Boolean =
+        req("/api/groupvideo", "PUT", JSONObject().put("pref", pref)) != null
+
+    // ==================== 1.7 KULÜPLER + LİDERLİK ====================
+    suspend fun clubs(): List<Club> {
+        val d = req("/api/clubs") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("clubs") ?: JSONArray()
+        return (0 until arr.length()).map { parseClub(arr.getJSONObject(it)) }
+    }
+    suspend fun createClub(name: String): Club? {
+        val d = req("/api/clubs", "POST", JSONObject().put("name", name)) ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun joinClub(code: String): Club? {
+        val d = req("/api/clubs/join", "POST", JSONObject().put("code", code)) ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun clubDetail(id: String): Club? {
+        val d = req("/api/clubs/$id") ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun leaveClub(id: String): Boolean = req("/api/clubs/leave", "POST", JSONObject().put("id", id)) != null
+    suspend fun kickClubMember(id: String, user: String): Boolean =
+        req("/api/clubs/kick", "POST", JSONObject().put("id", id).put("user", user)) != null
+    suspend fun renameClub(id: String, name: String): Club? {
+        val d = req("/api/clubs/rename", "POST", JSONObject().put("id", id).put("name", name)) ?: return null
+        return parseClub(JSONObject(d))
+    }
+    // Haftalık km — arkadaşlar + kulüp arkadaşları; (satırlar, kendi_sıram)
+    suspend fun leaderboard(): Pair<List<LeaderRow>, Int> {
+        val d = req("/api/leaderboard") ?: return emptyList<LeaderRow>() to 0
+        val o = JSONObject(d)
+        val arr = o.optJSONArray("week") ?: JSONArray()
+        val rows = (0 until arr.length()).map {
+            val r = arr.getJSONObject(it)
+            LeaderRow(r.optString("username", ""), r.optString("name", ""),
+                r.optDouble("km", 0.0), r.optInt("rides", 0), avatarEmojiOf(r))
+        }
+        return rows to o.optInt("me", 0)
+    }
+
+    // ==================== 1.8 GÜVENLİK / ROZET / WRAPPED / CANLI TAKİP / PAYLAŞIM ====================
+    suspend fun safety(): SafetyInfo {
+        val d = req("/api/safety") ?: return SafetyInfo("", true, true, "")
+        val o = JSONObject(d); val bp = o.optJSONObject("buddy_profile")
+        return SafetyInfo(o.optString("buddy", ""), o.optBoolean("arrive", true),
+            o.optBoolean("longstop", true), bp?.optString("name", "") ?: "")
+    }
+    suspend fun setSafety(buddy: String?, arrive: Boolean?, longstop: Boolean?): Boolean {
+        val b = JSONObject()
+        if (buddy != null) b.put("buddy", buddy)
+        if (arrive != null) b.put("arrive", arrive)
+        if (longstop != null) b.put("longstop", longstop)
+        return req("/api/safety", "PUT", b) != null
+    }
+    suspend fun badges(): List<String> {
+        val d = req("/api/badges") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("badges") ?: JSONArray()
+        return (0 until arr.length()).map { arr.getString(it) }
+    }
+    suspend fun wrapped(): WrappedStats? {
+        val d = req("/api/wrapped") ?: return null
+        val o = JSONObject(d); val ba = o.optJSONArray("badges") ?: JSONArray()
+        return WrappedStats(o.optInt("year", 0), o.optDouble("km", 0.0), o.optInt("rides", 0),
+            o.optDouble("hours", 0.0), o.optDouble("longest_km", 0.0), o.optInt("night_rides", 0),
+            (0 until ba.length()).map { ba.getString(it) })
+    }
+    suspend fun liveStart(friend: String): Boolean {
+        val d = req("/api/live/start", "POST", JSONObject().put("user", friend)) ?: return false
+        return JSONObject(d).optBoolean("fresh", false)
+    }
+    suspend fun liveGet(friend: String): LiveTelemetry? {
+        val d = req("/api/live/$friend") ?: return null
+        return parseTelemetry(JSONObject(d))
+    }
+    suspend fun liveWave(friend: String): Boolean =
+        req("/api/live/wave", "POST", JSONObject().put("user", friend)) != null
+    suspend fun liveClub(cid: String): List<ClubRider> {
+        val d = req("/api/live/club/$cid") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("riders") ?: JSONArray()
+        return (0 until arr.length()).map {
+            val r = arr.getJSONObject(it)
+            ClubRider(r.optString("user", ""), r.optString("name", ""), r.optDouble("lat", 0.0),
+                r.optDouble("lon", 0.0), r.optDouble("spd", 0.0), r.optInt("age", 0), r.optInt("course", 0))
+        }
+    }
+    suspend fun shareRoute(rideId: String, toUser: String? = null, toClub: String? = null): Boolean {
+        val b = JSONObject().put("ride_id", rideId)
+        if (toUser != null) b.put("to_user", toUser)
+        if (toClub != null) b.put("to_club", toClub)
+        val d = req("/api/routes/share", "POST", b) ?: return false
+        return JSONObject(d).optBoolean("ok", false)
+    }
+    suspend fun sharedRoutes(): List<SharedRoute> {
+        val d = req("/api/routes/shared") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("routes") ?: JSONArray()
+        return (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            SharedRoute(o.optString("id", ""), o.optString("from_name", ""), o.optString("from", ""),
+                if (o.has("km") && !o.isNull("km")) o.optDouble("km") else null,
+                if (o.isNull("date")) null else o.optString("date", null),
+                o.optInt("ts", 0), o.optString("ride_id", ""), o.optBoolean("ridden", false))
+        }
+    }
+
+    // ==================== 1.9 İNTERKOM + TELSİZ ====================
+    // (url, token, room) — LiveKit odası
+    suspend fun intercomToken(cid: String): Triple<String, String, String>? {
+        val d = req("/api/intercom/$cid/token") ?: return null
+        val o = JSONObject(d); val u = o.optString("url", ""); val t = o.optString("token", "")
+        if (u.isEmpty() || t.isEmpty()) return null
+        return Triple(u, t, o.optString("room", ""))
+    }
+    suspend fun pttSend(club: String, data: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val c = (URL("$API/api/ptt/send?club=$club").openConnection() as HttpURLConnection)
+            c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
+            c.setRequestProperty("Content-Type", "audio/mp4")
+            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            c.doOutput = true; c.outputStream.use { it.write(data) }
+            c.responseCode in 200..299
+        } catch (e: Exception) { false }
+    }
+    suspend fun pttGet(id: String): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val c = (URL("$API/api/ptt/$id").openConnection() as HttpURLConnection)
+            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            c.connectTimeout = 15000; c.readTimeout = 30000
+            if (c.responseCode == 200) c.inputStream.readBytes() else null
+        } catch (e: Exception) { null }
+    }
+
+    // ---- parse yardımcıları ----
+    private fun avatarEmojiOf(o: JSONObject): String {
+        val av = o.optJSONObject("avatar") ?: return ""
+        return if (av.optString("type") == "emoji") av.optString("value", "") else ""
+    }
+    private fun parseFound(o: JSONObject) = FoundUser(o.optString("username", ""), o.optString("name", ""),
+        o.optString("handle", ""), avatarEmojiOf(o), o.optString("status", "none"))
+    private fun parseClub(o: JSONObject): Club {
+        val memArr = o.optJSONArray("members")
+        val members = if (memArr != null) (0 until memArr.length()).map {
+            val m = memArr.getJSONObject(it)
+            ClubMember(m.optString("username", ""), if (m.isNull("name")) null else m.optString("name", null),
+                avatarEmojiOf(m), m.optBoolean("online", false))
+        } else null
+        return Club(o.optString("id", ""), o.optString("name", ""), o.optString("owner", ""),
+            o.optInt("member_count", o.optInt("memberCount", 0)), o.optInt("created", 0),
+            if (o.isNull("code")) null else o.optString("code", null), members)
+    }
+    private fun parseTelemetry(o: JSONObject): LiveTelemetry {
+        val ta = o.optJSONArray("trail")
+        val trail = if (ta != null) (0 until ta.length()).map {
+            val p = ta.getJSONArray(it); listOf(p.optDouble(0), p.optDouble(1))
+        } else null
+        return LiveTelemetry(o.optDouble("lat", 0.0), o.optDouble("lon", 0.0), o.optDouble("spd", 0.0),
+            if (o.has("hr") && !o.isNull("hr")) o.optInt("hr") else null,
+            o.optInt("alt", 0), o.optInt("age", 0), o.optDouble("today_km", o.optDouble("todayKm", 0.0)),
+            o.optString("name", ""), if (o.has("batt")) o.optInt("batt") else null,
+            if (o.has("charging")) o.optBoolean("charging") else null,
+            if (o.has("course")) o.optInt("course") else null, trail,
+            if (o.has("ride_min")) o.optInt("ride_min") else null,
+            if (o.has("avg_kmh")) o.optDouble("avg_kmh") else null,
+            if (o.has("max_kmh")) o.optDouble("max_kmh") else null,
+            if (o.has("temp")) o.optDouble("temp") else null,
+            if (o.has("wcode")) o.optInt("wcode") else null)
+    }
 }
 
 data class SummaryVid(val mode: String = "flyover", val speed: String = "medium", val aspect: String = "16:9",
@@ -386,3 +617,22 @@ data class Position(val device: String, val lat: Double, val lon: Double, val sp
 
 data class Summary(val date: String, val summary: String, val videoId: String?,
                    val from: Double? = null, val to: Double? = null)
+
+// ---- 1.4+ / 1.7 / 1.8 / 1.9 modelleri (iOS Store.swift birebir) ----
+data class FoundUser(val username: String, val name: String, val handle: String,
+                     val avatarEmoji: String, val status: String)   // none|outgoing|incoming|friend|requested
+data class ClubMember(val username: String, val name: String?, val avatarEmoji: String, val online: Boolean)
+data class Club(val id: String, val name: String, val owner: String, val memberCount: Int,
+                val created: Int, val code: String?, val members: List<ClubMember>?)
+data class ClubRider(val user: String, val name: String, val lat: Double, val lon: Double,
+                     val spd: Double, val age: Int, val course: Int)
+data class LeaderRow(val username: String, val name: String, val km: Double, val rides: Int, val avatarEmoji: String)
+data class SafetyInfo(val buddy: String, val arrive: Boolean, val longstop: Boolean, val buddyName: String)
+data class WrappedStats(val year: Int, val km: Double, val rides: Int, val hours: Double,
+                        val longestKm: Double, val nightRides: Int, val badges: List<String>)
+data class SharedRoute(val id: String, val fromName: String, val from: String, val km: Double?,
+                       val date: String?, val ts: Int, val rideId: String, val ridden: Boolean)
+data class LiveTelemetry(val lat: Double, val lon: Double, val spd: Double, val hr: Int?, val alt: Int,
+                         val age: Int, val todayKm: Double, val name: String, val batt: Int?, val charging: Boolean?,
+                         val course: Int?, val trail: List<List<Double>>?, val rideMin: Int?,
+                         val avgKmh: Double?, val maxKmh: Double?, val temp: Double?, val wcode: Int?)
