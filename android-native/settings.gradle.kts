@@ -10,6 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }   // LiveKit transitive: com.github.davidliu:audioswitch
     }
 }
 rootProject.name = "MoveLog"
