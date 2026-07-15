@@ -20,9 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.nickdegs.movelog.data.*
 import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
@@ -285,6 +288,15 @@ private fun ClubDetailView(store: Store, id: String, onBack: () -> Unit) {
                 Text(L("Davet kodu", "Invite code"), color = sub, fontSize = 12.sp)
                 Text(c.code, color = Brand.accent, fontWeight = FontWeight.Bold, fontSize = 22.sp)
             }
+            // 1.9 TELSİZ (PTT) — Ultra; bas-kaydet-gönder
+            if (store.ultra) PttBar(store, id)
+            else Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Mic, null, tint = gold)
+                    Spacer(Modifier.width(10.dp))
+                    Text(L("Telsiz — Ultra üyeliği gerektirir", "Radio — requires Ultra"), color = sub, fontSize = 13.sp)
+                }
+            }
             Text(L("Üyeler", "Members"), color = Color.White, fontWeight = FontWeight.Bold)
             c.members?.forEach { m ->
                 Card {
@@ -507,5 +519,56 @@ private fun LiveTrackView(store: Store, friend: String, name: String, onBack: ()
                 Icon(Icons.Filled.WavingHand, null); Spacer(Modifier.width(8.dp)); Text(L("El salla", "Wave"))
             }
         }
+    }
+}
+
+// ---------------- TELSİZ (PTT) — kaydet ve kulübe gönder ----------------
+@Composable
+private fun PttBar(store: Store, clubId: String) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var recording by remember { mutableStateOf(false) }
+    var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    var status by remember { mutableStateOf("") }
+    val file = remember { java.io.File(ctx.cacheDir, "ptt_$clubId.m4a") }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun hasMic() = androidx.core.content.ContextCompat.checkSelfPermission(
+        ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(L("Telsiz", "Radio"), color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (recording) L("Kaydediliyor… bitir ve gönder", "Recording… tap to send")
+                    else L("Bas konuş — kulübe sesli mesaj", "Push to talk — voice to the club"),
+                    color = sub, fontSize = 12.sp
+                )
+            }
+            IconButton(onClick = {
+                if (!hasMic()) { permLauncher.launch(android.Manifest.permission.RECORD_AUDIO); return@IconButton }
+                if (!recording) {
+                    try {
+                        @Suppress("DEPRECATION") val r = android.media.MediaRecorder()
+                        r.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                        r.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                        r.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                        r.setOutputFile(file.absolutePath)
+                        r.prepare(); r.start(); recorder = r; recording = true; status = ""
+                    } catch (e: Exception) { status = L("Mikrofon hatası", "Mic error") }
+                } else {
+                    try { recorder?.stop() } catch (e: Exception) {}
+                    recorder?.release(); recorder = null; recording = false
+                    scope.launch {
+                        val bytes = try { file.readBytes() } catch (e: Exception) { ByteArray(0) }
+                        status = if (bytes.size > 500 && store.pttSend(clubId, bytes))
+                            L("Gönderildi ✓", "Sent ✓") else L("Gönderilemedi", "Failed")
+                    }
+                }
+            }) {
+                Icon(if (recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
+                    tint = if (recording) Color(0xFFFF3B30) else Brand.accent, modifier = Modifier.size(34.dp))
+            }
+        }
+        if (status.isNotEmpty()) Text(status, color = sub, fontSize = 12.sp)
     }
 }
