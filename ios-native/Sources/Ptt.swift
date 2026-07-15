@@ -43,6 +43,17 @@ final class PttEngine: NSObject, ObservableObject, AVAudioRecorderDelegate {
         }
     }
 
+    // ÇİFTLER: kaydı bir ARKADAŞA gönder (kulüp yerine kullanıcı — ücretsiz)
+    func stopAndSend(toUser user: String) {
+        rec?.stop(); recording = false
+        guard let data = try? Data(contentsOf: fileURL), data.count > 500, let store else { return }
+        sending = true
+        Task {
+            _ = await store.pttSendUser(user: user, data: data)
+            await MainActor.run { self.sending = false }
+        }
+    }
+
     func cancel() { rec?.stop(); recording = false }
 
     // Gelen klip: indir + kulaklıkta çal (arka planda da çalışır — konum modu app'i ayakta tutuyor)

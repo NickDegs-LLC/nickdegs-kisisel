@@ -170,6 +170,14 @@ struct ProfileView: View {
                                     if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
                                 }
                                 Spacer()
+                                // ÇİFTLER: basılı tut, konuş -> arkadaşa sesli mesaj (ücretsiz, kulüp gerekmez)
+                                Image(systemName: PttEngine.shared.recording ? "mic.fill" : "mic")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(PttEngine.shared.recording ? Color.red : Brand.accent)
+                                    .frame(width: 38, height: 38).glassPanel(19)
+                                    .gesture(DragGesture(minimumDistance: 0)
+                                        .onChanged { _ in if !PttEngine.shared.recording { PttEngine.shared.store = store; PttEngine.shared.startRecording() } }
+                                        .onEnded { _ in if PttEngine.shared.recording { PttEngine.shared.stopAndSend(toUser: f.username) } })
                                 // 1.8 CANLI TAKİP: "Bul" tadında canlı izleme (hız + nabız + konum)
                                 Button { if ultraMember { liveFriend = f } else { showPaywall = true } } label: {
                                     Image(systemName: "dot.radiowaves.left.and.right")

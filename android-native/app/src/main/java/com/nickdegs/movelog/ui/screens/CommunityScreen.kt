@@ -213,7 +213,8 @@ private fun FriendsView(store: Store, onBack: () -> Unit) {
                         AvatarDot("", f.name ?: f.username)
                         Spacer(Modifier.width(10.dp))
                         Text(f.name ?: f.username, color = Color.White, modifier = Modifier.weight(1f))
-                        if (f.online) Box(Modifier.size(9.dp).background(Color(0xFF34C759), CircleShape))
+                        FriendVoiceButton(store, f.username)   // çiftler: sesli mesaj (ücretsiz)
+                        if (f.online) { Spacer(Modifier.width(8.dp)); Box(Modifier.size(9.dp).background(Color(0xFF34C759), CircleShape)) }
                     }
                 }
             }
@@ -225,6 +226,42 @@ private fun FriendsView(store: Store, onBack: () -> Unit) {
 private fun AvatarDot(emoji: String, name: String) {
     Box(Modifier.size(38.dp).background(Brand.accent.copy(alpha = 0.25f), CircleShape), contentAlignment = Alignment.Center) {
         Text(if (emoji.isNotEmpty()) emoji else name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+// ---------------- ÇİFTLER: ARKADAŞA SESLİ MESAJ (ücretsiz, kulüp gerekmez) ----------------
+@Composable
+private fun FriendVoiceButton(store: Store, friendUser: String) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var recording by remember { mutableStateOf(false) }
+    var recorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    val file = remember { java.io.File(ctx.cacheDir, "pttu_$friendUser.m4a") }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun hasMic() = androidx.core.content.ContextCompat.checkSelfPermission(
+        ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    IconButton(onClick = {
+        if (!hasMic()) { permLauncher.launch(android.Manifest.permission.RECORD_AUDIO); return@IconButton }
+        if (!recording) {
+            try {
+                @Suppress("DEPRECATION") val r = android.media.MediaRecorder()
+                r.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                r.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                r.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                r.setOutputFile(file.absolutePath)
+                r.prepare(); r.start(); recorder = r; recording = true
+            } catch (e: Exception) {}
+        } else {
+            try { recorder?.stop() } catch (e: Exception) {}
+            recorder?.release(); recorder = null; recording = false
+            scope.launch {
+                val bytes = try { file.readBytes() } catch (e: Exception) { ByteArray(0) }
+                if (bytes.size > 500) store.pttSendUser(friendUser, bytes)
+            }
+        }
+    }) {
+        Icon(if (recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
+            tint = if (recording) Color(0xFFFF3B30) else Brand.accent, modifier = Modifier.size(22.dp))
     }
 }
 

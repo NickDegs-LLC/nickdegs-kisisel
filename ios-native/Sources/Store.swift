@@ -573,6 +573,18 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let http = resp as? HTTPURLResponse else { return false }
         return (200..<300).contains(http.statusCode)
     }
+    // ÇİFTLER: bir ARKADAŞA sesli mesaj (kulüp gerekmez, ÜCRETSİZ). /api/ptt/send-user
+    func pttSendUser(user: String, data: Data) async -> Bool {
+        guard let esc = user.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: API + "/api/ptt/send-user?user=\(esc)") else { return false }
+        var rq = URLRequest(url: url); rq.httpMethod = "POST"
+        rq.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
+        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        rq.httpBody = data
+        guard let (_, resp) = try? await URLSession.shared.data(for: rq),
+              let http = resp as? HTTPURLResponse else { return false }
+        return (200..<300).contains(http.statusCode)
+    }
     func pttGet(_ id: String) async -> Data? {
         guard let url = URL(string: API + "/api/ptt/\(id)") else { return nil }
         var rq = URLRequest(url: url)

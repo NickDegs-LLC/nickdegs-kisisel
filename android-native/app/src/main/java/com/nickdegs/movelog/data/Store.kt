@@ -562,6 +562,17 @@ class Store(app: Application) : AndroidViewModel(app) {
             c.responseCode in 200..299
         } catch (e: Exception) { false }
     }
+    // ÇİFTLER: bir arkadaşa sesli mesaj (kulüp gerekmez, ÜCRETSİZ). /api/ptt/send-user
+    suspend fun pttSendUser(user: String, data: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val c = (URL("$API/api/ptt/send-user?user=$user").openConnection() as HttpURLConnection)
+            c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
+            c.setRequestProperty("Content-Type", "audio/mp4")
+            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            c.doOutput = true; c.outputStream.use { it.write(data) }
+            c.responseCode in 200..299
+        } catch (e: Exception) { false }
+    }
     suspend fun pttGet(id: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
             val c = (URL("$API/api/ptt/$id").openConnection() as HttpURLConnection)
