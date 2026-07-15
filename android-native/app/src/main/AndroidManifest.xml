@@ -36,5 +36,14 @@
             android:name=".TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- Wear OS (Samsung saat) köprüsü: saatin kimlik isteğine cevap verir -->
+        <service
+            android:name=".PhoneWearService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/movelog" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

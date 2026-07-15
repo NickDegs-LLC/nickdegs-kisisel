@@ -51,6 +51,7 @@ private sealed class Route {
     object Username : Route()
     object IdeaBox : Route()
     object GroupVideo : Route()
+    object Convoy : Route()
     data class Live(val friend: String, val name: String) : Route()
 }
 
@@ -72,6 +73,7 @@ fun CommunityScreen(store: Store) {
         is Route.Username -> UsernameView(store) { route = Route.Hub }
         is Route.IdeaBox -> IdeaBoxView(store) { route = Route.Hub }
         is Route.GroupVideo -> GroupVideoView(store) { route = Route.Hub }
+        is Route.Convoy -> ConvoyVoiceView(store) { route = Route.Hub }
         is Route.Live -> LiveTrackView(store, r.friend, r.name) { route = Route.Hub }
     }
 }
@@ -108,6 +110,7 @@ private fun HubView(store: Store, ultra: Boolean, nav: (Route) -> Unit) {
         HubItem(Icons.Filled.AlternateEmail, L("Kullanıcı Adı", "Username"), L("@adını belirle, seni bulsunlar", "Set your @handle so friends find you"), Route.Username),
         HubItem(Icons.Filled.Movie, L("Grup Videosu", "Group Video"), L("Ortak sürüş videosu tercihi", "Shared ride video preference"), Route.GroupVideo),
         HubItem(Icons.Filled.Lightbulb, L("Fikir Kutusu", "Idea Box"), L("Fikrin doğrudan geliştiriciye", "Your idea straight to the developer"), Route.IdeaBox),
+        HubItem(Icons.Filled.VolumeUp, L("Konvoy Sesi", "Convoy Voice"), L("Kulüp arkadaşlarının mesafesini sesli duy", "Hear clubmates' distance aloud"), Route.Convoy, true),
     )
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
         Bar(L("Sürüş Dünyan", "Your Riding World"), null)
@@ -680,6 +683,76 @@ private fun GroupVideoView(store: Store, onBack: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+// ---------------- KONVOY SESLİ ANONSLARI (TTS) ----------------
+@Composable
+private fun ConvoyVoiceView(store: Store, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    var enabled by remember { mutableStateOf(false) }
+    var clubs by remember { mutableStateOf<List<Club>>(emptyList()) }
+    var status by remember { mutableStateOf("") }
+    var ready by remember { mutableStateOf(false) }
+    val tts = remember {
+        android.speech.tts.TextToSpeech(ctx.applicationContext) { }.also { }
+    }
+    DisposableEffect(Unit) { onDispose { tts.stop(); tts.shutdown() } }
+    LaunchedEffect(Unit) {
+        val isTr = java.util.Locale.getDefault().language == "tr"
+        tts.language = if (isTr) java.util.Locale("tr", "TR") else java.util.Locale.US
+        ready = true
+        clubs = store.clubs()
+    }
+    val fused = remember { com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(ctx) }
+    val spokenAt = remember { mutableMapOf<String, Long>() }
+    LaunchedEffect(enabled, clubs) {
+        val cid = clubs.firstOrNull()?.id ?: return@LaunchedEffect
+        while (enabled) {
+            val riders = store.liveClub(cid)
+            val me = try {
+                kotlinx.coroutines.suspendCancellableCoroutine<android.location.Location?> { c ->
+                    try { fused.lastLocation.addOnSuccessListener { c.resume(it) {} }.addOnFailureListener { c.resume(null) {} } }
+                    catch (e: SecurityException) { c.resume(null) {} }
+                }
+            } catch (e: Exception) { null }
+            if (me != null) {
+                for (r in riders) {
+                    val out = FloatArray(1)
+                    android.location.Location.distanceBetween(me.latitude, me.longitude, r.lat, r.lon, out)
+                    val meters = out[0].toInt()
+                    val now = System.currentTimeMillis()
+                    if ((spokenAt[r.user] ?: 0) + 90_000 < now) {
+                        spokenAt[r.user] = now
+                        val txt = if (java.util.Locale.getDefault().language == "tr")
+                            "${r.name} ${if (meters >= 1000) "%.1f kilometre".format(meters / 1000.0) else "$meters metre"} uzakta"
+                        else "${r.name} is ${if (meters >= 1000) "%.1f kilometers".format(meters / 1000.0) else "$meters meters"} away"
+                        tts.speak(txt, android.speech.tts.TextToSpeech.QUEUE_ADD, null, r.user)
+                    }
+                }
+                status = L("${riders.size} sürücü dinleniyor…", "Tracking ${riders.size} riders…")
+            }
+            delay(25_000)
+        }
+    }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("Konvoy Sesi", "Convoy Voice"), onBack)
+        if (!store.ultra) Text(L("Bu özellik Ultra üyeliği gerektirir.", "This feature requires Ultra."),
+            color = gold, fontSize = 14.sp, modifier = Modifier.padding(16.dp))
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(L("Sürüş sırasında kulüp arkadaşlarının ne kadar geride/ileride olduğu kulaklığına sesli söylenir. Eller gidonda, gözler yolda.",
+                   "During a ride, how far your clubmates are is spoken to your headset. Hands on the bars, eyes on the road."),
+                color = sub, fontSize = 13.sp)
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.VolumeUp, null, tint = Brand.accent, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(L("Sesli anonslar", "Voice announcements"), color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, enabled = ready && store.ultra, onCheckedChange = { enabled = it })
+                }
+            }
+            if (status.isNotEmpty()) Text(status, color = sub, fontSize = 13.sp)
         }
     }
 }

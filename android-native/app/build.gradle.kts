@@ -62,4 +62,5 @@ dependencies {
     implementation("com.android.billingclient:billing-ktx:7.1.1")
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
     implementation("io.livekit:livekit-android:2.18.2")   // 1.9 canlı interkom (kulüp sesli oda)
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")   // Wear OS saat köprüsü
 }

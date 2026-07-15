@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "MoveLog"
 include(":app")
+include(":wear")   // Wear OS (Samsung Galaxy Watch / Wear OS 3+) — bilekten rota kaydı + nabız
