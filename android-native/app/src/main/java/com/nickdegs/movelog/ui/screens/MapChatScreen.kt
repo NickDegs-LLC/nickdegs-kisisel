@@ -63,7 +63,6 @@ private fun MapPane(store: Store) {
             if (recording) { com.nickdegs.movelog.TrackingService.stop(ctx); recording = false }
             else perm.launch(arrayOf(
                 android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.ACCESS_BACKGROUND_LOCATION,
                 android.Manifest.permission.POST_NOTIFICATIONS))
         },
         colors = androidx.compose.material3.ButtonDefaults.buttonColors(
