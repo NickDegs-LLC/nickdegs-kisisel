@@ -1,4 +1,40 @@
 import SwiftUI
+import AVFoundation
+
+// Sohbette SESLİ MESAJ baloncuğu: dokun -> klibi indir (pttGet) -> çal. (Telsiz anlık çalma ayrı durur.)
+struct VoiceMsgBubble: View {
+    @EnvironmentObject var store: Store
+    let pid: String
+    let mine: Bool
+    @State private var playing = false
+    @State private var player: AVAudioPlayer? = nil
+    var body: some View {
+        Button {
+            if playing { player?.stop(); playing = false; return }
+            Task {
+                guard let data = await store.pttGet(pid) else { return }
+                await MainActor.run {
+                    let s = AVAudioSession.sharedInstance()
+                    try? s.setCategory(.playback, options: [.duckOthers, .allowBluetooth, .allowBluetoothA2DP])
+                    try? s.setActive(true)
+                    player = try? AVAudioPlayer(data: data)
+                    player?.play(); playing = true
+                    if let d = player?.duration, d > 0 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + d) { playing = false }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: playing ? "stop.fill" : "play.fill").font(.system(size: 15, weight: .bold))
+                Image(systemName: "waveform").font(.system(size: 17))
+                Text(L("Sesli mesaj", "Voice message")).font(.system(size: 14.5, weight: .medium))
+            }
+            .foregroundStyle(mine ? .white : .primary)
+            .padding(.horizontal, 15).padding(.vertical, 11)
+        }.buttonStyle(.plain)
+    }
+}
 
 struct ChatListView: View {
     @EnvironmentObject var store: Store
@@ -39,7 +75,8 @@ struct ChatListView: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(c.name ?? c.username).font(.system(size: 17, weight: .semibold))
-                Text(c.last?.text ?? "").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Text(c.last?.type == "voice" ? L("🎙️ Sesli mesaj", "🎙️ Voice message") : (c.last?.text ?? ""))
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if let u = c.unread, u > 0 {
@@ -93,18 +130,24 @@ struct ConversationView: View {
     func bubble(_ m: Message) -> some View {
         HStack {
             if isMine(m) { Spacer(minLength: 50) }
-            Text(m.text ?? "")
-                .font(.system(size: 15.5))
-                .foregroundStyle(isMine(m) ? .white : .primary)
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background {
-                    if isMine(m) {
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(Brand.gradient.opacity(0.9))
-                    } else { Color.clear }
+            Group {
+                if m.type == "voice", let pid = m.media, !pid.isEmpty {
+                    VoiceMsgBubble(pid: pid, mine: isMine(m))
+                } else {
+                    Text(m.text ?? "")
+                        .font(.system(size: 15.5))
+                        .foregroundStyle(isMine(m) ? .white : .primary)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
                 }
-                .glassPanelIf(!isMine(m))
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+            .background {
+                if isMine(m) {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Brand.gradient.opacity(0.9))
+                } else { Color.clear }
+            }
+            .glassPanelIf(!isMine(m))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             if !isMine(m) { Spacer(minLength: 50) }
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))

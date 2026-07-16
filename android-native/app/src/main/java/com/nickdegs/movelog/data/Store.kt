@@ -372,7 +372,8 @@ class Store(app: Application) : AndroidViewModel(app) {
         val arr = o.optJSONArray("messages") ?: JSONArray()
         val msgs = (0 until arr.length()).map { i ->
             val m = arr.getJSONObject(i)
-            Msg(m.optString("id"), m.optString("frm"), m.optString("text"), m.optLong("ts"))
+            Msg(m.optString("id"), m.optString("frm"), m.optString("text"), m.optLong("ts"),
+                m.optString("type", "text"), m.optString("media", ""))
         }
         val name = o.optJSONObject("peer")?.optString("name") ?: other
         return msgs to name
@@ -644,7 +645,8 @@ data class SummaryVid(val mode: String = "flyover", val speed: String = "medium"
                       val cam: String = "orta", val music: String = "", val line: String = "#00E5FF")
 data class SummaryCfg(val enabled: Boolean = true, val hour: Int = 21, val video: SummaryVid = SummaryVid())
 data class Convo(val username: String, val name: String?, val online: Boolean, val unread: Int, val last: String = "")
-data class Msg(val id: String, val frm: String, val text: String, val ts: Long)
+data class Msg(val id: String, val frm: String, val text: String, val ts: Long,
+               val type: String = "text", val media: String = "")   // type="voice" -> media=pid (sesli mesaj)
 data class Position(val device: String, val lat: Double, val lon: Double, val speedKmh: Double, val online: Boolean)
 
 data class Summary(val date: String, val summary: String, val videoId: String?,

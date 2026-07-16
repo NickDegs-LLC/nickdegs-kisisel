@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
 import kotlinx.coroutines.launch
 import com.nickdegs.movelog.data.Convo
 import com.nickdegs.movelog.data.Position
@@ -163,7 +164,8 @@ private fun ChatThread(store: Store, convo: Convo, onBack: () -> Unit) {
                     horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
                     Surface(color = if (mine) Brand.accent else Brand.card,
                         shape = RoundedCornerShape(16.dp), modifier = Modifier.widthIn(max = 280.dp)) {
-                        Text(m.text, color = Color.White, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        if (m.type == "voice" && m.media.isNotEmpty()) VoiceBubble(store, m.media)
+                        else Text(m.text, color = Color.White, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                     }
                 }
             }
@@ -181,5 +183,39 @@ private fun ChatThread(store: Store, convo: Convo, onBack: () -> Unit) {
                 scope.launch { if (store.chatSend(convo.username, t)) refresh(); sending = false }
             }) { Icon(Icons.Filled.Send, L("Gönder", "Send"), tint = Brand.accent) }
         }
+    }
+}
+
+// Sohbette SESLİ MESAJ baloncuğu: dokun -> klibi indir (pttGet) -> MediaPlayer ile çal
+@androidx.compose.runtime.Composable
+private fun VoiceBubble(store: com.nickdegs.movelog.data.Store, pid: String) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var playing by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var player by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<android.media.MediaPlayer?>(null) }
+    Row(
+        Modifier.clickable {
+            if (playing) {
+                try { player?.stop(); player?.release() } catch (e: Exception) {}
+                player = null; playing = false; return@clickable
+            }
+            scope.launch {
+                val bytes = store.pttGet(pid) ?: return@launch
+                try {
+                    val f = java.io.File(ctx.cacheDir, "vm_$pid.m4a"); f.writeBytes(bytes)
+                    val mp = android.media.MediaPlayer()
+                    mp.setDataSource(f.absolutePath); mp.prepare()
+                    mp.setOnCompletionListener { it.release(); player = null; playing = false }
+                    mp.start(); player = mp; playing = true
+                } catch (e: Exception) { playing = false }
+            }
+        }.padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(if (playing) Icons.Filled.Stop else Icons.Filled.PlayArrow, null, tint = Color.White)
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Filled.GraphicEq, null, tint = Color.White)
+        Spacer(Modifier.width(8.dp))
+        Text(L("Sesli mesaj", "Voice message"), color = Color.White)
     }
 }
