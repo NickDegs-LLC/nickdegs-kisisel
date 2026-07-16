@@ -86,6 +86,21 @@ struct RootView: View {
         .onChange(of: store.jumpToVideos) { _, v in
             if v { sel = 1; store.jumpToVideos = false }   // "Video oluştur" -> Videolarım'a geç ("Hazırlanıyor" görünür)
         }
+        // BİLDİRİM DOKUNMA -> ilgili ekran (route: "voice:<user>:<pid>:<isim>", "videos", "friends", "map"...)
+        .onReceive(NotificationCenter.default.publisher(for: .ndDeepLink)) { note in
+            guard let route = note.object as? String else { return }
+            let p = route.split(separator: ":", maxSplits: 3).map(String.init)
+            switch p.first {
+            case "videos": sel = 1
+            case "map", "chat": sel = 3
+            case "friends", "voice", "profile", "wave": sel = 4
+            default: break
+            }
+            if p.first == "voice", p.count >= 2 {   // sesli mesaj bildirimine dokununca: klibi çal
+                PttEngine.shared.store = store
+                PttEngine.shared.playIncoming(id: p[1], from: p.count >= 4 ? p[3] : "Rider")
+            }
+        }
         // iOS 26'da TabView otomatik Liquid Glass tab bar kullanır.
         .safeAreaInset(edge: .top) {
             if let a = ann, a.ts > annSeen {

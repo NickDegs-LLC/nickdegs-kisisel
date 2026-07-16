@@ -64,6 +64,17 @@ final class NotifDelegate: NSObject, UNUserNotificationCenterDelegate {
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .badge]
     }
+    // BİLDİRİME DOKUNULUNCA: payload'daki "route"a göre ilgili yere yönlendir (düz açılma yerine).
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        if let route = info["route"] as? String, !route.isEmpty {
+            await MainActor.run { NotificationCenter.default.post(name: .ndDeepLink, object: route) }
+        }
+    }
 }
 
-extension Notification.Name { static let ndApns = Notification.Name("nd_apns") }
+extension Notification.Name {
+    static let ndApns = Notification.Name("nd_apns")
+    static let ndDeepLink = Notification.Name("nd_deeplink")   // bildirim dokunma -> ilgili ekran
+}
