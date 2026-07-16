@@ -25,8 +25,10 @@ fun MoveLogApp(store: Store) {
     val scope = rememberCoroutineScope()
     // AÇILIŞ KAPISI: yalnızca sunucu-doğrulanmış kimlikle aç. İnternetsiz/kopya token ile ÇALIŞMAZ.
     LaunchedEffect(Unit) { if (store.auth == com.nickdegs.movelog.data.AuthState.CHECKING) store.validate() }
-    // Açılışta canlı-takip beacon'ı: batarya+konum bildir (arkadaşlar son durumu görsün, kayıt gerekmez)
-    LaunchedEffect(store.auth) { if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) store.sendBeacon() }
+    // Açılışta: canlı-takip beacon'ı + FCM push token kaydı (bildirimler için)
+    LaunchedEffect(store.auth) {
+        if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) { store.sendBeacon(); store.registerFcm() }
+    }
     when (store.auth) {
         com.nickdegs.movelog.data.AuthState.CHECKING -> { GateScreen(true) { }; return }
         com.nickdegs.movelog.data.AuthState.NEED_LOGIN -> { LoginScreen(store); return }
@@ -38,6 +40,17 @@ fun MoveLogApp(store: Store) {
     }
 
     var sel by remember { mutableStateOf(0) }
+    // Bildirim dokunma -> ilgili sekme (route: voice/chat/map->Harita, videos->Videolar, friends/wave->Topluluk)
+    LaunchedEffect(com.nickdegs.movelog.AppNav.route) {
+        val r = com.nickdegs.movelog.AppNav.route ?: return@LaunchedEffect
+        when (r.substringBefore(":")) {
+            "videos" -> sel = 1
+            "voice", "chat", "map" -> sel = 3
+            "friends", "wave" -> sel = 4
+            "profile" -> sel = 5
+        }
+        com.nickdegs.movelog.AppNav.route = null
+    }
     val tabs = listOf(
         Tab(L("Rotalar", "Routes"), Icons.Filled.Map),
         Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),

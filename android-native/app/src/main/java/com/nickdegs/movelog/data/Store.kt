@@ -538,6 +538,18 @@ class Store(app: Application) : AndroidViewModel(app) {
         if (lat != null && lon != null) b.put("lat", lat).put("lon", lon)
         req("/api/live/beacon", "POST", b)
     }
+    // FCM push token'ını backend'e kaydet (platform=android -> backend FCM ile gönderir)
+    suspend fun registerFcm() {
+        val token = try {
+            kotlinx.coroutines.suspendCancellableCoroutine<String?> { c ->
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                    .addOnSuccessListener { c.resume(it) {} }.addOnFailureListener { c.resume(null) {} }
+            }
+        } catch (e: Exception) { null } ?: return
+        getApplication<Application>().getSharedPreferences("movelog", Context.MODE_PRIVATE)
+            .edit().putString("nd_fcm", token).apply()
+        req("/api/pushtoken", "POST", JSONObject().put("token", token).put("platform", "android"))
+    }
     suspend fun liveClub(cid: String): List<ClubRider> {
         val d = req("/api/live/club/$cid") ?: return emptyList()
         val arr = JSONObject(d).optJSONArray("riders") ?: JSONArray()

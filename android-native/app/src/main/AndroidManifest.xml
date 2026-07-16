@@ -36,6 +36,14 @@
             android:name=".TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- FCM push bildirimleri (iOS APNs karşılığı) -->
+        <service
+            android:name=".MoveLogMessaging"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <!-- Wear OS (Samsung saat) köprüsü: saatin kimlik isteğine cevap verir -->
         <service
             android:name=".PhoneWearService"
