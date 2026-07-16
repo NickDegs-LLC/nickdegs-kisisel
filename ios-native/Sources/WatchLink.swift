@@ -25,6 +25,21 @@ final class PhoneWatchLink: NSObject, WCSessionDelegate {
         try? WCSession.default.updateApplicationContext(ctx)
     }
 
+    // ANLIK NABIZ PEEK: sessiz push gelince saate "kısa nabız ölçümü başlat" de. Saat ulaşılabilirse
+    // anında (sendMessage), değilse kuyruğa (transferUserInfo — saat uyanınca alır). Ölçüm saatte
+    // başlar, sunucuya raporlar; kimse bakmıyorsa (want=false) kendi kendine durur (pil serbest).
+    func startHRPeek() {
+        guard WCSession.isSupported() else { return }
+        let s = WCSession.default
+        guard s.activationState == .activated else { return }
+        let msg: [String: Any] = ["cmd": "hrpeek"]
+        if s.isReachable {
+            s.sendMessage(msg, replyHandler: nil) { _ in s.transferUserInfo(msg) }
+        } else {
+            s.transferUserInfo(msg)
+        }
+    }
+
     func session(_ s: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) { push() }
     func sessionDidBecomeInactive(_ s: WCSession) {}
     func sessionDidDeactivate(_ s: WCSession) { s.activate() }

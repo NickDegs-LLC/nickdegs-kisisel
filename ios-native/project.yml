@@ -12,7 +12,7 @@ packages:
     from: "2.0.0"
 settings:
   base:
-    MARKETING_VERSION: "1.11"
+    MARKETING_VERSION: "1.12"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: SZF4T3P583
     SWIFT_VERSION: "5.0"

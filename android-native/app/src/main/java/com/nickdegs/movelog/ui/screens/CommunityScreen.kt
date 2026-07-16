@@ -567,7 +567,11 @@ private fun LiveTrackView(store: Store, friend: String, name: String, onBack: ()
     var tel by remember { mutableStateOf<LiveTelemetry?>(null) }
     LaunchedEffect(friend) {
         store.liveStart(friend)
-        while (true) { tel = store.liveGet(friend); delay(5000) }
+        while (true) {
+            store.hrRequest(friend)          // anlık nabız: bakıldıkça arkadaşın saatini kısa ölçüme uyandır (kapanınca durur)
+            tel = store.liveGet(friend)
+            delay(5000)
+        }
     }
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
         Bar(L("$name — Canlı", "$name — Live"), onBack)

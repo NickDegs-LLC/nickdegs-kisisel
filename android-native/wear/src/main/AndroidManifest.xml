@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -37,5 +38,21 @@
             android:name=".RecordService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Anlık nabız peek: kısa süreli ölçüm servisi (health foreground) -->
+        <service
+            android:name=".HrPeekService"
+            android:exported="false"
+            android:foregroundServiceType="health" />
+
+        <!-- Telefondan gelen "/movelog/hrpeek" komutunu arka planda karşılar -->
+        <service
+            android:name=".WearMsgService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/movelog/hrpeek" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

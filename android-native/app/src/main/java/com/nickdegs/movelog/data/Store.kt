@@ -39,6 +39,7 @@ class Store(app: Application) : AndroidViewModel(app) {
     var displayName by mutableStateOf("")
     var premium by mutableStateOf(prefs.getBoolean("nd_premium", false))
     var ultra by mutableStateOf(prefs.getBoolean("nd_ultra", false))   // Ultra tier: Google 3D + kamera modları + Street View
+    var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
     // Açılış kapısı: token yoksa giriş; varsa SUNUCUDA doğrulanana kadar CHECKING.
@@ -517,6 +518,18 @@ class Store(app: Application) : AndroidViewModel(app) {
     }
     suspend fun liveWave(friend: String): Boolean =
         req("/api/live/wave", "POST", JSONObject().put("user", friend)) != null
+    // ANLIK NABIZ PEEK (izleyen): arkadaşı uyandır + "nabzını istiyorum" penceresini taze tut.
+    // Canlı ekran açıkken periyodik çağrılır; arkadaşın saati kısa ölçüm yapıp raporlar (liveGet merge eder).
+    suspend fun hrRequest(friend: String): Int? {
+        val d = req("/api/live/hr-request", "POST", JSONObject().put("user", friend)) ?: return null
+        val o = JSONObject(d)
+        return if (o.isNull("hr")) null else o.optInt("hr")
+    }
+    // GİZLİLİK: "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK).
+    suspend fun hrShare(on: Boolean): Boolean {
+        hrShareLocal = on; prefs.edit().putBoolean("nd_hrshare", on).apply()
+        return req("/api/live/hr-share", "POST", JSONObject().put("on", on)) != null
+    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     suspend fun sendBeacon() {
         val ctx = getApplication<Application>()

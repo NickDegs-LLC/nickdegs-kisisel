@@ -33,13 +33,30 @@ class MoveLogMessaging : FirebaseMessagingService() {
         }.start()
     }
 
+    // Sessiz nabız tetiği geldi: bağlı Wear OS saatine token+api ile "kısa nabız ölçümü" komutu yolla.
+    // Saat kendi ölçer + doğrudan sunucuya raporlar (want=false gelince durur, pil serbest). Saat yoksa sessizce geçer.
+    private fun triggerWearHrPeek() {
+        val token = getSharedPreferences("movelog", Context.MODE_PRIVATE).getString("nd_token", "") ?: ""
+        if (token.isEmpty()) return
+        try {
+            val payload = "$token|https://kisisel-api.nickdegs.com".toByteArray()
+            com.google.android.gms.wearable.Wearable.getNodeClient(this).connectedNodes
+                .addOnSuccessListener { nodes ->
+                    val mc = com.google.android.gms.wearable.Wearable.getMessageClient(this)
+                    nodes.forEach { mc.sendMessage(it.id, "/movelog/hrpeek", payload) }
+                }
+        } catch (e: Exception) {}
+    }
+
     override fun onMessageReceived(msg: RemoteMessage) {
         val d = msg.data
         val title = d["title"] ?: msg.notification?.title ?: "Move Log"
         val body = d["body"] ?: msg.notification?.body ?: ""
         val route = d["route"] ?: ""
         val silent = d["silent"] ?: ""
-        // sessiz (telsiz/beacon uyandırma) -> bildirim gösterme; şimdilik yoksay (Android'de arka plan çalma yok)
+        // ANLIK NABIZ: izleyen arkadaş bakıyor -> saate "kısa nabız ölçümü başlat" de (bildirim YOK)
+        if (silent == "hrpeek") { triggerWearHrPeek(); return }
+        // diğer sessiz (telsiz/beacon uyandırma) -> bildirim gösterme
         if (silent.isNotEmpty() && body.isEmpty()) return
         val ch = "movelog_push"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

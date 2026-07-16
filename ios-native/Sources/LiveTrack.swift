@@ -152,6 +152,8 @@ struct LiveTrackView: View {
         return t.spd > 8 ? .green : (t.spd > 2 ? .yellow : .orange)
     }
     func refresh(center: Bool) async {
+        // Anlık nabız peek: bakıldığı sürece arkadaşın saatini kısa ölçüme uyandır (kapanınca durur).
+        await store.hrRequest(friend.username)
         if let x = await store.liveGet(friend.username) {
             let moved = t == nil || abs(x.lat - (t?.lat ?? 0)) > 0.0001 || abs(x.lon - (t?.lon ?? 0)) > 0.0001
             t = x

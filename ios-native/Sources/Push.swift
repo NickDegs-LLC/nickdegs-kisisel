@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             let parts = ptt.split(separator: ":", maxSplits: 1).map(String.init)
             PttEngine.shared.playIncoming(id: parts.first ?? "", from: parts.count > 1 ? parts[1] : "Rider")
         } else if (userInfo["live"] as? Int) == 1 { Tracker.shared.liveWake() }   // 1.8: canlı izleme
+        else if (userInfo["hrpeek"] as? Int) == 1 { PhoneWatchLink.shared.startHRPeek() }  // anlık nabız: saati kısa ölçüme uyandır
         else { Tracker.shared.pokeWake() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { completionHandler(.newData) }
     }

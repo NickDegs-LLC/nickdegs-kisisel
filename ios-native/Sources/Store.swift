@@ -549,6 +549,20 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func liveWave(_ friend: String) async -> Bool {
         (try? await req("/api/live/wave", method: "POST", body: ["user": friend])) != nil
     }
+    // ANLIK NABIZ PEEK (izleyen): arkadaşı uyandır + "nabzını istiyorum" penceresini taze tut.
+    // Canlı ekran açıkken periyodik çağrılır; arkadaşın saati kısa ölçüm yapıp raporlar, dönüş
+    // hr taze ise anlık nabzı verir (liveGet de merge eder).
+    @discardableResult
+    func hrRequest(_ friend: String) async -> Int? {
+        guard let d = try? await req("/api/live/hr-request", method: "POST", body: ["user": friend]),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return nil }
+        return o["hr"] as? Int
+    }
+    // GİZLİLİK: "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK).
+    @discardableResult
+    func hrShare(_ on: Bool) async -> Bool {
+        (try? await req("/api/live/hr-share", method: "POST", body: ["on": on])) != nil
+    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     func beacon() async {
         UIDevice.current.isBatteryMonitoringEnabled = true

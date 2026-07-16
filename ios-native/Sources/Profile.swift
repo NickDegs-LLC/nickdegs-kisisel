@@ -31,6 +31,7 @@ struct ProfileView: View {
     @AppStorage("nd_premium") var premium = false
     @AppStorage("nd_ultra") var ultraMember = false   // Ultra rozeti (IAP.setUltra yazar) — altın kart
     @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
+    @AppStorage("nd_hrshare") var hrShare = true   // "Nabzımı arkadaşlarım görebilsin" (anlık nabız peek gizliliği)
     @State private var prof: Profile?
     @State private var friends: [Friend] = []
     @State private var incoming: [Friend] = []
@@ -470,6 +471,20 @@ struct ProfileView: View {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(L("Sesli konvoy anonsları","Voice convoy announcements")).font(.system(size: 15, weight: .semibold))
                                         Text(L("Kulaklığına otomatik: 'Semra 400 metre geride'","Auto to your headset: 'Semra fell 400m behind'"))
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }.tint(Brand.accent).padding(.vertical, 8)
+                            Divider()
+                            Toggle(isOn: Binding(
+                                get: { hrShare },
+                                set: { v in hrShare = v; Task { await store.hrShare(v) } })) {
+                                HStack(spacing: 12) {
+                                    Text("❤️").font(.system(size: 22))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(L("Nabzımı arkadaşlarım görebilsin","Let friends see my heart rate")).font(.system(size: 15, weight: .semibold))
+                                        Text(L("Canlı takipte arkadaşın anlık nabzını görebilir (saat gerekir). Kapatırsan gizlenir.",
+                                               "Friends can see your live heart rate on live-track (watch required). Turn off to hide."))
                                             .font(.caption2).foregroundStyle(.secondary)
                                     }
                                 }

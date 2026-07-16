@@ -40,4 +40,14 @@ final class WatchLink: NSObject, ObservableObject, WCSessionDelegate {
     func session(_ session: WCSession, didReceiveApplicationContext ctx: [String: Any]) {
         store(ctx)
     }
+    // Telefondan "anlık nabız ölçümü" komutu (izleyen arkadaş bakıyor): kısa HR-peek başlat.
+    private func handle(_ m: [String: Any]) {
+        if (m["cmd"] as? String) == "hrpeek" {
+            DispatchQueue.main.async { WorkoutManager.shared.startHRPeek() }
+        }
+    }
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { handle(message) }
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any],
+                 replyHandler: @escaping ([String: Any]) -> Void) { handle(message); replyHandler([:]) }
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) { handle(userInfo) }
 }

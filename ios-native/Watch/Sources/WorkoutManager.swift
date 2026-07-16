@@ -79,6 +79,71 @@ final class WorkoutManager: NSObject, ObservableObject {
         running = false
     }
 
+    // ---- ANLIK NABIZ PEEK (2026-07-16): aktivite GEREKMEZ ----
+    // Arkadaş canlı ekranı açınca telefon sessiz push alır -> saate "kısa HR ölçümü" der.
+    // Saat sadece nabzı toplayan hafif bir oturum açar, 4 sn'de bir sunucuya raporlar.
+    // Sunucu want=false dönerse (kimse bakmıyor) ölçüm durur -> pil serbest. 90 sn üst emniyet.
+    private var peekActive = false
+    private var peekTimer: Timer?
+    private var peekStarted = Date.distantPast
+    private let apiBase = "https://kisisel-api.nickdegs.com"
+
+    func startHRPeek() {
+        guard !running, !peekActive else { return }   // aktif sürüşte HR zaten akıyor, gerek yok
+        peekActive = true; peekStarted = Date()
+        let types: Set<HKSampleType> = [HKQuantityType(.heartRate)]
+        store.requestAuthorization(toShare: [], read: types) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.beginPeek() }
+        }
+    }
+
+    private func beginPeek() {
+        guard peekActive else { return }
+        let cfg = HKWorkoutConfiguration()
+        cfg.activityType = .other
+        do {
+            let s = try HKWorkoutSession(healthStore: store, configuration: cfg)
+            let b = s.associatedWorkoutBuilder()
+            b.dataSource = HKLiveWorkoutDataSource(healthStore: store, workoutConfiguration: cfg)
+            b.delegate = self
+            session = s; builder = b
+            s.startActivity(with: Date())
+            b.beginCollection(withStart: Date()) { _, _ in }
+        } catch { peekActive = false; return }
+        peekTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in self?.reportPeek() }
+    }
+
+    private func reportPeek() {
+        guard peekActive else { return }
+        if Date().timeIntervalSince(peekStarted) > 90 { stopHRPeek(); return }   // sert emniyet
+        let link = WatchLink.shared
+        guard !link.token.isEmpty, let url = URL(string: apiBase + "/api/live/hr-report") else { return }
+        var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 12
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer " + link.token, forHTTPHeaderField: "Authorization")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["hr": heartRate])   // hr=0 ise sunucu yok sayar, want yine döner
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            if let d = data, let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               (o["want"] as? Bool) == false {
+                DispatchQueue.main.async { self?.stopHRPeek() }   // kimse bakmıyor -> durdur
+            }
+        }.resume()
+    }
+
+    func stopHRPeek() {
+        guard peekActive else { return }
+        peekActive = false
+        peekTimer?.invalidate(); peekTimer = nil
+        if !running {                              // gerçek sürüş yoksa HR oturumunu kapat
+            session?.end()
+            builder?.endCollection(withEnd: Date()) { [weak self] _, _ in
+                self?.builder?.finishWorkout { _, _ in }
+            }
+            session = nil; builder = nil
+            DispatchQueue.main.async { self.heartRate = 0 }
+        }
+    }
+
     // Sürüş bittikten sonra bilekten video isteği (telefondaki generate ile aynı uç).
     func requestVideo(link: WatchLink, done: @escaping (Bool) -> Void) {
         guard let s = startedAt, let e = endedAt,
