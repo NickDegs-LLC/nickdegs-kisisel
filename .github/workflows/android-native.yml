@@ -34,7 +34,7 @@ jobs:
         run: echo "${{ secrets.MOVELOG_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/movelog.keystore"
 
       - name: Decode google-services.json (FCM push)
-        run: printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > android-native/app/google-services.json
+        run: printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" | tr -d '[:space:]' | base64 -d > android-native/app/google-services.json
 
       - name: Build AAB (signed)
         env:
