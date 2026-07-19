@@ -242,6 +242,10 @@ struct VideosView: View {
             } else {
                 asset = AVURLAsset(url: store.videoURL(r.id), options: ["AVURLAssetHTTPHeaderFieldsKey": store.authHeader])
             }
+            // SESSİZ ANAHTAR FIX: uygulama içi video, yan sessiz anahtarı açıkken de SESLİ çalsın
+            // (Fotoğraflar gibi .playback kategorisi; galeri sesli - uygulama sessiz tutarsızlığı biterr)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try? AVAudioSession.sharedInstance().setActive(true)
             let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             p.automaticallyWaitsToMinimizeStalling = true
             await MainActor.run { playerBox = PlayerBox(player: p) }
