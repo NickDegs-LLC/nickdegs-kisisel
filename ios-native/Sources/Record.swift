@@ -124,12 +124,31 @@ struct GenerateSheet: View {
                     modeRow("flat", L("Düz","Flat"), free: true)
                     modeRow("flyover", L("Kuş bakışı (Flyover)","Bird's-eye (Flyover)"), free: false)
                     modeRow("3d", L("3D · arazi kabartmalı","3D · terrain relief"), free: false)
+                    // TACTICAL (Ultra): CoD tarzı askeri uydu görevi videosu — uçtan uca ayrı render hattı
+                    HStack {
+                        Text("🎖️ " + L("Tactical · uydu görevi","Tactical · satellite op"))
+                        if !isUltra { Text("Ultra").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Brand.accent.opacity(0.25))) }
+                        Spacer()
+                        if mode == "tactical" { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassPanel(14)
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .onTapGesture { if isUltra { mode = "tactical" } else { showPaywall = true } }
+                    if mode == "tactical" {
+                        Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında rastgele arama, hedef kilidi, canlı takip ve görev kapanışı. Her video %100 benzersiz üretilir (9:16).",
+                               "Military satellite op: radio briefing, global random search, target lock, live tracking and mission outro. Every video is 100% unique (9:16)."))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
 
                     field(L("En-boy","Aspect"))
                     Picker("", selection: $aspect) {
                         Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
                     }.pickerStyle(.segmented)
 
+                    if mode != "tactical" {
                     field(L("Rota çizgisi","Route line"))
                     ScrollView(.horizontal, showsIndicators: false) {
                       HStack(spacing: 12) {
@@ -184,9 +203,16 @@ struct GenerateSheet: View {
                         }
                       }
                     }.padding(.horizontal, 2)
+                    }   // tactical: çizgi/nokta seçimi yok
 
                     field(L("Müzik","Music"))
                     Menu {
+                        if mode == "tactical" {
+                            Button(L("Rastgele (öner)","Random (suggest)")) { music = "" }
+                            ForEach(TACTICAL_TRACKS, id: \.self) { t in
+                                Button(t.replacingOccurrences(of: "_", with: " ")) { music = t }
+                            }
+                        } else {
                         Button(L("Yok","None")) { music = "" }
                         ForEach(stock, id: \.self) { s in
                             Button(s["name"] ?? "") {
@@ -196,6 +222,7 @@ struct GenerateSheet: View {
                         Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) {
                             if premium { showAudioPicker = true } else { showPaywall = true }
                         }
+                        }   // tactical/normal müzik listeleri
                     } label: {
                         HStack {
                             Image(systemName: "music.note")
@@ -345,3 +372,39 @@ struct GenerateSheet: View {
         .onTapGesture { if free || premium { mode = id } else { showPaywall = true } }
     }
 }
+let TACTICAL_TRACKS: [String] = [
+    "Achilles",
+    "Aggressor",
+    "Anxiety",
+    "Burnt_Spirit",
+    "Chase",
+    "Crusade",
+    "Crypto",
+    "Curse_of_the_Scarab",
+    "Dark_Times",
+    "Exotic_Battle",
+    "Final_Battle_of_the_Dark_Wizards",
+    "Five_Armies",
+    "Grim_League",
+    "Hitman",
+    "Impact_Prelude",
+    "Interloper",
+    "Invariance",
+    "Kick_Shock",
+    "Killers",
+    "Mechanolith",
+    "Movement_Proposition",
+    "Nerves",
+    "Oppressive_Gloom",
+    "Overheat",
+    "Prelude_and_Action",
+    "Raw",
+    "Rites",
+    "Spy_Glass",
+    "Stormfront",
+    "Strength_of_the_Titans",
+    "Tabuk",
+    "The_Descent",
+    "Undaunted",
+    "Volatile_Reaction"
+]
