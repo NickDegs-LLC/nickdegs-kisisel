@@ -143,10 +143,16 @@ struct GenerateSheet: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
 
-                    field(L("En-boy","Aspect"))
-                    Picker("", selection: $aspect) {
-                        Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
-                    }.pickerStyle(.segmented)
+                    if mode != "tactical" {
+                        field(L("En-boy","Aspect"))
+                        Picker("", selection: $aspect) {
+                            Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
+                        }.pickerStyle(.segmented)
+                    } else {
+                        // TACTICAL: 9:16 sabit (sinematik dikey format; backend de zorlar)
+                        Text(L("Format: 9:16 dikey (Reels/TikTok uyumlu)","Format: 9:16 vertical (Reels/TikTok ready)"))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
 
                     if mode != "tactical" {
                     field(L("Rota çizgisi","Route line"))
