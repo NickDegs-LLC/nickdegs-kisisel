@@ -68,9 +68,12 @@ struct GenerateSheet: View {
                             Label(rideLabel(t.id), systemImage: t.icon).tag(t.id)
                         }
                     }.pickerStyle(.menu).tint(Brand.accent)
+                    if mode != "tactical" {
 
                     field(L("Süre","Length"))
+                    }
                     // Otonom = PREMIUM: süre tamamen rotaya göre, max 3dk (günde 1). Free seçince paywall.
+                    if mode != "tactical" {
                     Picker("", selection: Binding(
                         get: { speed },
                         set: { v in if v == "auto" && !premium { showPaywall = true } else { speed = v } })) {
@@ -85,8 +88,10 @@ struct GenerateSheet: View {
                          : L("Kısa ≈15sn, Orta ≈30sn, Uzun rotaya göre (max 60sn). Süre rota uzunluğuna göre ölçeklenir.",
                              "Short ≈15s, Medium ≈30s, Long scales with distance (max 60s)."))
                         .font(.caption2).foregroundStyle(speed == "auto" ? Brand.accent : .secondary)
+                    }
 
                     // KAMERA MESAFESİ (premium, her video): kameranın rotaya yakınlığı.
+                    if mode != "tactical" {
                     field(L("Kamera mesafesi","Camera distance"))
                     Picker("", selection: Binding(
                         get: { premium ? camdist : "orta" },
@@ -95,6 +100,7 @@ struct GenerateSheet: View {
                         Text(L("Orta","Medium")).tag("orta")
                         Text(L("Uzak","Far")).tag("uzak")
                     }.pickerStyle(.segmented)
+                    }
                     Text(premium
                          ? L("Kameranın rotaya yakınlığı: Yakın daha yakın çekim, Uzak daha geniş kadraj.",
                              "How close the camera follows: Near = tighter shot, Far = wider framing.")
