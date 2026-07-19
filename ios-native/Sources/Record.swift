@@ -221,7 +221,7 @@ struct GenerateSheet: View {
                     field(L("Müzik","Music"))
                     Menu {
                         if mode == "tactical" {
-                            Button(L("Rastgele (öner)","Random (suggest)")) { music = "" }
+                            Button(L("Rastgele (öner)","Random (suggest)")) { music = "random" }
                             Button(L("Sessiz — müziksiz (Reels'te kendi müziğini ekle)","Silent — no music (add your own in Reels)")) { music = "none" }
                             Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) { showAudioPicker = true }
                             ForEach(TACTICAL_TRACKS, id: \.self) { t in
@@ -368,8 +368,9 @@ struct GenerateSheet: View {
             return stock.first { $0["id"] == id }?["name"] ?? id
         }
         if mode == "tactical" {
-            // tactical: boş = RASTGELE (Yok değil!); kütüphane parçası seçiliyse adını göster
-            return music.isEmpty ? L("Rastgele","Random") : music.replacingOccurrences(of: "_", with: " ")
+            if music.isEmpty { return L("Sessiz","Silent") }          // boş = SESSİZ (Barış kuralı)
+            if music == "random" { return L("Rastgele","Random") }
+            return music.replacingOccurrences(of: "_", with: " ")
         }
         return L("Yok","None")
     }
