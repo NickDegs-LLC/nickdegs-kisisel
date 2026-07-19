@@ -1229,6 +1229,12 @@ struct SummaryVideoSheet: View {
             Form {
                 Picker(L("Görünüm","Mode"), selection: $video.mode) {
                     Text(L("Düz","Flat")).tag("flat"); Text("Flyover").tag("flyover"); Text(L("3B","3D")).tag("3d")
+                    Text("🎖️ Tactical (Ultra)").tag("tactical")
+                }
+                if video.mode == "tactical" {
+                    Text(L("Askeri uydu görevi: günün tüm hareketi tek operasyonda. 9:16 sabit, süre 60sn altı (Reels uyumlu).",
+                           "Military satellite op: your whole day in one mission. Fixed 9:16, under 60s (Reels-ready)."))
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Picker(L("Süre","Duration"), selection: $video.speed) {
                     Text(L("Kısa","Short")).tag("fast"); Text(L("Orta","Medium")).tag("medium")
