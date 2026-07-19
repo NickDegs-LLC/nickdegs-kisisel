@@ -844,13 +844,12 @@ private fun ConvoyVoiceView(store: Store, onBack: () -> Unit) {
 }
 
 // ---------------- CANLI İNTERKOM (LiveKit sesli oda) ----------------
-@Composable
-
 // ==================== ÇİFT CANLI TELSİZ (2 kişilik, 2026-07-19) ====================
 // 📻 davet -> karşı taraf kabul -> LiveKit odası. Oda çiftten türetilir, token sadece o ikiliye = max 2.
 @Composable
 private fun PairTalkView(store: Store, peer: String, peerName: String, inviting: Boolean, onBack: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(if (inviting) "inviting" else "connecting") }
     var peerIn by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(false) }
@@ -907,7 +906,7 @@ private fun PairTalkView(store: Store, peer: String, peerName: String, inviting:
                     Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                         Button(onClick = {
                             muted = !muted
-                            try { room.localParticipant.setMicrophoneEnabled(!muted) } catch (e: Exception) {}
+                            scope.launch { try { room.localParticipant.setMicrophoneEnabled(!muted) } catch (e: Exception) {} }
                         }) { Text(if (muted) L("Aç", "Unmute") else L("Sustur", "Mute")) }
                         Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))) {
                             Text(L("Bitir", "End"))
@@ -922,6 +921,7 @@ private fun PairTalkView(store: Store, peer: String, peerName: String, inviting:
     }
 }
 
+@Composable
 private fun IntercomView(store: Store, clubId: String, clubName: String, onBack: () -> Unit) {
     val ctx = LocalContext.current
     var state by remember { mutableStateOf("connecting") }   // connecting|connected|error|denied
