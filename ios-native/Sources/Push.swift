@@ -60,10 +60,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 final class NotifDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotifDelegate()
-    // uygulama açıkken de bildirim göster
+    // uygulama açıkken de bildirim göster — İSTİSNA: sesli mesaj ("voice:") bildirimi.
+    // App açıkken telsiz klibi zaten sessiz push'la otomatik çalınıyor; bir de banner göstermek
+    // çift bildirim oluyordu -> foreground'da "voice:" banner'ı bastırılır (app kapalıyken normal gelir).
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .badge]
+        if let route = notification.request.content.userInfo["route"] as? String,
+           route.hasPrefix("voice:") {
+            return []   // çal + banner yok (çift bildirim fix'i)
+        }
+        return [.banner, .sound, .badge]
     }
     // BİLDİRİME DOKUNULUNCA: payload'daki "route"a göre ilgili yere yönlendir (düz açılma yerine).
     func userNotificationCenter(_ center: UNUserNotificationCenter,

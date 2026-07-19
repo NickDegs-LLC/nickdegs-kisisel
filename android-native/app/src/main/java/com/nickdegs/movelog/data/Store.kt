@@ -530,6 +530,36 @@ class Store(app: Application) : AndroidViewModel(app) {
         hrShareLocal = on; prefs.edit().putBoolean("nd_hrshare", on).apply()
         return req("/api/live/hr-share", "POST", JSONObject().put("on", on)) != null
     }
+    // ==================== ÇİFT CANLI TELSİZ (2 kişilik canlı sesli sohbet) ====================
+    suspend fun vcInvite(friend: String): Boolean =
+        req("/api/voicecall/invite", "POST", JSONObject().put("user", friend)) != null
+    suspend fun vcRespond(from: String, accept: Boolean): Boolean =
+        req("/api/voicecall/respond", "POST", JSONObject().put("user", from).put("accept", accept)) != null
+    /** dönen: (inviteFrom, inviteName, goPeer, goName) */
+    suspend fun vcStatus(): Array<String?> {
+        val d = req("/api/voicecall/status") ?: return arrayOf(null, null, null, null)
+        val o = JSONObject(d)
+        fun s(k: String) = if (o.isNull(k)) null else o.optString(k)
+        return arrayOf(s("invite_from"), s("invite_name"), s("go_peer"), s("go_name"))
+    }
+    /** dönen: (url, token, peerName) */
+    suspend fun vcToken(peer: String): Triple<String, String, String>? {
+        val esc = java.net.URLEncoder.encode(peer, "UTF-8")
+        val d = req("/api/voicecall/token?peer=$esc") ?: return null
+        val o = JSONObject(d)
+        val u = o.optString("url"); val t = o.optString("token")
+        if (u.isEmpty() || t.isEmpty()) return null
+        return Triple(u, t, o.optString("peer_name", peer))
+    }
+    // PTT ÇAKIŞMA: basılı tutarken karşı tarafın butonu pasifleşsin
+    suspend fun pttBusySet(friend: String, on: Boolean) {
+        req("/api/ptt/busy", "POST", JSONObject().put("user", friend).put("on", on))
+    }
+    suspend fun pttBusyOf(friend: String): Boolean {
+        val esc = java.net.URLEncoder.encode(friend, "UTF-8")
+        val d = req("/api/ptt/busy/$esc") ?: return false
+        return JSONObject(d).optBoolean("busy", false)
+    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     suspend fun sendBeacon() {
         val ctx = getApplication<Application>()

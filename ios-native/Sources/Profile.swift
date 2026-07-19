@@ -58,6 +58,10 @@ struct ProfileView: View {
     @State private var showWrapped = false
     @State private var showSharedRoutes = false
     @State private var liveFriend: Friend? = nil
+    @State private var pairTalkFriend: Friend? = nil                  // 📻 davet gönderen taraf
+    @State private var vcIncoming: (from: String, name: String)? = nil // gelen canlı-telsiz daveti
+    @State private var vcJoinPeer: Friend? = nil                       // kabul sonrası katılım
+    @State private var pttBusyFriends: Set<String> = []                // şu an bana konuşan arkadaşlar
 
     var body: some View {
         NavigationStack {
@@ -172,13 +176,35 @@ struct ProfileView: View {
                                 }
                                 Spacer()
                                 // ÇİFTLER: basılı tut, konuş -> arkadaşa sesli mesaj (ücretsiz, kulüp gerekmez)
-                                Image(systemName: PttEngine.shared.recording ? "mic.fill" : "mic")
+                                // PTT ÇAKIŞMA KİLİDİ: arkadaş şu an bana konuşuyorsa buton pasif ("konuşuyor")
+                                let isBusy = pttBusyFriends.contains(f.username)
+                                Image(systemName: isBusy ? "waveform" : (PttEngine.shared.recording ? "mic.fill" : "mic"))
                                     .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(PttEngine.shared.recording ? Color.red : Brand.accent)
+                                    .foregroundStyle(isBusy ? Color.orange : (PttEngine.shared.recording ? Color.red : Brand.accent))
+                                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: isBusy)
                                     .frame(width: 38, height: 38).glassPanel(19)
+                                    .opacity(isBusy ? 0.65 : 1)
                                     .gesture(DragGesture(minimumDistance: 0)
-                                        .onChanged { _ in if !PttEngine.shared.recording { PttEngine.shared.store = store; PttEngine.shared.startRecording() } }
-                                        .onEnded { _ in if PttEngine.shared.recording { PttEngine.shared.stopAndSend(toUser: f.username) } })
+                                        .onChanged { _ in
+                                            guard !isBusy else { return }
+                                            if !PttEngine.shared.recording {
+                                                PttEngine.shared.store = store; PttEngine.shared.startRecording()
+                                                Task { await store.pttBusySet(f.username, on: true) }
+                                            }
+                                        }
+                                        .onEnded { _ in
+                                            guard !isBusy else { return }
+                                            if PttEngine.shared.recording {
+                                                PttEngine.shared.stopAndSend(toUser: f.username)
+                                                Task { await store.pttBusySet(f.username, on: false) }
+                                            }
+                                        })
+                                // ÇİFT CANLI TELSİZ: davet et -> kabul edince 2 kişilik canlı sesli sohbet
+                                Button { pairTalkFriend = f } label: {
+                                    Image(systemName: "phone.and.waveform.fill")
+                                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
+                                        .frame(width: 38, height: 38).glassPanel(19)
+                                }.buttonStyle(.borderless)
                                 // 1.8 CANLI TAKİP: "Bul" tadında canlı izleme (hız + nabız + konum)
                                 Button { if ultraMember { liveFriend = f } else { showPaywall = true } } label: {
                                     Image(systemName: "dot.radiowaves.left.and.right")
@@ -561,6 +587,50 @@ struct ProfileView: View {
         .sheet(isPresented: $showWrapped) { WrappedSheet() }
         .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
         .sheet(item: $liveFriend) { f in LiveTrackView(friend: f) }
+        // ÇİFT CANLI TELSİZ: davet eden taraf (bekler + bağlanır)
+        .sheet(item: $pairTalkFriend) { f in
+            PairTalkView(peer: f.username, peerLabel: f.name ?? f.username, inviting: true)
+        }
+        // kabul eden taraf (direkt katılır)
+        .sheet(item: $vcJoinPeer) { f in
+            PairTalkView(peer: f.username, peerLabel: f.name ?? f.username, inviting: false)
+        }
+        .alert(L("Canlı telsiz daveti 📻", "Live radio invite 📻"), isPresented: Binding(
+            get: { vcIncoming != nil }, set: { if !$0 { vcIncoming = nil } })) {
+            Button(L("Kabul et", "Accept")) {
+                if let inv = vcIncoming {
+                    Task {
+                        _ = await store.vcRespond(from: inv.from, accept: true)
+                        vcJoinPeer = Friend(username: inv.from, name: inv.name, handle: nil, avatar: nil, online: nil)
+                    }
+                    vcIncoming = nil
+                }
+            }
+            Button(L("Reddet", "Decline"), role: .cancel) {
+                if let inv = vcIncoming { Task { _ = await store.vcRespond(from: inv.from, accept: false) } }
+                vcIncoming = nil
+            }
+        } message: {
+            Text(L("\(vcIncoming?.name ?? "") seni canlı sesli sohbete davet ediyor",
+                   "\(vcIncoming?.name ?? "") is inviting you to a live voice chat"))
+        }
+        // PTT meşgul + gelen davet polling'i (profil görünürken 2.5 sn'de bir, hafif)
+        .task {
+            while !Task.isCancelled {
+                if !friends.isEmpty {
+                    var busy: Set<String> = []
+                    for fr in friends.prefix(8) {
+                        if await store.pttBusyOf(fr.username) { busy.insert(fr.username) }
+                    }
+                    pttBusyFriends = busy
+                }
+                let st = await store.vcStatus()
+                if let f = st.invFrom, vcIncoming == nil, pairTalkFriend == nil, vcJoinPeer == nil {
+                    vcIncoming = (f, st.invName ?? f)
+                }
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+            }
+        }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

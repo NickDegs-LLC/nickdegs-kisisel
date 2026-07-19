@@ -93,7 +93,7 @@ struct RootView: View {
             switch p.first {
             case "videos": sel = 1
             case "map", "chat": sel = 3
-            case "friends", "voice", "profile", "wave": sel = 4
+            case "friends", "voice", "profile", "wave", "vcall", "vcallok": sel = 4   // canlı telsiz davet/kabul -> Profil (poll alert anında yakalar)
             default: break
             }
             if p.first == "voice", p.count >= 2 {   // sesli mesaj bildirimine dokununca: klibi çal

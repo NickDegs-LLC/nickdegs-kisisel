@@ -563,6 +563,38 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func hrShare(_ on: Bool) async -> Bool {
         (try? await req("/api/live/hr-share", method: "POST", body: ["on": on])) != nil
     }
+    // ==================== ÇİFT CANLI TELSİZ (2 kişilik canlı sesli sohbet) ====================
+    @discardableResult
+    func vcInvite(_ friend: String) async -> Bool {
+        (try? await req("/api/voicecall/invite", method: "POST", body: ["user": friend])) != nil
+    }
+    @discardableResult
+    func vcRespond(from: String, accept: Bool) async -> Bool {
+        (try? await req("/api/voicecall/respond", method: "POST", body: ["user": from, "accept": accept])) != nil
+    }
+    func vcStatus() async -> (invFrom: String?, invName: String?, goPeer: String?, goName: String?) {
+        guard let d = try? await req("/api/voicecall/status"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return (nil, nil, nil, nil) }
+        return (o["invite_from"] as? String, o["invite_name"] as? String,
+                o["go_peer"] as? String, o["go_name"] as? String)
+    }
+    func vcToken(peer: String) async -> (url: String, token: String, room: String, peerName: String)? {
+        guard let esc = peer.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let d = try? await req("/api/voicecall/token?peer=\(esc)"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let u = o["url"] as? String, let t = o["token"] as? String else { return nil }
+        return (u, t, o["room"] as? String ?? "", o["peer_name"] as? String ?? peer)
+    }
+    // PTT ÇAKIŞMA: basılı tutarken karşı tarafın butonu pasifleşsin
+    func pttBusySet(_ friend: String, on: Bool) async {
+        _ = try? await req("/api/ptt/busy", method: "POST", body: ["user": friend, "on": on])
+    }
+    func pttBusyOf(_ friend: String) async -> Bool {
+        guard let esc = friend.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let d = try? await req("/api/ptt/busy/\(esc)"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+        return (o["busy"] as? Bool) ?? false
+    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     func beacon() async {
         UIDevice.current.isBatteryMonitoringEnabled = true

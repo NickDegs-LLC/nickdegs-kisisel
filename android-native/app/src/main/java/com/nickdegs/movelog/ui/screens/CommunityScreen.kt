@@ -143,6 +143,9 @@ private fun HubView(store: Store, ultra: Boolean, nav: (Route) -> Unit) {
 @Composable
 private fun FriendsView(store: Store, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    var pairTalk by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }  // (user, ad, davetEdenMiyim)
+    var vcIncoming by remember { mutableStateOf<Pair<String, String>?>(null) }           // gelen davet (user, ad)
+    var busyFriends by remember { mutableStateOf<Set<String>>(emptySet()) }
     var q by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<FoundUser>>(emptyList()) }
     var incoming by remember { mutableStateOf<List<FoundUser>>(emptyList()) }
@@ -153,6 +156,35 @@ private fun FriendsView(store: Store, onBack: () -> Unit) {
         incoming = store.friendRequests().first
     }
     LaunchedEffect(Unit) { reload() }
+    // PTT meşgul + canlı telsiz daveti polling (2.5 sn)
+    LaunchedEffect(Unit) {
+        while (true) {
+            val bs = mutableSetOf<String>()
+            friends.take(8).forEach { fr -> if (store.pttBusyOf(fr.username)) bs.add(fr.username) }
+            busyFriends = bs
+            val st = store.vcStatus()
+            if (st[0] != null && vcIncoming == null && pairTalk == null) vcIncoming = Pair(st[0]!!, st[1] ?: st[0]!!)
+            delay(2500)
+        }
+    }
+    // ÇİFT CANLI TELSİZ ekranı (davet eden bekler / kabul eden direkt bağlanır)
+    pairTalk?.let { (u, nm, inviting) ->
+        PairTalkView(store, u, nm, inviting) { pairTalk = null }
+        return
+    }
+    vcIncoming?.let { (u, nm) ->
+        AlertDialog(onDismissRequest = { vcIncoming = null },
+            title = { Text(L("Canlı telsiz daveti 📻", "Live radio invite 📻")) },
+            text = { Text(L("$nm seni canlı sesli sohbete davet ediyor", "$nm is inviting you to a live voice chat")) },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch { store.vcRespond(u, true); pairTalk = Triple(u, nm, false); vcIncoming = null }
+                }, colors = ButtonDefaults.buttonColors(containerColor = Brand.accent)) { Text(L("Kabul et", "Accept")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { scope.launch { store.vcRespond(u, false) }; vcIncoming = null }) { Text(L("Reddet", "Decline")) }
+            })
+    }
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
         Bar(L("Arkadaşlar", "Friends"), onBack)
         Column(Modifier.padding(14.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -213,7 +245,10 @@ private fun FriendsView(store: Store, onBack: () -> Unit) {
                         AvatarDot("", f.name ?: f.username)
                         Spacer(Modifier.width(10.dp))
                         Text(f.name ?: f.username, color = Color.White, modifier = Modifier.weight(1f))
-                        FriendVoiceButton(store, f.username)   // çiftler: sesli mesaj (ücretsiz)
+                        FriendVoiceButton(store, f.username, busyFriends.contains(f.username))   // çiftler: sesli mesaj (+ çakışma kilidi)
+                        IconButton(onClick = { pairTalk = Triple(f.username, f.name ?: f.username, true) }) {
+                            Icon(Icons.Filled.Call, null, tint = Brand.accent, modifier = Modifier.size(22.dp))
+                        }
                         if (f.online) { Spacer(Modifier.width(8.dp)); Box(Modifier.size(9.dp).background(Color(0xFF34C759), CircleShape)) }
                     }
                 }
@@ -231,7 +266,7 @@ private fun AvatarDot(emoji: String, name: String) {
 
 // ---------------- ÇİFTLER: ARKADAŞA SESLİ MESAJ (ücretsiz, kulüp gerekmez) ----------------
 @Composable
-private fun FriendVoiceButton(store: Store, friendUser: String) {
+private fun FriendVoiceButton(store: Store, friendUser: String, peerBusy: Boolean = false) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var recording by remember { mutableStateOf(false) }
@@ -240,9 +275,10 @@ private fun FriendVoiceButton(store: Store, friendUser: String) {
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     fun hasMic() = androidx.core.content.ContextCompat.checkSelfPermission(
         ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    IconButton(onClick = {
+    IconButton(enabled = !peerBusy, onClick = {
         if (!hasMic()) { permLauncher.launch(android.Manifest.permission.RECORD_AUDIO); return@IconButton }
         if (!recording) {
+            scope.launch { store.pttBusySet(friendUser, true) }   // karşı butonu kilitle ("konuşuyor")
             try {
                 @Suppress("DEPRECATION") val r = android.media.MediaRecorder()
                 r.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
@@ -255,13 +291,14 @@ private fun FriendVoiceButton(store: Store, friendUser: String) {
             try { recorder?.stop() } catch (e: Exception) {}
             recorder?.release(); recorder = null; recording = false
             scope.launch {
+                store.pttBusySet(friendUser, false)               // kilidi bırak
                 val bytes = try { file.readBytes() } catch (e: Exception) { ByteArray(0) }
                 if (bytes.size > 500) store.pttSendUser(friendUser, bytes)
             }
         }
     }) {
-        Icon(if (recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
-            tint = if (recording) Color(0xFFFF3B30) else Brand.accent, modifier = Modifier.size(22.dp))
+        Icon(if (peerBusy) Icons.Filled.GraphicEq else if (recording) Icons.Filled.Stop else Icons.Filled.Mic, null,
+            tint = if (peerBusy) Color(0xFFFF9F0A) else if (recording) Color(0xFFFF3B30) else Brand.accent, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -808,6 +845,83 @@ private fun ConvoyVoiceView(store: Store, onBack: () -> Unit) {
 
 // ---------------- CANLI İNTERKOM (LiveKit sesli oda) ----------------
 @Composable
+
+// ==================== ÇİFT CANLI TELSİZ (2 kişilik, 2026-07-19) ====================
+// 📻 davet -> karşı taraf kabul -> LiveKit odası. Oda çiftten türetilir, token sadece o ikiliye = max 2.
+@Composable
+private fun PairTalkView(store: Store, peer: String, peerName: String, inviting: Boolean, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    var state by remember { mutableStateOf(if (inviting) "inviting" else "connecting") }
+    var peerIn by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(false) }
+    val room = remember { io.livekit.android.LiveKit.create(ctx.applicationContext) }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun hasMic() = androidx.core.content.ContextCompat.checkSelfPermission(
+        ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    DisposableEffect(peer) { onDispose { try { room.disconnect() } catch (e: Exception) {} } }
+    LaunchedEffect(peer) {
+        if (!hasMic()) permLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        var tr = 0; while (!hasMic() && tr < 30) { delay(500); tr++ }
+        if (!hasMic()) { state = "denied"; return@LaunchedEffect }
+        if (inviting) {
+            store.vcInvite(peer)
+            var tries = 0
+            while (tries < 45) {           // 90 sn kabul bekle
+                delay(2000)
+                if (store.vcStatus()[2] == peer) break
+                tries++
+            }
+            if (tries >= 45) { state = "timeout"; return@LaunchedEffect }
+        }
+        state = "connecting"
+        val tok = store.vcToken(peer) ?: run { state = "error"; return@LaunchedEffect }
+        try {
+            room.connect(tok.first, tok.second)
+            room.localParticipant.setMicrophoneEnabled(true)
+            state = "connected"
+            while (true) { peerIn = room.remoteParticipants.isNotEmpty(); delay(1500) }
+        } catch (e: Exception) { state = "error" }
+    }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("$peerName — Canlı Telsiz", "$peerName — Live Radio"), onBack)
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center) {
+            when (state) {
+                "inviting" -> { CircularProgressIndicator(color = Brand.accent); Spacer(Modifier.height(14.dp))
+                    Text(L("Davet gönderildi — kabul bekleniyor…", "Invite sent — waiting for accept…"), color = sub) }
+                "connecting" -> { CircularProgressIndicator(color = Brand.accent); Spacer(Modifier.height(14.dp))
+                    Text(L("Bağlanıyor…", "Connecting…"), color = sub) }
+                "connected" -> {
+                    Box(Modifier.size(120.dp).background(Brand.accent.copy(alpha = 0.2f), CircleShape),
+                        contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Call, null, tint = if (peerIn) Color(0xFF34C759) else Brand.accent,
+                            modifier = Modifier.size(52.dp))
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text(if (peerIn) L("Canlı — bağlı 📻", "Live — connected 📻")
+                         else L("Bağlandın — arkadaşın bekleniyor…", "Connected — waiting for friend…"),
+                        color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(L("2 kişilik canlı telsiz — kalabalık için kulüp interkomu", "2-person radio — use club intercom for groups"),
+                        color = sub, fontSize = 12.sp, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(22.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Button(onClick = {
+                            muted = !muted
+                            try { room.localParticipant.setMicrophoneEnabled(!muted) } catch (e: Exception) {}
+                        }) { Text(if (muted) L("Aç", "Unmute") else L("Sustur", "Mute")) }
+                        Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))) {
+                            Text(L("Bitir", "End"))
+                        }
+                    }
+                }
+                "denied" -> Text(L("Mikrofon izni gerekli.", "Microphone permission required."), color = gold)
+                "timeout" -> Text(L("Davet kabul edilmedi.", "Invite not accepted."), color = gold)
+                else -> Text(L("Bağlanılamadı.", "Couldn't connect."), color = gold)
+            }
+        }
+    }
+}
+
 private fun IntercomView(store: Store, clubId: String, clubName: String, onBack: () -> Unit) {
     val ctx = LocalContext.current
     var state by remember { mutableStateOf("connecting") }   // connecting|connected|error|denied
