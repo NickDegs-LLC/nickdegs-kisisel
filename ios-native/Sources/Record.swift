@@ -209,6 +209,7 @@ struct GenerateSheet: View {
                     Menu {
                         if mode == "tactical" {
                             Button(L("Rastgele (öner)","Random (suggest)")) { music = "" }
+                            Button(L("Sessiz — müziksiz (Reels'te kendi müziğini ekle)","Silent — no music (add your own in Reels)")) { music = "none" }
                             Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) { showAudioPicker = true }
                             ForEach(TACTICAL_TRACKS, id: \.self) { t in
                                 Button(t.replacingOccurrences(of: "_", with: " ")) { music = t }
