@@ -356,9 +356,14 @@ struct GenerateSheet: View {
 
     var musicLabel: String {
         if music == "upload" { return L("Kendi müziğin","Your music") }
+        if music == "none" { return L("Sessiz","Silent") }
         if music.hasPrefix("stock:") {
             let id = String(music.dropFirst(6))
             return stock.first { $0["id"] == id }?["name"] ?? id
+        }
+        if mode == "tactical" {
+            // tactical: boş = RASTGELE (Yok değil!); kütüphane parçası seçiliyse adını göster
+            return music.isEmpty ? L("Rastgele","Random") : music.replacingOccurrences(of: "_", with: " ")
         }
         return L("Yok","None")
     }
