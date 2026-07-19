@@ -189,7 +189,9 @@ struct GenerateSheet: View {
                       }
                     }.padding(.horizontal, 2)
 
-                    field(L("Takip noktası","Tracking dot"))
+                    }   // tactical: çizgi seçimi yok (crosshair rengi aşağıda)
+
+                    field(mode == "tactical" ? L("Crosshair rengi","Crosshair color") : L("Takip noktası","Tracking dot"))
                     ScrollView(.horizontal, showsIndicators: false) {
                       HStack(spacing: 12) {
                         // Çizgiyle aynı renk
@@ -209,7 +211,6 @@ struct GenerateSheet: View {
                         }
                       }
                     }.padding(.horizontal, 2)
-                    }   // tactical: çizgi/nokta seçimi yok
 
                     field(L("Müzik","Music"))
                     Menu {
