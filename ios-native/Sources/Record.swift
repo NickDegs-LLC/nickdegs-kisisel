@@ -150,9 +150,16 @@ struct GenerateSheet: View {
                         Picker("", selection: Binding(
                             get: { speed == "slow" ? "slow" : "fast" },
                             set: { speed = $0 })) {
-                            Text(L("Kısa · Reels (≤1 dk)","Short · Reels (≤1 min)")).tag("fast")
-                            Text(L("Uzun · Gönderi (≤3 dk)","Long · Post (≤3 min)")).tag("slow")
+                            Text(L("Kısa (≤1 dk)","Short (≤1 min)")).tag("fast")
+                            Text(L("Uzun (≤3 dk)","Long (≤3 min)")).tag("slow")
                         }.pickerStyle(.segmented)
+                        Picker("", selection: $aspect) {
+                            Text(L("Dikey 9:16","Vertical 9:16")).tag("9:16")
+                            Text(L("Kare 4:5","Square 4:5")).tag("4:5")
+                        }.pickerStyle(.segmented)
+                        Text(L("9:16 Reels/TikTok, 4:5 feed gönderisi. Her süre her formatta olur.",
+                               "9:16 for Reels/TikTok, 4:5 for feed posts. Any length, any format."))
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
 
                     if mode != "tactical" {
