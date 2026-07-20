@@ -147,6 +147,12 @@ struct GenerateSheet: View {
                         Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında rastgele arama, hedef kilidi, canlı takip ve görev kapanışı. Her video %100 benzersiz üretilir (9:16).",
                                "Military satellite op: radio briefing, global random search, target lock, live tracking and mission outro. Every video is 100% unique (9:16)."))
                             .font(.caption2).foregroundStyle(.secondary)
+                        Picker("", selection: Binding(
+                            get: { speed == "slow" ? "slow" : "fast" },
+                            set: { speed = $0 })) {
+                            Text(L("Kısa · Reels (≤1 dk)","Short · Reels (≤1 min)")).tag("fast")
+                            Text(L("Uzun · Gönderi (≤3 dk)","Long · Post (≤3 min)")).tag("slow")
+                        }.pickerStyle(.segmented)
                     }
 
                     if mode != "tactical" {
