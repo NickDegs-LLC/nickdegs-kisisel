@@ -317,6 +317,32 @@ class Store(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- KULLANICI MÜZİK KÜTÜPHANESİ (bir kez yükle, hep kullan) — iOS ile aynı ----
+    suspend fun musicLibrary(): List<Pair<String, String>> {
+        val d = req("/api/music/library") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("tracks") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i); o.optString("id") to o.optString("name")
+        }
+    }
+    suspend fun musicLibraryAdd(name: String, bytes: ByteArray): String? = withContext(Dispatchers.IO) {
+        try {
+            if (bytes.size >= 20_000_000) return@withContext null
+            val dataUrl = "data:audio/m4a;base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            val c = (URL(API + "/api/music/library").openConnection() as HttpURLConnection)
+            c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 120000   // büyük dosya: uzun timeout
+            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
+            val body = JSONObject().put("name", name).put("data", dataUrl)
+            OutputStreamWriter(c.outputStream).use { it.write(body.toString()) }
+            val code = c.responseCode
+            if (code in 200..299) {
+                val txt = c.inputStream.bufferedReader().readText()
+                JSONObject(txt).optString("id", null)
+            } else null
+        } catch (e: Exception) { null }
+    }
+
     // ---- Rota kaydı: Traccar cihaz id + OsmAnd ingest URL (iOS /api/tracker) ----
     suspend fun trackerInfo(): Pair<String, String>? {
         val d = req("/api/tracker") ?: return null

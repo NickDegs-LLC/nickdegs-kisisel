@@ -15,6 +15,9 @@ import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.*
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -40,10 +43,34 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var line by remember { mutableStateOf("#00E5FF") }
     var dot by remember { mutableStateOf("#FF3B30") }   // takip noktası rengi ("line" = çizgiyle aynı)
     var stock by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var userTracks by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { stock = store.musicList() }
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { stock = store.musicList(); userTracks = store.musicLibrary() }
+    val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            musicUploading = true
+            scope.launch {
+                val bytes = try { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } } catch (e: Exception) { null }
+                val nm = (uri.lastPathSegment ?: "Müzik").substringAfterLast('/').substringBeforeLast('.')
+                if (bytes == null) { musicUploading = false }
+                else {
+                    val mid = store.musicLibraryAdd(nm, bytes)
+                    userTracks = store.musicLibrary()
+                    musicUploading = false
+                    if (mid != null) music = "lib:" + mid
+                }
+            }
+        }
+    }
 
-    val modes = listOf(Opt("flat", L("Düz", "Flat")), Opt("flyover", "Flyover"), Opt("3d", L("3B", "3D")))
+    val modes = listOf(Opt("flat", L("Düz", "Flat")), Opt("flyover", "Flyover"), Opt("3d", L("3B", "3D")),
+        Opt("tactical", "🎖️ Tactical"))
+    val tacDur = listOf(Opt("fast", L("Kısa (≤1dk)", "Short (≤1m)")), Opt("slow", L("Uzun (≤3dk)", "Long (≤3m)")))
+    val tacAsp = listOf(Opt("9:16", L("Dikey 9:16", "Vertical 9:16")), Opt("4:5", L("Kare 4:5", "Square 4:5")))
+    val TACTICAL_TRACKS = listOf("Aggressor","Nerves","Five_Armies","Impact_Prelude","Killers","Hitman",
+        "Stormfront","Chase","Tabuk","Crusade","Anxiety","Dark_Times","Grim_League","Overheat","Raw","The_Descent")
     val speeds = listOf(Opt("fast", L("Kısa", "Short")), Opt("medium", L("Orta", "Medium")),
         Opt("slow", L("Uzun", "Long")), Opt("auto", L("Otonom", "Auto")))
     val aspects = listOf(Opt("16:9", "16:9"), Opt("9:16", "9:16"))
@@ -56,18 +83,46 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(L("Video oluştur", "Create video"), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Picker(L("Görünüm", "Mode"), modes, mode) { mode = it }
-            Picker(L("Süre", "Duration"), speeds, speed) { speed = it }
-            Picker(L("En-boy", "Aspect"), aspects, aspect) { aspect = it }
-            Picker(L("Kamera mesafesi", "Camera distance"), cams, cam) { cam = it }
-            if (mode == "3d") {   // sadece 3D · kamera açısı: yandan/arkadan/Sokak(Street View) — ULTRA
-                if (store.ultra) Picker(L("Kamera açısı", "Camera angle"), camAngles, camAngle) { camAngle = it }
-                else Text(L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
-                           "Camera angles (Chase, Street View) are included in Ultra."),
-                           color = Color(0xFF9AA4B2), fontSize = 12.sp)
+            if (mode == "tactical") {
+                if (!store.ultra) {
+                    Text(L("Tactical, Ultra aboneliğine özeldir.", "Tactical is exclusive to Ultra."),
+                        color = Brand.accent, fontSize = 12.sp)
+                }
+                Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında arama, hedef kilidi, canlı takip. Her video %100 benzersiz.",
+                       "Military satellite op: radio briefing, global search, target lock, live tracking. Every video 100% unique."),
+                    color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                Picker(L("Süre", "Length"), tacDur, if (speed == "slow") "slow" else "fast") { speed = it }
+                Picker(L("En-boy", "Aspect"), tacAsp, if (aspect == "4:5") "4:5" else "9:16") { aspect = it }
+            } else {
+                Picker(L("Süre", "Duration"), speeds, speed) { speed = it }
+                Picker(L("En-boy", "Aspect"), aspects, aspect) { aspect = it }
+                Picker(L("Kamera mesafesi", "Camera distance"), cams, cam) { cam = it }
+                if (mode == "3d") {
+                    if (store.ultra) Picker(L("Kamera açısı", "Camera angle"), camAngles, camAngle) { camAngle = it }
+                    else Text(L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
+                               "Camera angles (Chase, Street View) are included in Ultra."),
+                               color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                }
             }
-            val musicOpts = listOf(Opt("", L("Yok", "None"))) + stock.map { Opt("stock:${it.first}", it.second) }
+            // MÜZİK: tactical'da kütüphane + rastgele/sessiz/yükle; diğerlerinde stock
+            val musicOpts = if (mode == "tactical") {
+                listOf(Opt("random", L("Rastgele", "Random")), Opt("none", L("Sessiz", "Silent"))) +
+                userTracks.map { Opt("lib:${it.first}", "🎵 ${it.second}") } +
+                TACTICAL_TRACKS.map { Opt(it, it.replace("_", " ")) }
+            } else {
+                listOf(Opt("", L("Yok", "None"))) + stock.map { Opt("stock:${it.first}", it.second) }
+            }
             Picker(L("Müzik", "Music"), musicOpts, music) { music = it }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (mode == "tactical") {
+                Button(onClick = { pickAudio.launch("audio/*") }, enabled = !musicUploading,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF23303F)),
+                    modifier = Modifier.fillMaxWidth()) {
+                    if (musicUploading) { CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp)); Text(L("Yükleniyor…", "Uploading…")) }
+                    else Text(L("Yeni müzik yükle… (max 20MB)", "Upload new music… (max 20MB)"))
+                }
+            }
+            if (mode != "tactical") Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(L("Rota çizgisi", "Route line"), color = Color(0xFF9AA4B2), fontSize = 13.sp)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Çizgisiz (sadece nokta) seçeneği
@@ -104,7 +159,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(L("Takip noktası", "Tracking dot"), color = Color(0xFF9AA4B2), fontSize = 13.sp)
+                Text(if (mode == "tactical") L("Crosshair rengi", "Crosshair color") else L("Takip noktası", "Tracking dot"), color = Color(0xFF9AA4B2), fontSize = 13.sp)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Çizgiyle aynı renk
                     Box(Modifier.size(34.dp)
