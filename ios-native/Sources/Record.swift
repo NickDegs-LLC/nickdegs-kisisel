@@ -371,12 +371,17 @@ struct GenerateSheet: View {
                     }
                     musicUploading = true                       // YÜKLENİYOR göstergesi
                     let nm = url.deletingPathExtension().lastPathComponent
+                    let before = userTracks.count
                     let mid = await store.musicLibraryAdd(name: nm, data: data)   // BİR KEZ yükle, kütüphaneye kaydet
                     musicUploading = false
-                    if let mid = mid {
-                        userTracks = await store.musicLibrary()
+                    userTracks = await store.musicLibrary()      // her durumda tazele
+                    if let mid = mid, userTracks.contains(where: { $0["id"] == mid }) {
                         music = "lib:" + mid
-                    } else { localErr = true; note = L("Müzik yüklenemedi, tekrar dene (internet?).","Music upload failed, try again (internet?).") }
+                    } else if userTracks.count > before, let last = userTracks.last {
+                        music = "lib:" + (last["id"] ?? "")       // internet yarıda kaldı ama dosya ulaştı -> yakala
+                    } else {
+                        localErr = true; note = L("Müzik yüklenemedi. İnternetini kontrol et, listede yoksa tekrar dene.","Upload failed. Check your connection; if not in the list, try again.")
+                    }
                 }
             }
         }
