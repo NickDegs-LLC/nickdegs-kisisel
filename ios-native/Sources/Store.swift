@@ -340,9 +340,10 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let s = o["stock"] as? [[String:Any]] else { return [] }
         return s.map { item in item.mapValues { "\($0)" } }
     }
-    func addRideMusic(session: Double, data: Data) async {
+    func addRideMusic(session: Double, data: Data) async -> Bool {
         let dataURL = "data:audio/m4a;base64," + data.base64EncodedString()
-        _ = try? await req("/api/rides/music", method: "POST", body: ["session": session, "data": dataURL])
+        let r = try? await req("/api/rides/music", method: "POST", body: ["session": session, "data": dataURL])
+        return r != nil
     }
     func addRidePhoto(session: Double, jpeg: Data, lat: Double, lon: Double) async {
         let dataURL = "data:image/jpeg;base64," + jpeg.base64EncodedString()

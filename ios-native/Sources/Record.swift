@@ -38,6 +38,7 @@ struct GenerateSheet: View {
     @AppStorage("nd_ultra") private var ultraStored = false  // sunucu/admin Ultra (syncPremium yazar) — StoreKit dışı da açılsın
     private var isUltra: Bool { iap.ultra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
     @State private var stock: [[String:String]] = []
+    @State private var musicUploading = false
     @State private var music = ""               // "", "stock:<id>", "upload"
     @State private var showAudioPicker = false
     @AppStorage("nd_line_color") private var lineColor = "#00E5FF"   // kullanıcının seçtiği rota çizgi rengi
@@ -353,10 +354,17 @@ struct GenerateSheet: View {
                 Task {
                     let ok = url.startAccessingSecurityScopedResource()
                     defer { if ok { url.stopAccessingSecurityScopedResource() } }
-                    if let data = try? Data(contentsOf: url), data.count < 12_000_000 {
-                        await store.addRideMusic(session: from, data: data)
-                        music = "upload"
+                    guard let data = try? Data(contentsOf: url) else {
+                        localErr = true; note = L("Müzik dosyası okunamadı.","Couldn't read the music file."); return
                     }
+                    if data.count >= 20_000_000 {
+                        localErr = true; note = L("Müzik çok büyük (max 20 MB). Daha kısa/düşük kaliteli bir dosya seç.","Music too large (max 20 MB). Pick a shorter/lower-quality file."); return
+                    }
+                    musicUploading = true                       // YÜKLENİYOR göstergesi
+                    let okUp = await store.addRideMusic(session: from, data: data)
+                    musicUploading = false
+                    if okUp { music = "upload" }
+                    else { localErr = true; note = L("Müzik yüklenemedi, tekrar dene (internet?).","Music upload failed, try again (internet?).") }
                 }
             }
         }
@@ -381,6 +389,7 @@ struct GenerateSheet: View {
             return stock.first { $0["id"] == id }?["name"] ?? id
         }
         if mode == "tactical" {
+            if musicUploading { return L("Yükleniyor…","Uploading…") }
             if music.isEmpty { return L("Sessiz","Silent") }          // boş = SESSİZ (Barış kuralı)
             if music == "random" { return L("Rastgele","Random") }
             return music.replacingOccurrences(of: "_", with: " ")
