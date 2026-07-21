@@ -345,6 +345,18 @@ enum AuthGate { case checking, valid, needLogin, offline }
         let r = try? await req("/api/rides/music", method: "POST", body: ["session": session, "data": dataURL])
         return r != nil
     }
+    func musicLibrary() async -> [[String:String]] {
+        guard let d = try? await req("/api/music/library"),
+              let arr = (try? JSONSerialization.jsonObject(with: d)) as? [String:Any],
+              let tr = arr["tracks"] as? [[String:String]] else { return [] }
+        return tr
+    }
+    func musicLibraryAdd(name: String, data: Data) async -> String? {
+        let dataURL = "data:audio/m4a;base64," + data.base64EncodedString()
+        guard let d = try? await req("/api/music/library", method: "POST", body: ["name": name, "data": dataURL]),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String:Any] else { return nil }
+        return o["id"] as? String
+    }
     func addRidePhoto(session: Double, jpeg: Data, lat: Double, lon: Double) async {
         let dataURL = "data:image/jpeg;base64," + jpeg.base64EncodedString()
         _ = try? await req("/api/rides/photo", method: "POST",

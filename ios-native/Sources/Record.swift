@@ -39,6 +39,8 @@ struct GenerateSheet: View {
     private var isUltra: Bool { iap.ultra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
     @State private var stock: [[String:String]] = []
     @State private var musicUploading = false
+    @State private var note = ""
+    @State private var userTracks: [[String:String]] = []
     @State private var music = ""               // "", "stock:<id>", "upload"
     @State private var showAudioPicker = false
     @AppStorage("nd_line_color") private var lineColor = "#00E5FF"   // kullanıcının seçtiği rota çizgi rengi
@@ -237,7 +239,14 @@ struct GenerateSheet: View {
                         if mode == "tactical" {
                             Button(L("Rastgele (öner)","Random (suggest)")) { music = "random" }
                             Button(L("Sessiz — müziksiz (Reels'te kendi müziğini ekle)","Silent — no music (add your own in Reels)")) { music = "none" }
-                            Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) { showAudioPicker = true }
+                            Button(L("Yeni müzik yükle…","Upload new music…")) { showAudioPicker = true }
+                            if !userTracks.isEmpty {
+                                Divider()
+                                ForEach(userTracks, id: \.self) { tr in
+                                    Button("🎵 " + (tr["name"] ?? "Müzik")) { music = "lib:" + (tr["id"] ?? "") }
+                                }
+                            }
+                            Divider()
                             ForEach(TACTICAL_TRACKS, id: \.self) { t in
                                 Button(t.replacingOccurrences(of: "_", with: " ")) { music = t }
                             }
@@ -331,7 +340,7 @@ struct GenerateSheet: View {
                     }
 
                     if localErr {
-                        Text(L("Bu rotada konum verisi yok ya da istek başarısız.","No location data for this route or request failed."))
+                        Text(note.isEmpty ? L("Bu rotada konum verisi yok ya da istek başarısız.","No location data for this route or request failed.") : note)
                             .font(.caption2).foregroundStyle(.red)
                     }
                     if done {
@@ -348,7 +357,7 @@ struct GenerateSheet: View {
         .presentationDetents([.large])
         .interactiveDismissDisabled(sending)   // render sırasında sheet kapatılamaz
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
-        .task { await store.syncPremium(); stock = await store.musicList() }
+        .task { await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary() }
         .fileImporter(isPresented: $showAudioPicker, allowedContentTypes: [.audio]) { res in
             if case .success(let url) = res {
                 Task {
@@ -361,10 +370,13 @@ struct GenerateSheet: View {
                         localErr = true; note = L("Müzik çok büyük (max 20 MB). Daha kısa/düşük kaliteli bir dosya seç.","Music too large (max 20 MB). Pick a shorter/lower-quality file."); return
                     }
                     musicUploading = true                       // YÜKLENİYOR göstergesi
-                    let okUp = await store.addRideMusic(session: from, data: data)
+                    let nm = url.deletingPathExtension().lastPathComponent
+                    let mid = await store.musicLibraryAdd(name: nm, data: data)   // BİR KEZ yükle, kütüphaneye kaydet
                     musicUploading = false
-                    if okUp { music = "upload" }
-                    else { localErr = true; note = L("Müzik yüklenemedi, tekrar dene (internet?).","Music upload failed, try again (internet?).") }
+                    if let mid = mid {
+                        userTracks = await store.musicLibrary()
+                        music = "lib:" + mid
+                    } else { localErr = true; note = L("Müzik yüklenemedi, tekrar dene (internet?).","Music upload failed, try again (internet?).") }
                 }
             }
         }
@@ -392,6 +404,7 @@ struct GenerateSheet: View {
             if musicUploading { return L("Yükleniyor…","Uploading…") }
             if music.isEmpty { return L("Sessiz","Silent") }          // boş = SESSİZ (Barış kuralı)
             if music == "random" { return L("Rastgele","Random") }
+            if music.hasPrefix("lib:") { let id=String(music.dropFirst(4)); return "🎵 " + (userTracks.first{ $0["id"]==id }?["name"] ?? L("Yüklenen","Uploaded")) }
             return music.replacingOccurrences(of: "_", with: " ")
         }
         return L("Yok","None")
