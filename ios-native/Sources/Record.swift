@@ -156,7 +156,11 @@ struct GenerateSheet: View {
                             Text(L("Kısa (≤1 dk)","Short (≤1 min)")).tag("fast")
                             Text(L("Uzun (≤3 dk)","Long (≤3 min)")).tag("slow")
                         }.pickerStyle(.segmented)
-                        Picker("", selection: $aspect) {
+                        // FIX (2026-07-23): carryover "16:9" (normal videodan) tactical picker'ını bozuyordu
+                        // -> clamp'li binding: geçersiz değer "9:16" gösterir, "Kare 4:5" dokunuşu gerçekten 4:5 yapar.
+                        Picker("", selection: Binding(
+                            get: { aspect == "4:5" ? "4:5" : "9:16" },
+                            set: { aspect = $0 })) {
                             Text(L("Dikey 9:16","Vertical 9:16")).tag("9:16")
                             Text(L("Kare 4:5","Square 4:5")).tag("4:5")
                         }.pickerStyle(.segmented)
@@ -170,11 +174,8 @@ struct GenerateSheet: View {
                         Picker("", selection: $aspect) {
                             Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
                         }.pickerStyle(.segmented)
-                    } else {
-                        // TACTICAL: 9:16 sabit (sinematik dikey format; backend de zorlar)
-                        Text(L("Format: 9:16 dikey (Reels/TikTok uyumlu)","Format: 9:16 vertical (Reels/TikTok ready)"))
-                            .font(.caption2).foregroundStyle(.secondary)
                     }
+                    // (tactical aspect picker'ı yukarıdaki tactical bloğunda — 9:16/4:5, clamp'li; ayrı/çakışan UI YOK)
 
                     if mode != "tactical" {
                     field(L("Rota çizgisi","Route line"))
