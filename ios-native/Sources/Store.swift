@@ -362,10 +362,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
         _ = try? await req("/api/rides/photo", method: "POST",
                            body: ["session": session, "data": dataURL, "lat": lat, "lon": lon, "ts": Date().timeIntervalSince1970])
     }
-    func generateRide(from: Double, to: Double, type: String, mode: String, aspect: String, premium: Bool, speed: String = "medium", music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "") async -> Bool {
+    func generateRide(from: Double, to: Double, type: String, mode: String, aspect: String, premium: Bool, speed: String = "medium", music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "", theme: String = "", callsign: String = "", reel: Bool = false) async -> Bool {
         let body: [String:Any] = ["from": from, "to": to, "type": type, "mode": mode,
                                   "aspect": aspect, "speed": speed, "premium": premium, "music": music,
-                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam]
+                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam,
+                                  "theme": theme, "callsign": callsign, "reel": reel]
         guard let d = try? await req("/api/rides/generate", method: "POST", body: body),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return (o["ok"] as? Bool) ?? false
@@ -421,10 +422,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return (o["ok"] as? Bool) ?? false
     }
     // Mevcut bir rota videosunu yeni ayarlarla baştan üret (Rotalar > Düzenle).
-    func regenerateRide(_ id: String, type: String, mode: String, aspect: String, premium: Bool, speed: String, music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "") async -> Bool {
+    func regenerateRide(_ id: String, type: String, mode: String, aspect: String, premium: Bool, speed: String, music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "", theme: String = "", callsign: String = "", reel: Bool = false) async -> Bool {
         let body: [String:Any] = ["type": type, "mode": mode, "aspect": aspect,
                                   "speed": speed, "premium": premium, "music": music,
-                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam]
+                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam,
+                                  "theme": theme, "callsign": callsign, "reel": reel]
         guard let d = try? await req("/api/rides/\(id)/regenerate", method: "POST", body: body),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return (o["ok"] as? Bool) ?? false
