@@ -28,6 +28,9 @@ struct GenerateSheet: View {
     @State private var mode: String
     @State private var aspect: String
     @State private var speed: String            // "fast"=Kısa / "medium"=Orta / "slow"=Uzun
+    @AppStorage("nd_reel") private var reel = false   // Faz 3c: ~15-20sn dikey paylaşım teaser'ı (9:16 zorlar)
+    @AppStorage("nd_tac_theme") private var tacTheme = "default"   // taktik HUD teması: default/thermal/night/day
+    @AppStorage("nd_tac_callsign") private var tacCallsign = ""    // kişisel operatör çağrı işareti (boş=ACTUAL)
     @State private var sending = false
     @State private var done = false
     @State private var renderPct: Double = 0
@@ -167,13 +170,47 @@ struct GenerateSheet: View {
                         Text(L("9:16 Reels/TikTok, 4:5 feed gönderisi. Her süre her formatta olur.",
                                "9:16 for Reels/TikTok, 4:5 for feed posts. Any length, any format."))
                             .font(.caption2).foregroundStyle(.secondary)
+                        // Taktik HUD teması: uydu derecelendirme + HUD renk paleti
+                        field(L("Görüş modu","Vision mode"))
+                        Picker("", selection: $tacTheme) {
+                            Text(L("Standart","Recon")).tag("default")
+                            Text(L("Termal","Thermal")).tag("thermal")
+                            Text(L("Gece","Night")).tag("night")
+                            Text(L("Gündüz","Day")).tag("day")
+                        }.pickerStyle(.segmented)
+                        Text(L("Termal=sıcaklık, Gece=yeşil gece görüşü, Gündüz=net uydu. HUD rengi de değişir.",
+                               "Thermal=heat, Night=green NV, Day=clear satellite. HUD color changes too."))
+                            .font(.caption2).foregroundStyle(.secondary)
+                        // Operatör çağrı işareti (intro/outro'da "WELCOME, <callsign>")
+                        field(L("Çağrı işareti","Call sign"))
+                        TextField("ACTUAL", text: $tacCallsign)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled(true)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: tacCallsign) { _, v in
+                                let f = v.uppercased().filter { $0.isLetter || $0.isNumber || $0 == " " || $0 == "-" }
+                                if f != v { tacCallsign = String(f.prefix(16)) }
+                                else if v.count > 16 { tacCallsign = String(v.prefix(16)) }
+                            }
+                        Text(L("Brifingte adın: “WELCOME, <çağrı işareti>”. Boş=ACTUAL.",
+                               "Your name in the briefing: “WELCOME, <call sign>”. Empty=ACTUAL."))
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
 
                     if mode != "tactical" {
                         field(L("En-boy","Aspect"))
                         Picker("", selection: $aspect) {
                             Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
-                        }.pickerStyle(.segmented)
+                        }.pickerStyle(.segmented).disabled(reel)
+                        // REEL: kısa dikey paylaşım teaser'ı (~15-20sn, 9:16 zorlar)
+                        Toggle(isOn: $reel) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(L("Reel — kısa paylaşım klibi 🎬","Reel — short share clip 🎬")).font(.subheadline)
+                                Text(L("~15-20 sn dikey (9:16), sosyal medya için ideal. Uzun rotalarda hızlı teaser.",
+                                       "~15-20s vertical (9:16), great for social. A fast teaser on long routes."))
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }.tint(Brand.accent)
                     }
                     // (tactical aspect picker'ı yukarıdaki tactical bloğunda — 9:16/4:5, clamp'li; ayrı/çakışan UI YOK)
 
@@ -299,11 +336,14 @@ struct GenerateSheet: View {
                             }
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
                             // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
+                            let tacTh = mode == "tactical" ? tacTheme : ""
+                            let tacCs = mode == "tactical" ? tacCallsign.trimmingCharacters(in: .whitespaces) : ""
+                            let useReel = mode != "tactical" && reel
                             let ok = rideId == nil
                                 ? await store.generateRide(from: from, to: to, type: type, mode: mode,
-                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "")
+                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
                                 : await store.regenerateRide(rideId!, type: type, mode: mode,
-                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "")
+                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
                             sending = false; done = ok; localErr = !ok
                             // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür
                             if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
