@@ -182,8 +182,8 @@ struct GenerateSheet: View {
                         Text(tacTheme == "auto"
                              ? L("Otomatik: sürüş gece ise yeşil gece görüşü, gündüz ise standart uydu — sürüşün gerçek saatine göre seçilir.",
                                  "Auto: green night vision if the ride was at night, standard satellite by day — based on the ride's real time.")
-                             : L("Termal=sıcaklık, Gece=karanlık uydu (yakınlaşınca termal), Gündüz=net uydu. HUD rengi de değişir.",
-                                 "Thermal=heat, Night=dark satellite (thermal on zoom-in), Day=clear satellite. HUD color changes too."))
+                             : L("Termal=sıcaklık, Gece=karanlık uydu (yakınlaşınca gece görüşü), Gündüz=net uydu. HUD rengi de değişir.",
+                                 "Thermal=heat, Night=dark satellite (night vision on zoom-in), Day=clear satellite. HUD color changes too."))
                             .font(.caption2).foregroundStyle(tacTheme == "auto" ? Brand.accent : .secondary)
                         // Operatör çağrı işareti (intro/outro'da "WELCOME, <callsign>")
                         field(L("Çağrı işareti","Call sign"))
