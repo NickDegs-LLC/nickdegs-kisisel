@@ -3,6 +3,7 @@ import UIKit
 import CoreLocation
 import DeviceCheck
 import CryptoKit
+import Photos
 
 let API = "https://kisisel-api.nickdegs.com"
 
@@ -214,6 +215,53 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func stats() async -> Stats? {
         if AppEnv.demo { return DemoData.stats }
         return try? dec().decode(Stats.self, from: await req("/api/stats")) }
+
+    // OTOMATİK GALERİ KAYDI (Barış 2026-07-26): video biter bitmez sessizce telefonun galerisine iner.
+    // Sunucu/depolama şişmesin diye R2'de video yalnızca 1 gün durur -> KALICI kopya kullanıcının galerisinde.
+    // İlk kurulumda mevcut videolar "kaydedilmiş" işaretlenir (eski onlarca videoyu galeriye BOŞALTMAYIZ);
+    // sonrasında yalnızca YENİ üretilen videolar otomatik iner. Uygulama her öne geldiğinde çalışır (1 günlük pencereye yetişir).
+    func autoSaveNewVideos() async {
+        if AppEnv.demo { return }
+        let d = UserDefaults.standard
+        var saved = Set(d.stringArray(forKey: "nd_autosaved_ids") ?? [])
+        let done = (await rides()).filter { $0.rendering != true && $0.failed != true }
+        // İLK KURULUM: mevcut tüm videoları "işlendi" say (geçmiş kütüphaneyi galeriye boşaltma)
+        if !d.bool(forKey: "nd_autosave_init") {
+            saved.formUnion(done.map { $0.id })
+            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            d.set(true, forKey: "nd_autosave_init")
+            return
+        }
+        let todo = done.filter { !saved.contains($0.id) }
+        guard !todo.isEmpty else { return }
+        let status = await withCheckedContinuation { (c: CheckedContinuation<PHAuthorizationStatus, Never>) in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { c.resume(returning: $0) }
+        }
+        guard status == .authorized || status == .limited else {
+            // Kullanıcı galeri iznini reddetti -> otomatik kayıt yapma; yine de işaretle (tekrar tekrar sorma).
+            // "Videolarım"daki manuel kaydet butonu yedek olarak kalır.
+            saved.formUnion(todo.map { $0.id })
+            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            return
+        }
+        for r in todo {
+            var req = URLRequest(url: videoURL(r.id))
+            for (k, v) in authHeader { req.setValue(v, forHTTPHeaderField: k) }
+            guard let (data, _) = try? await URLSession.shared.data(for: req), !data.isEmpty else { continue }  // inemezse: işaretlenmez, sonraki öne gelişte tekrar denenir (R2'de 1 gün var)
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(r.id).mp4")
+            guard (try? data.write(to: tmp)) != nil else { continue }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: tmp)
+                }) { _, _ in
+                    try? FileManager.default.removeItem(at: tmp)
+                    c.resume()
+                }
+            }
+            saved.insert(r.id)
+            d.set(Array(saved), forKey: "nd_autosaved_ids")
+        }
+    }
     func positions() async -> [Position] {
         if AppEnv.demo { return DemoData.positions }
         return (try? dec().decode([String:[Position]].self, from: await req("/api/gps/live"))["positions"]) ?? []

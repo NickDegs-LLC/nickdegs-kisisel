@@ -13,6 +13,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nickdegs.movelog.util.saveVideoToGallery
 
 const val API = "https://kisisel-api.nickdegs.com"
 
@@ -281,6 +282,30 @@ class Store(app: Application) : AndroidViewModel(app) {
             c.connectTimeout = 15000; c.readTimeout = 90000
             if (c.responseCode in 200..299) c.inputStream.readBytes() else null
         } catch (e: Exception) { null }
+    }
+
+    // OTOMATİK GALERİ KAYDI (Barış 2026-07-26): video biter bitmez sessizce galeriye (Movies/MoveLog) iner.
+    // Sunucu/depolama şişmesin diye R2'de video yalnızca 1 gün durur -> KALICI kopya kullanıcının galerisinde.
+    // İlk kurulumda mevcut videolar "işlendi" işaretlenir (eski kütüphaneyi galeriye BOŞALTMAYIZ); sonra yalnızca YENİ videolar.
+    // API 29+ MediaStore izin gerektirmez; uygulama her öne geldiğinde çağrılır (1 günlük R2 penceresine yetişir).
+    suspend fun autoSaveNewVideos() {
+        val app = getApplication<Application>()
+        val saved = prefs.getStringSet("nd_autosaved_ids", emptySet())!!.toMutableSet()
+        val done = rides().filter { !it.rendering && !it.novideo }.map { it.id }
+        if (!prefs.getBoolean("nd_autosave_init", false)) {   // İLK KURULUM: geçmiş videoları "işlendi" say, boşaltma
+            saved.addAll(done)
+            prefs.edit().putStringSet("nd_autosaved_ids", saved).putBoolean("nd_autosave_init", true).apply()
+            return
+        }
+        val todo = done.filter { it !in saved }
+        if (todo.isEmpty()) return
+        for (id in todo) {
+            val b = videoBytes(id) ?: continue   // inemezse işaretlenmez -> sonraki öne gelişte tekrar denenir (R2'de 1 gün var)
+            if (saveVideoToGallery(app, b, "MoveLog_$id.mp4")) {
+                saved.add(id)
+                prefs.edit().putStringSet("nd_autosaved_ids", saved).apply()
+            }
+        }
     }
 
     // ---- Özetler (Özet sekmesi; iOS /api/activities) ----

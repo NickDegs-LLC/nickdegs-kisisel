@@ -67,6 +67,7 @@ struct AuthGateView: View {
 struct RootView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var tracker: Tracker
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sel = RootView.initialTab()
     @State private var ann: Announcement?
     @AppStorage("nd_ann_seen") private var annSeen = 0
@@ -117,6 +118,10 @@ struct RootView: View {
             // durmasın diye). start() idempotent: zaten çalışıyorsa zarar vermez.
             if tracker.active, let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
+            await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
+        }
+        .onChange(of: scenePhase) { _, ph in
+            if ph == .active { Task { await store.autoSaveNewVideos() } }   // her öne gelişte: 1 günlük pencereye yetiş
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in
             Task { await store.registerPush() }

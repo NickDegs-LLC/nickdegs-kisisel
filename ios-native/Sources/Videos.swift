@@ -82,6 +82,7 @@ struct VideosView: View {
     func reload() async {
         let sorted = (await store.rides()).sorted { sortKey($0) > sortKey($1) }
         await MainActor.run { rides = sorted; loaded = true; managePoll() }
+        await store.autoSaveNewVideos()   // aktif oturumda yeni biten videoyu hemen galeriye kaydet (sekme açıkken)
     }
     // render olan video varsa 12 sn'de bir tazele -> bitince kilidi açılıp önizleme gelir
     func managePoll() {
