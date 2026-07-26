@@ -52,6 +52,7 @@ fun VideosScreen(store: Store) {
     suspend fun reload() {
         rides = store.rides().filter { it.rendering || (!it.novideo) }
             .sortedByDescending { sortKey(it) }
+        store.autoSaveNewVideos()   // aktif oturumda yeni biten videoyu hemen galeriye kaydet
     }
     LaunchedEffect(Unit) {
         reload()

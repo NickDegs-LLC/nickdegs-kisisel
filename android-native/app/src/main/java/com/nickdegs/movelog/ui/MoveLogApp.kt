@@ -39,6 +39,19 @@ fun MoveLogApp(store: Store) {
         else -> {}   // VALID -> devam
     }
 
+    // Uygulama her öne geldiğinde (ON_RESUME): yeni videoları sessizce galeriye kaydet.
+    // R2'de video 1 gün durur -> kullanıcı hangi sekmede olursa olsun bu pencere içinde galeriye iner.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                scope.launch { store.autoSaveNewVideos() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     var sel by remember { mutableStateOf(0) }
     // Bildirim dokunma -> ilgili sekme (route: voice/chat/map->Harita, videos->Videolar, friends/wave->Topluluk)
     LaunchedEffect(com.nickdegs.movelog.AppNav.route) {
