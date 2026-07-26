@@ -29,7 +29,7 @@ struct GenerateSheet: View {
     @State private var aspect: String
     @State private var speed: String            // "fast"=Kısa / "medium"=Orta / "slow"=Uzun
     @AppStorage("nd_reel") private var reel = false   // Faz 3c: ~15-20sn dikey paylaşım teaser'ı (9:16 zorlar)
-    @AppStorage("nd_tac_theme") private var tacTheme = "default"   // taktik HUD teması: default/thermal/night/day
+    @AppStorage("nd_tac_theme") private var tacTheme = "auto"   // taktik HUD teması: auto(varsayılan, saate göre)/default/thermal/night/day
     @AppStorage("nd_tac_callsign") private var tacCallsign = ""    // kişisel operatör çağrı işareti (boş=ACTUAL)
     @State private var sending = false
     @State private var done = false
@@ -172,15 +172,19 @@ struct GenerateSheet: View {
                             .font(.caption2).foregroundStyle(.secondary)
                         // Taktik HUD teması: uydu derecelendirme + HUD renk paleti
                         field(L("Görüş modu","Vision mode"))
-                        Picker("", selection: $tacTheme) {
+                        Picker(L("Görüş modu","Vision mode"), selection: $tacTheme) {
+                            Text(L("Otomatik (saate göre)","Auto (by time)")).tag("auto")
                             Text(L("Standart","Recon")).tag("default")
                             Text(L("Termal","Thermal")).tag("thermal")
-                            Text(L("Gece","Night")).tag("night")
+                            Text(L("Gece görüş","Night vision")).tag("night")
                             Text(L("Gündüz","Day")).tag("day")
-                        }.pickerStyle(.segmented)
-                        Text(L("Termal=sıcaklık, Gece=yeşil gece görüşü, Gündüz=net uydu. HUD rengi de değişir.",
-                               "Thermal=heat, Night=green NV, Day=clear satellite. HUD color changes too."))
-                            .font(.caption2).foregroundStyle(.secondary)
+                        }.pickerStyle(.menu).tint(Brand.accent).frame(maxWidth: .infinity, alignment: .leading)
+                        Text(tacTheme == "auto"
+                             ? L("Otomatik: sürüş gece ise yeşil gece görüşü, gündüz ise standart uydu — sürüşün gerçek saatine göre seçilir.",
+                                 "Auto: green night vision if the ride was at night, standard satellite by day — based on the ride's real time.")
+                             : L("Termal=sıcaklık, Gece görüş=yeşil NV, Gündüz=net uydu. HUD rengi de değişir.",
+                                 "Thermal=heat, Night vision=green NV, Day=clear satellite. HUD color changes too."))
+                            .font(.caption2).foregroundStyle(tacTheme == "auto" ? Brand.accent : .secondary)
                         // Operatör çağrı işareti (intro/outro'da "WELCOME, <callsign>")
                         field(L("Çağrı işareti","Call sign"))
                         TextField("ACTUAL", text: $tacCallsign)
