@@ -289,7 +289,12 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return try? dec().decode(Profile.self, from: await req("/api/profile")) }
     // Sunucu-taraflı premium'u cihaza senkronla (yalnızca Profil değil her yerden tetiklenir).
     func syncPremium() async {
-        guard let p = await profile(), p.premium else { return }
+        guard let d = try? await req("/api/profile") else { return }
+        // GÜVENLİ: free_tactical'ı HAM JSON'dan oku — Profile struct'ına DOKUNMA (profil decode'u asla bozulmaz)
+        if let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] {
+            UserDefaults.standard.set((o["free_tactical"] as? Bool) ?? false, forKey: "nd_free_tactical")
+        }
+        guard let p = try? dec().decode(Profile.self, from: d), p.premium else { return }
         UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium kalıcı
         UserDefaults.standard.set(true, forKey: "nd_premium")
         if p.ultra {   // sunucu/admin Ultra (StoreKit satın alma olmadan) -> kamera modları/Street View açılır
