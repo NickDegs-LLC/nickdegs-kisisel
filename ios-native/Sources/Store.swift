@@ -26,7 +26,7 @@ struct Position: Codable, Identifiable, Hashable {
     var avatar: Avatar? = nil           // harita pini profil fotoğrafını göstersin
     var id: String { device }
 }
-struct Profile: Codable { var username: String?; var name: String; var handle: String? = nil; var avatar: Avatar; var premium: Bool = false; var ultra: Bool = false }
+struct Profile: Codable { var username: String?; var name: String; var handle: String? = nil; var avatar: Avatar; var premium: Bool = false; var ultra: Bool = false; var free_tactical: Bool = false }
 struct Announcement: Identifiable { var title: String; var body: String; var url: String; var ts: Int; var id: Int { ts } }
 struct ActivitySummary: Codable, Identifiable, Hashable { var date: String; var summary: String; var videoId: String? = nil; var from: Double? = nil; var to: Double? = nil; var id: String { date } }
 struct SummaryVid: Equatable { var mode = "flyover"; var speed = "medium"; var aspect = "16:9"; var cam = "orta"; var music = ""; var line = "#00E5FF" }
@@ -289,7 +289,10 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return try? dec().decode(Profile.self, from: await req("/api/profile")) }
     // Sunucu-taraflı premium'u cihaza senkronla (yalnızca Profil değil her yerden tetiklenir).
     func syncPremium() async {
-        guard let p = await profile(), p.premium else { return }
+        guard let p = await profile() else { return }
+        // TEK-SEFERLİK BEDAVA AKSİYON (2026-07-27): premium olmayan yeni kullanıcı da bilgiyi alsın (paywall yerine ilk taktik ücretsiz)
+        UserDefaults.standard.set(p.free_tactical, forKey: "nd_free_tactical")
+        guard p.premium else { return }
         UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium kalıcı
         UserDefaults.standard.set(true, forKey: "nd_premium")
         if p.ultra {   // sunucu/admin Ultra (StoreKit satın alma olmadan) -> kamera modları/Street View açılır
