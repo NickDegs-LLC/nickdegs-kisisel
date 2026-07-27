@@ -85,6 +85,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
 
 // MARK: - API + Durum
 @MainActor final class Store: ObservableObject {
+    static weak var shared: Store?   // arka plan (BGTask/push) oto-kayıt için AppDelegate erişimi (2026-07-27)
     @Published var token: String = UserDefaults.standard.string(forKey: "nd_token") ?? ""
     @Published var me: String = ""
     @Published var loginError = false
@@ -222,6 +223,9 @@ enum AuthGate { case checking, valid, needLogin, offline }
     // İlk kurulumda mevcut videolar "kaydedilmiş" işaretlenir (eski onlarca videoyu galeriye BOŞALTMAYIZ);
     // sonrasında yalnızca YENİ üretilen videolar otomatik iner. Uygulama her öne geldiğinde çalışır (1 günlük pencereye yetişir).
     func autoSaveNewVideos() async {
+        // OTO-KAYIT İPTAL (Barış 2026-07-27): uygulama açıkken sürekli tetikleniyordu + arka planda güvenilmez.
+        // Kullanıcı MANUEL kaydeder (Videolarım'daki "kaydet" butonu). Re-enable: nd_autosave_enabled=true.
+        guard UserDefaults.standard.bool(forKey: "nd_autosave_enabled") else { return }
         if AppEnv.demo { return }
         let d = UserDefaults.standard
         var saved = Set(d.stringArray(forKey: "nd_autosaved_ids") ?? [])
