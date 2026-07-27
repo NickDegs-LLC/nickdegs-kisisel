@@ -4,6 +4,7 @@ import CoreLocation
 import DeviceCheck
 import CryptoKit
 import Photos
+import UserNotifications
 
 let API = "https://kisisel-api.nickdegs.com"
 
@@ -244,23 +245,36 @@ enum AuthGate { case checking, valid, needLogin, offline }
             // İzin yok -> İŞARETLEME (kalıcı kaybetme); izin sonradan açılınca otomatik yetişir. Manuel kaydet yedek.
             return
         }
+        var _savedN = 0
         for r in todo {
             var req = URLRequest(url: videoURL(r.id))
             for (k, v) in authHeader { req.setValue(v, forHTTPHeaderField: k) }
             guard let (data, _) = try? await URLSession.shared.data(for: req), !data.isEmpty else { continue }  // inemezse: işaretlenmez, sonraki öne gelişte tekrar denenir (R2'de 1 gün var)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(r.id).mp4")
             guard (try? data.write(to: tmp)) != nil else { continue }
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let _ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: tmp)
-                }) { _, _ in
+                }) { success, _ in
                     try? FileManager.default.removeItem(at: tmp)
-                    c.resume()
+                    c.resume(returning: success)
                 }
             }
-            saved.insert(r.id)
-            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            if _ok {                                    // yalnız GERÇEKTEN kaydolunca işaretle (başarısızsa sonra tekrar dener)
+                saved.insert(r.id); d.set(Array(saved), forKey: "nd_autosaved_ids"); _savedN += 1
+            }
         }
+        if _savedN > 0 { notifyGallerySaved(_savedN) }   // bildirim çıksın (Barış: "kaydedince bildirim çıksın")
+    }
+    // Galeriye otomatik kayıt bildirimi (Barış 2026-07-27): video sessizce inince kullanıcıya "kaydedildi" bildirimi.
+    func notifyGallerySaved(_ n: Int) {
+        let c = UNMutableNotificationContent()
+        c.title = "Move Log"
+        c.body = n == 1 ? L("Videon galerine kaydedildi 🎬", "Your video was saved to your gallery 🎬")
+                        : L("\(n) video galerine kaydedildi 🎬", "\(n) videos saved to your gallery 🎬")
+        c.sound = .default
+        let req = UNNotificationRequest(identifier: "nd_gallery_saved", content: c, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
     }
     func positions() async -> [Position] {
         if AppEnv.demo { return DemoData.positions }
