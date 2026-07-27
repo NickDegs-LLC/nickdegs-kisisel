@@ -225,12 +225,15 @@ enum AuthGate { case checking, valid, needLogin, offline }
         let d = UserDefaults.standard
         var saved = Set(d.stringArray(forKey: "nd_autosaved_ids") ?? [])
         let done = (await rides()).filter { $0.rendering != true && $0.failed != true }
-        // İLK KURULUM: mevcut tüm videoları "işlendi" say (geçmiş kütüphaneyi galeriye boşaltma)
-        if !d.bool(forKey: "nd_autosave_init") {
-            saved.formUnion(done.map { $0.id })
+        // İLK KURULUM (v2, 2026-07-27): eski kütüphaneyi baseline'la AMA son 2 günde ÜRETİLEN videoları KAYDET.
+        // v2 anahtarı -> yeni build'de YENİDEN çalışır (v1 baseline'ının yanlışlıkla yuttuğu son videolar kurtulur).
+        // Böylece "güncelledim ama son videolarım inmedi" bitiyor; eski onlarca video yine boşaltılmıyor.
+        if !d.bool(forKey: "nd_autosave_init_v2") {
+            let _cut = Date().timeIntervalSince1970 - 2 * 86400   // son 2 gün "yeni" sayılır -> otomatik iner
+            saved.formUnion(done.filter { ($0.done ?? 0) < _cut }.map { $0.id })
             d.set(Array(saved), forKey: "nd_autosaved_ids")
-            d.set(true, forKey: "nd_autosave_init")
-            return
+            d.set(true, forKey: "nd_autosave_init_v2")
+            // return YOK -> son 2 günün videoları aşağıda kaydedilir
         }
         let todo = done.filter { !saved.contains($0.id) }
         guard !todo.isEmpty else { return }
@@ -238,10 +241,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { c.resume(returning: $0) }
         }
         guard status == .authorized || status == .limited else {
-            // Kullanıcı galeri iznini reddetti -> otomatik kayıt yapma; yine de işaretle (tekrar tekrar sorma).
-            // "Videolarım"daki manuel kaydet butonu yedek olarak kalır.
-            saved.formUnion(todo.map { $0.id })
-            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            // İzin yok -> İŞARETLEME (kalıcı kaybetme); izin sonradan açılınca otomatik yetişir. Manuel kaydet yedek.
             return
         }
         for r in todo {
