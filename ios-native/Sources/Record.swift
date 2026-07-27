@@ -402,7 +402,12 @@ struct GenerateSheet: View {
         .presentationDetents([.large])
         .interactiveDismissDisabled(sending)   // render sırasında sheet kapatılamaz
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
-        .task { await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary() }
+        .task {
+            await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
+            // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
+            // varsayılan "active" (son yüklenen) -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
+            if !userTracks.isEmpty && music.isEmpty { music = "active" }
+        }
         .fileImporter(isPresented: $showAudioPicker, allowedContentTypes: [.audio]) { res in
             if case .success(let url) = res {
                 Task {
@@ -446,6 +451,10 @@ struct GenerateSheet: View {
     var musicLabel: String {
         if music == "upload" { return L("Kendi müziğin","Your music") }
         if music == "none" { return L("Sessiz","Silent") }
+        // YÜKLÜ MÜZİK her iki modda (Barış 2026-07-27): eskiden lib:/active SADECE tactical dalındaydı ->
+        // 3D/premium modda seçili müzik "Yok" görünüyordu. En üste alındı -> her modda "eklendi" görünür.
+        if music == "active" { return "🎵 " + L("Yüklenen müziğin","Your uploaded music") }
+        if music.hasPrefix("lib:") { let id=String(music.dropFirst(4)); return "🎵 " + (userTracks.first{ $0["id"]==id }?["name"] ?? L("Yüklenen","Uploaded")) }
         if music.hasPrefix("stock:") {
             let id = String(music.dropFirst(6))
             return stock.first { $0["id"] == id }?["name"] ?? id

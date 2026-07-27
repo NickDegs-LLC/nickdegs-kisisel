@@ -412,10 +412,15 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return r != nil
     }
     func musicLibrary() async -> [[String:String]] {
+        // SAĞLAM PARSE (Barış 2026-07-27): eski `as? [[String:String]]` cast'i JSONSerialization'ın [String:Any]
+        // değerlerinde BOŞ dönebiliyordu -> yüklenen müzikler uygulamada "eklendi" görünmüyordu. [String:Any] -> compactMap.
         guard let d = try? await req("/api/music/library"),
               let arr = (try? JSONSerialization.jsonObject(with: d)) as? [String:Any],
-              let tr = arr["tracks"] as? [[String:String]] else { return [] }
-        return tr
+              let raw = arr["tracks"] as? [[String:Any]] else { return [] }
+        return raw.compactMap { t in
+            guard let id = t["id"] as? String, let nm = t["name"] as? String else { return nil }
+            return ["id": id, "name": nm]
+        }
     }
     func musicLibraryAdd(name: String, data: Data) async -> String? {
         let dataURL = "data:audio/m4a;base64," + data.base64EncodedString()
