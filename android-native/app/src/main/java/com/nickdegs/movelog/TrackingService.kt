@@ -55,8 +55,20 @@ class TrackingService : Service() {
         ingestUrl = intent?.getStringExtra("url") ?: ""
         startForeground(NID, notification())
         active = true
-        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
-            .setMinUpdateIntervalMillis(3000L).setMinUpdateDistanceMeters(5f).build()
+        // ALGILAMA HASSASİYETİ (Barış 2026-08-01: "hassas takipte 5 saniyede bir konum daha keskin sonuç verir,
+        // orta/normal telefon konumunda kalabilir"). BUG: burası SABİT 5sn/5m idi -> ayar hiçbir şey yapmıyordu ve
+        // HERKES (ücretsiz dahil) sürekli en yüksek hassasiyette kalıp pil yiyordu. Artık iOS Tracker.sensParams
+        // ile BİREBİR aynı tablo; ücretsiz kullanıcı iOS'taki gibi zorunlu "basit".
+        val prefs = getSharedPreferences("movelog", MODE_PRIVATE)
+        val prem = prefs.getBoolean("nd_premium", false)
+        val sens = if (prem) (prefs.getString("nd_sensitivity", "dengeli") ?: "dengeli") else "basit"
+        val (ivMs, distM) = when (sens) {
+            "hassas"  -> Pair(5000L, 5f)     // en hassas: 5 sn / 5 m (en yoğun iz)
+            "dengeli" -> Pair(15000L, 12f)   // dengeli: 15 sn / 12 m
+            else      -> Pair(45000L, 30f)   // basit: 45 sn / 30 m (pil dostu)
+        }
+        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, ivMs)
+            .setMinUpdateIntervalMillis(ivMs * 3 / 5).setMinUpdateDistanceMeters(distM).build()
         try { fused.requestLocationUpdates(req, cb, mainLooper) } catch (e: SecurityException) {}
         return START_STICKY
     }
