@@ -289,6 +289,9 @@ class Store(app: Application) : AndroidViewModel(app) {
     // İlk kurulumda mevcut videolar "işlendi" işaretlenir (eski kütüphaneyi galeriye BOŞALTMAYIZ); sonra yalnızca YENİ videolar.
     // API 29+ MediaStore izin gerektirmez; uygulama her öne geldiğinde çağrılır (1 günlük R2 penceresine yetişir).
     suspend fun autoSaveNewVideos() {
+        // OTO-KAYIT İPTAL (Barış 2026-08-01, iOS 1.56 ile AYNI karar): uygulama açıkken sürekli tetikleniyordu.
+        // Kullanıcı MANUEL kaydeder (Videolarım'daki "kaydet" butonu). Re-enable: nd_autosave_enabled=true.
+        if (!prefs.getBoolean("nd_autosave_enabled", false)) return
         val app = getApplication<Application>()
         val saved = prefs.getStringSet("nd_autosaved_ids", emptySet())!!.toMutableSet()
         val done = rides().filter { !it.rendering && !it.novideo }.map { it.id }
