@@ -47,7 +47,12 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
-    LaunchedEffect(Unit) { stock = store.musicList(); userTracks = store.musicLibrary() }
+    LaunchedEffect(Unit) {
+        stock = store.musicList(); userTracks = store.musicLibrary()
+        // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (iOS 1.57 paritesi): kullanıcı müzik yüklediyse ve henüz seçim yapmadıysa
+        // son yüklediği seçili gelsin -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
+        if (userTracks.isNotEmpty() && music.isEmpty()) music = "lib:" + userTracks.first().first
+    }
     val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
             musicUploading = true
@@ -84,9 +89,15 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
             Text(L("Video oluştur", "Create video"), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Picker(L("Görünüm", "Mode"), modes, mode) { mode = it }
             if (mode == "tactical") {
+                // BEDAVA AKSİYON (iOS 1.57 paritesi): Ultra değilse ama tek-seferlik hakkı varsa yeşil "1 ÜCRETSİZ".
                 if (!store.ultra) {
-                    Text(L("Tactical, Ultra aboneliğine özeldir.", "Tactical is exclusive to Ultra."),
-                        color = Brand.accent, fontSize = 12.sp)
+                    if (store.freeTactical) {
+                        Text(L("1 ÜCRETSİZ — ilk taktik videon bizden.", "1 FREE — your first tactical video is on us."),
+                            color = Color(0xFF34C759), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        Text(L("Tactical, Ultra aboneliğine özeldir.", "Tactical is exclusive to Ultra."),
+                            color = Brand.accent, fontSize = 12.sp)
+                    }
                 }
                 Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında arama, hedef kilidi, canlı takip. Her video %100 benzersiz.",
                        "Military satellite op: radio briefing, global search, target lock, live tracking. Every video 100% unique."),
@@ -110,7 +121,11 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                 userTracks.map { Opt("lib:${it.first}", "🎵 ${it.second}") } +
                 TACTICAL_TRACKS.map { Opt(it, it.replace("_", " ")) }
             } else {
-                listOf(Opt("", L("Yok", "None"))) + stock.map { Opt("stock:${it.first}", it.second) }
+                // YÜKLÜ MÜZİK HER İKİ MODDA (iOS 1.57 paritesi): eskiden lib: SADECE tactical dalındaydı ->
+                // 3D/premium modda yüklenen müzik "Yok" görünüyordu.
+                listOf(Opt("", L("Yok", "None"))) +
+                userTracks.map { Opt("lib:${it.first}", "🎵 ${it.second}") } +
+                stock.map { Opt("stock:${it.first}", it.second) }
             }
             Picker(L("Müzik", "Music"), musicOpts, music) { music = it }
             if (mode == "tactical") {

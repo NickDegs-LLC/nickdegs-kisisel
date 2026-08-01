@@ -40,6 +40,8 @@ class Store(app: Application) : AndroidViewModel(app) {
     var displayName by mutableStateOf("")
     var premium by mutableStateOf(prefs.getBoolean("nd_premium", false))
     var ultra by mutableStateOf(prefs.getBoolean("nd_ultra", false))   // Ultra tier: Google 3D + kamera modları + Street View
+    var freeTactical by mutableStateOf(prefs.getBoolean("nd_free_tactical", false))   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (iOS 1.57 paritesi)
+    val canTactical: Boolean get() = ultra || freeTactical                            // Ultra VEYA bedava hak -> taktik açık
     var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
@@ -177,6 +179,9 @@ class Store(app: Application) : AndroidViewModel(app) {
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
         persistPremium(o.optBoolean("premium", premium)); persistUltra(o.optBoolean("ultra", ultra))
+        // TEK-SEFERLİK BEDAVA AKSİYON (iOS 1.57 paritesi): yeni kullanıcıya 1 ücretsiz taktik video hakkı.
+        freeTactical = o.optBoolean("free_tactical", false)
+        prefs.edit().putBoolean("nd_free_tactical", freeTactical).apply()
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
