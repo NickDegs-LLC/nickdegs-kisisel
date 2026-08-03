@@ -56,4 +56,12 @@ jobs:
           packageName: com.nickdegs.movelog
           releaseFiles: android-native/app/build/outputs/bundle/release/app-release.aab
           track: internal
-          status: draft
+          # TASLAK BIRAKMA (Baris 2026-08-03): 'draft' birakilinca paket Play Console'da
+          # "degisiklikler incelemeye gonderilmedi" diye bekliyor ve karisiklik yaratiyordu.
+          # Internal test track'i INCELEME GEREKTIRMEZ -> completed guvenli ve dogrudan test edilebilir.
+          status: completed
+          # r0adkll action'inda bu bayrak uygulamanin durumuna gore TERS calisir:
+          #   uygulama YAYINDAYSA -> false SART (true verilirse Play hata dondurur)
+          #   uygulama red/inceleme bekliyorsa -> true SART (yoksa yuklenen paket KAYBOLUR)
+          # Move Log yayinda oldugu icin false. Redde duserse burayi true yap.
+          changesNotSentForReview: false
