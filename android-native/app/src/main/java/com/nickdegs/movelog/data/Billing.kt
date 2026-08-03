@@ -50,8 +50,10 @@ class Billing(
             listOf(QueryProductDetailsParams.Product.newBuilder()
                 .setProductId("premium").setProductType(BillingClient.ProductType.SUBS).build())
         ).build()
-        client.queryProductDetailsAsync(params) { _, list ->
-            val p = list.firstOrNull() ?: return@queryProductDetailsAsync
+        // ⚠️ Billing 8.0.0: geri çağrının 2. parametresi List<ProductDetails> DEĞİL, QueryProductDetailsResult.
+        // Ürünler res.productDetailsList içinde (7.x'ten yükseltirken kırılan tek yer).
+        client.queryProductDetailsAsync(params) { _, res ->
+            val p = res.productDetailsList.firstOrNull() ?: return@queryProductDetailsAsync
             p.subscriptionOfferDetails?.forEach { offer ->
                 val period = offer.pricingPhases.pricingPhaseList.lastOrNull()?.billingPeriod ?: ""
                 when {
@@ -60,13 +62,13 @@ class Billing(
                 }
             }
         }
-        // ULTRA subscription (Play'de yoksa list boş -> null kalır, buton gizli)
+        // ULTRA subscription (Play'de yoksa liste boş -> null kalır, buton gizli)
         val uparams = QueryProductDetailsParams.newBuilder().setProductList(
             listOf(QueryProductDetailsParams.Product.newBuilder()
                 .setProductId("ultra").setProductType(BillingClient.ProductType.SUBS).build())
         ).build()
-        client.queryProductDetailsAsync(uparams) { _, list ->
-            val p = list.firstOrNull() ?: return@queryProductDetailsAsync
+        client.queryProductDetailsAsync(uparams) { _, res ->
+            val p = res.productDetailsList.firstOrNull() ?: return@queryProductDetailsAsync
             p.subscriptionOfferDetails?.forEach { offer ->
                 val period = offer.pricingPhases.pricingPhaseList.lastOrNull()?.billingPeriod ?: ""
                 when {
@@ -75,12 +77,12 @@ class Billing(
                 }
             }
         }
-        // Boost (consumable INAPP) — Play'de ürün yoksa list boş döner, boost null kalır (buton gizli)
+        // Boost (consumable INAPP) — Play'de ürün yoksa liste boş döner, boost null kalır (buton gizli)
         val bparams = QueryProductDetailsParams.newBuilder().setProductList(
             listOf(QueryProductDetailsParams.Product.newBuilder()
                 .setProductId(BOOST_SKU).setProductType(BillingClient.ProductType.INAPP).build())
         ).build()
-        client.queryProductDetailsAsync(bparams) { _, list -> boost = list.firstOrNull() }
+        client.queryProductDetailsAsync(bparams) { _, res -> boost = res.productDetailsList.firstOrNull() }
     }
 
     fun buyBoost(activity: Activity) {

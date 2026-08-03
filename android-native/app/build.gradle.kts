@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.57"
+        versionName = "1.58"
     }
 
     signingConfigs {
@@ -60,7 +60,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)
     implementation("org.osmdroid:osmdroid-android:6.1.20")   // OpenStreetMap (Maps API key gerekmez)
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")   // Play zorunlulugu: 7.x 31 Agu 2026'da reddedilecek
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
     implementation("io.livekit:livekit-android:2.18.2")   // 1.9 canlı interkom (kulüp sesli oda)
     implementation("com.google.android.gms:play-services-wearable:19.0.0")   // Wear OS saat köprüsü
