@@ -40,6 +40,8 @@ class Store(app: Application) : AndroidViewModel(app) {
     var displayName by mutableStateOf("")
     var premium by mutableStateOf(prefs.getBoolean("nd_premium", false))
     var ultra by mutableStateOf(prefs.getBoolean("nd_ultra", false))   // Ultra tier: Google 3D + kamera modları + Street View
+    var freeTactical by mutableStateOf(prefs.getBoolean("nd_free_tactical", false))   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (iOS 1.57 paritesi)
+    val canTactical: Boolean get() = ultra || freeTactical                            // Ultra VEYA bedava hak -> taktik açık
     var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
@@ -177,6 +179,9 @@ class Store(app: Application) : AndroidViewModel(app) {
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
         persistPremium(o.optBoolean("premium", premium)); persistUltra(o.optBoolean("ultra", ultra))
+        // TEK-SEFERLİK BEDAVA AKSİYON (iOS 1.57 paritesi): yeni kullanıcıya 1 ücretsiz taktik video hakkı.
+        freeTactical = o.optBoolean("free_tactical", false)
+        prefs.edit().putBoolean("nd_free_tactical", freeTactical).apply()
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -289,6 +294,9 @@ class Store(app: Application) : AndroidViewModel(app) {
     // İlk kurulumda mevcut videolar "işlendi" işaretlenir (eski kütüphaneyi galeriye BOŞALTMAYIZ); sonra yalnızca YENİ videolar.
     // API 29+ MediaStore izin gerektirmez; uygulama her öne geldiğinde çağrılır (1 günlük R2 penceresine yetişir).
     suspend fun autoSaveNewVideos() {
+        // OTO-KAYIT İPTAL (Barış 2026-08-01, iOS 1.56 ile AYNI karar): uygulama açıkken sürekli tetikleniyordu.
+        // Kullanıcı MANUEL kaydeder (Videolarım'daki "kaydet" butonu). Re-enable: nd_autosave_enabled=true.
+        if (!prefs.getBoolean("nd_autosave_enabled", false)) return
         val app = getApplication<Application>()
         val saved = prefs.getStringSet("nd_autosaved_ids", emptySet())!!.toMutableSet()
         val done = rides().filter { !it.rendering && !it.novideo }.map { it.id }

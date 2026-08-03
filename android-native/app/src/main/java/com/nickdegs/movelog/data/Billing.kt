@@ -62,7 +62,7 @@ class Billing(
                 }
             }
         }
-        // ULTRA subscription (Play'de yoksa list boş -> null kalır, buton gizli)
+        // ULTRA subscription (Play'de yoksa liste boş -> null kalır, buton gizli)
         val uparams = QueryProductDetailsParams.newBuilder().setProductList(
             listOf(QueryProductDetailsParams.Product.newBuilder()
                 .setProductId("ultra").setProductType(BillingClient.ProductType.SUBS).build())
@@ -77,7 +77,7 @@ class Billing(
                 }
             }
         }
-        // Boost (consumable INAPP) — Play'de ürün yoksa list boş döner, boost null kalır (buton gizli)
+        // Boost (consumable INAPP) — Play'de ürün yoksa liste boş döner, boost null kalır (buton gizli)
         val bparams = QueryProductDetailsParams.newBuilder().setProductList(
             listOf(QueryProductDetailsParams.Product.newBuilder()
                 .setProductId(BOOST_SKU).setProductType(BillingClient.ProductType.INAPP).build())
