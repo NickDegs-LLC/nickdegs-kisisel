@@ -1,30 +1,28 @@
 import SwiftUI
+import AuthenticationServices
 
+// GİRİŞ EKRANI v2 (2026-08-08, Barış: "Google ve Apple ile girişi ekle, SMS'i kaldır"):
+// Telefon/OTP arayüzü KALDIRILDI — backend SMS uçları sahadaki eski sürümler (<=1.57) için
+// bilerek duruyor, yalnız bu ekrandan çıkarıldı.
+// - Apple: SignInWithAppleButton (sistem butonu -> 12 dilde OTOMATİK yerelleşir, HIG uyumlu).
+//   Backend /auth/apple hazırdı (JWKS doğrulamalı, aud=com.nickdegs.kisisel); entitlement eklendi.
+// - Google: backend /auth/google hazır; iOS OAuth client'ı üretilince (film-ozet Firebase'ine
+//   iOS app eklenmesi = konsoldan 2 dk) buton buraya eklenecek. O güne kadar iOS Apple-tek —
+//   Apple kuralı 4.8 zaten Apple'ı şart koşar, Google'sız yayın uyumlu.
+// - CI otomatik-giriş (.task/AppEnv.autoLogin) AYNEN KORUNDU — iPad doğrulaması buna bağlı.
 struct LoginView: View {
     @EnvironmentObject var store: Store
     @AppStorage("nd_scheme") var scheme = "dark"
-    @State private var region = CountryDial.defaultRegion   // ülke seçici (WhatsApp tarzı) — cihaz bölgesi varsayılan
-    @State private var showCountry = false
-    @State private var phone = ""
-    @State private var code = ""
-    @State private var codeSent = false
+    @Environment(\.colorScheme) private var sysScheme
     @State private var busy = false
     @State private var float = false
     @State private var shown = false
-    @FocusState private var focus: Field?
-    enum Field { case phone, code }
-
-    private var fullPhone: String {
-        "+" + (CountryDial.dial[region] ?? "90") + phone.filter(\.isNumber)
-    }
 
     var body: some View {
         ZStack {
             AuroraBackground()
-                .contentShape(Rectangle())
-                .onTapGesture { focus = nil }       // boşluğa dokun → klavye kapanır, buton erişilir
-            ScrollView {
-              VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Spacer(minLength: 60)
                 Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
                     .font(.system(size: 38, weight: .semibold))
                     .foregroundStyle(Brand.gradient)
@@ -35,108 +33,47 @@ struct LoginView: View {
                     .padding(.bottom, 18)
                 Text("Move Log").font(.system(size: 40, weight: .heavy))
                 Text(L("Rotalar · Aktivite · Canlı konum", "Routes · Activity · Live location"))
-                    .font(.subheadline).foregroundStyle(.secondary).padding(.top, 4).padding(.bottom, 26)
-
-                if !codeSent {
-                    // 1) Telefon numarası
-                    HStack(spacing: 10) {
-                        // ÜLKE SEÇİCİ (2026-07-12): eski elle-yazılan "+90" kutusu yabancı kullanıcıyı
-                        // engelliyordu — bayraklı/aranabilir liste, cihaz bölgesine göre otomatik varsayılan.
-                        Button { focus = nil; showCountry = true } label: {
-                            HStack(spacing: 5) {
-                                Text(CountryDial.flag(region))
-                                Text("+" + (CountryDial.dial[region] ?? "")).foregroundStyle(.primary)
-                                Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }.buttonStyle(.plain)
-                        Divider().frame(height: 22)
-                        TextField(L("Telefon numarası", "Phone number"), text: $phone)
-                            .keyboardType(.phonePad)
-                            .textContentType(.telephoneNumber)
-                            .focused($focus, equals: .phone)
-                    }
-                    .padding(16).glassPanel(18)
-
-                    if store.loginError {
-                        Text(L("Geçerli numara gir ve tekrar dene", "Enter a valid number and try again"))
-                            .font(.footnote).foregroundStyle(.red).padding(.top, 12)
-                    }
-
-                    Button {
-                        focus = nil                                  // klavyeyi kapat
-                        guard phone.filter(\.isNumber).count >= 7 else { store.loginError = true; return }
-                        busy = true
-                        Task {
-                            let ok = await store.smsStart(fullPhone)
-                            busy = false
-                            if ok { withAnimation { codeSent = true }; focus = .code }
-                        }
-                    } label: {
-                        HStack { if busy { ProgressView().tint(.white) }
-                            Text(L("Kod gönder", "Send code")) }
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glassyProminent())
-                    .disabled(busy)                                  // her zaman basılabilir (busy hariç)
-                    .padding(.top, 22)
-
-                    Text(L("Telefon numaranıza SMS ile tek kullanımlık kod göndereceğiz.",
-                           "We'll text a one-time code to your phone."))
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center).padding(.top, 14)
-
-                } else {
-                    // 2) SMS kodu
-                    Text(L("Kod gönderildi: ", "Code sent to: ") + fullPhone)
-                        .font(.footnote).foregroundStyle(.secondary).padding(.bottom, 12)
-
-                    TextField(L("6 haneli kod", "6-digit code"), text: $code)
-                        .keyboardType(.numberPad)
-                        .textContentType(.oneTimeCode)
-                        .multilineTextAlignment(.center)
-                        .font(.system(size: 24, weight: .semibold, design: .rounded))
-                        .focused($focus, equals: .code)
-                        .padding(16).glassPanel(18)
-
-                    if store.loginError {
-                        Text(L("Kod hatalı veya süresi doldu", "Incorrect or expired code"))
-                            .font(.footnote).foregroundStyle(.red).padding(.top, 12)
-                    }
-
-                    Button {
-                        busy = true
-                        Task { await store.smsVerify(fullPhone, code.filter(\.isNumber)); busy = false }
-                    } label: {
-                        HStack { if busy { ProgressView().tint(.white) }
-                            Text(L("Doğrula ve gir", "Verify & sign in")) }
-                    }
-                    .buttonStyle(.glassyProminent())
-                    .disabled(busy || code.filter(\.isNumber).count < 4)
-                    .padding(.top, 22)
-
-                    HStack(spacing: 18) {
-                        Button(L("Numarayı değiştir", "Change number")) {
-                            withAnimation { codeSent = false; code = ""; store.loginError = false }
-                        }
-                        Button(L("Tekrar gönder", "Resend")) {
-                            Task { _ = await store.smsStart(fullPhone) }
-                        }
-                    }
-                    .font(.footnote).foregroundStyle(Brand.accent).padding(.top, 16)
-                }
-            }
-            .padding(28).frame(maxWidth: 400)
-            .scaleEffect(shown ? 1 : 0.96)
-            .opacity(shown ? 1 : 0)
-            .blur(radius: shown ? 0 : 6)
-            }
-            .scrollDismissesKeyboard(.interactively)
-        }
-        .sheet(isPresented: $showCountry) { CountryPickerSheet(region: $region) }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
+                    .font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
                 Spacer()
-                Button(L("Bitti","Done")) { focus = nil }
+
+                VStack(spacing: 0) {
+                    if store.loginError {
+                        Text(L("Giriş yapılamadı, tekrar dene.", "Sign-in failed, please try again."))
+                            .font(.footnote).foregroundStyle(.red).padding(.bottom, 12)
+                    }
+
+                    SignInWithAppleButton(.continue) { req in
+                        req.requestedScopes = [.fullName]
+                    } onCompletion: { result in
+                        guard case .success(let auth) = result,
+                              let cred = auth.credential as? ASAuthorizationAppleIDCredential,
+                              let data = cred.identityToken,
+                              let tok = String(data: data, encoding: .utf8) else {
+                            // kullanıcı iptal ettiyse hata gösterme; gerçek hatada göster
+                            if case .failure(let e) = result,
+                               (e as? ASAuthorizationError)?.code != .canceled { store.loginError = true }
+                            return
+                        }
+                        // İsim yalnız İLK Apple girişinde gelir (Apple politikası) -> backend ilk gelişte saklar.
+                        let name = [cred.fullName?.givenName, cred.fullName?.familyName]
+                            .compactMap { $0 }.joined(separator: " ")
+                        busy = true
+                        Task { await store.appleLogin(identityToken: tok, name: name); busy = false }
+                    }
+                    .signInWithAppleButtonStyle(sysScheme == .dark ? .white : .black)
+                    .frame(height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .disabled(busy)
+                    .overlay { if busy { ProgressView() } }
+
+                    Text(L("Hesabın yoksa otomatik oluşturulur.", "No account? One is created automatically."))
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).padding(.top, 14).padding(.bottom, 44)
+                }
+                .padding(.horizontal, 28).frame(maxWidth: 400)
+                .scaleEffect(shown ? 1 : 0.96)
+                .opacity(shown ? 1 : 0)
+                .blur(radius: shown ? 0 : 6)
             }
         }
         .onAppear {

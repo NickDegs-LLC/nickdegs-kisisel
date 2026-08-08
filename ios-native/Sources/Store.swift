@@ -202,6 +202,43 @@ enum AuthGate { case checking, valid, needLogin, offline }
         } catch { loginError = true }
     }
 
+    // APPLE İLE GİRİŞ (2026-08-08, Barış: "Google+Apple ekle, SMS kalksın"): backend /auth/apple
+    // taşımadan beri hazırdı (JWKS imza doğrulamalı, aud=com.nickdegs.kisisel) — yalnız istemci eksikti.
+    // smsVerify ile AYNI oturum deseni: token sakla + gate aç + saat linkine it.
+    func appleLogin(identityToken: String, name: String) async {
+        loginError = false
+        do {
+            var r = URLRequest(url: URL(string: API + "/auth/apple")!)
+            r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: ["identity_token": identityToken, "name": name])
+            let (data, resp) = try await URLSession.shared.data(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode < 300,
+               let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
+                token = t; me = (o["user"] as? String) ?? ""
+                UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
+                PhoneWatchLink.shared.push()
+            } else { loginError = true }
+        } catch { loginError = true }
+    }
+
+    // GOOGLE İLE GİRİŞ: backend /auth/google hazır. iOS Google OAuth client'ı henüz YOK
+    // (film-ozet Firebase'ine iOS app eklenince aktifleşir) -> buton Login'de o zamana kadar gizli.
+    func googleLogin(idToken: String) async {
+        loginError = false
+        do {
+            var r = URLRequest(url: URL(string: API + "/auth/google")!)
+            r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: ["id_token": idToken])
+            let (data, resp) = try await URLSession.shared.data(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode < 300,
+               let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
+                token = t; me = (o["user"] as? String) ?? ""
+                UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
+                PhoneWatchLink.shared.push()
+            } else { loginError = true }
+        } catch { loginError = true }
+    }
+
     func logout() { token = ""; UserDefaults.standard.removeObject(forKey: "nd_token"); gate = .needLogin }
 
     func deleteAccount() async {
