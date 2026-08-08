@@ -40,6 +40,8 @@ struct GenerateSheet: View {
     @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
     @AppStorage("nd_ultra") private var ultraStored = false  // sunucu/admin Ultra (syncPremium yazar) — StoreKit dışı da açılsın
     private var isUltra: Bool { iap.ultra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
+    @AppStorage("nd_free_tactical") private var freeTacStored = false   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (syncPremium ham JSON'dan yazar)
+    private var canTactical: Bool { isUltra || freeTacStored }          // Ultra VEYA bedava-aksiyon hakkı -> taktik açık
     @State private var stock: [[String:String]] = []
     @State private var musicUploading = false
     @State private var note = ""
@@ -139,8 +141,15 @@ struct GenerateSheet: View {
                     // TACTICAL (Ultra): CoD tarzı askeri uydu görevi videosu — uçtan uca ayrı render hattı
                     HStack {
                         Text("🎖️ " + L("Tactical · uydu görevi","Tactical · satellite op"))
-                        if !isUltra { Text("Ultra").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Capsule().fill(Brand.accent.opacity(0.25))) }
+                        if !isUltra {
+                            if freeTacStored {   // TEK-SEFERLİK bedava aksiyon hakkı -> yeşil rozet
+                                Text(L("1 ÜCRETSİZ","1 FREE")).font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.green.opacity(0.3)))
+                            } else {
+                                Text("Ultra").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Capsule().fill(Brand.accent.opacity(0.25)))
+                            }
+                        }
                         Spacer()
                         if mode == "tactical" { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
                     }
@@ -148,7 +157,7 @@ struct GenerateSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .glassPanel(14)
                     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .onTapGesture { if isUltra { mode = "tactical" } else { showPaywall = true } }
+                    .onTapGesture { if canTactical { mode = "tactical" } else { showPaywall = true } }
                     if mode == "tactical" {
                         Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında rastgele arama, hedef kilidi, canlı takip ve görev kapanışı. Her video %100 benzersiz üretilir (9:16).",
                                "Military satellite op: radio briefing, global random search, target lock, live tracking and mission outro. Every video is 100% unique (9:16)."))
@@ -402,7 +411,12 @@ struct GenerateSheet: View {
         .presentationDetents([.large])
         .interactiveDismissDisabled(sending)   // render sırasında sheet kapatılamaz
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
-        .task { await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary() }
+        .task {
+            await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
+            // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
+            // varsayılan "active" (son yüklenen) -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
+            if !userTracks.isEmpty && music.isEmpty { music = "active" }
+        }
         .fileImporter(isPresented: $showAudioPicker, allowedContentTypes: [.audio]) { res in
             if case .success(let url) = res {
                 Task {
@@ -446,6 +460,10 @@ struct GenerateSheet: View {
     var musicLabel: String {
         if music == "upload" { return L("Kendi müziğin","Your music") }
         if music == "none" { return L("Sessiz","Silent") }
+        // YÜKLÜ MÜZİK her iki modda (Barış 2026-07-27): eskiden lib:/active SADECE tactical dalındaydı ->
+        // 3D/premium modda seçili müzik "Yok" görünüyordu. En üste alındı -> her modda "eklendi" görünür.
+        if music == "active" { return "🎵 " + L("Yüklenen müziğin","Your uploaded music") }
+        if music.hasPrefix("lib:") { let id=String(music.dropFirst(4)); return "🎵 " + (userTracks.first{ $0["id"]==id }?["name"] ?? L("Yüklenen","Uploaded")) }
         if music.hasPrefix("stock:") {
             let id = String(music.dropFirst(6))
             return stock.first { $0["id"] == id }?["name"] ?? id

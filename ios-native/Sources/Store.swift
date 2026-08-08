@@ -4,6 +4,7 @@ import CoreLocation
 import DeviceCheck
 import CryptoKit
 import Photos
+import UserNotifications
 
 let API = "https://kisisel-api.nickdegs.com"
 
@@ -84,6 +85,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
 
 // MARK: - API + Durum
 @MainActor final class Store: ObservableObject {
+    static weak var shared: Store?   // arka plan (BGTask/push) oto-kayıt için AppDelegate erişimi (2026-07-27)
     @Published var token: String = UserDefaults.standard.string(forKey: "nd_token") ?? ""
     @Published var me: String = ""
     @Published var loginError = false
@@ -221,16 +223,22 @@ enum AuthGate { case checking, valid, needLogin, offline }
     // İlk kurulumda mevcut videolar "kaydedilmiş" işaretlenir (eski onlarca videoyu galeriye BOŞALTMAYIZ);
     // sonrasında yalnızca YENİ üretilen videolar otomatik iner. Uygulama her öne geldiğinde çalışır (1 günlük pencereye yetişir).
     func autoSaveNewVideos() async {
+        // OTO-KAYIT İPTAL (Barış 2026-07-27): uygulama açıkken sürekli tetikleniyordu + arka planda güvenilmez.
+        // Kullanıcı MANUEL kaydeder (Videolarım'daki "kaydet" butonu). Re-enable: nd_autosave_enabled=true.
+        guard UserDefaults.standard.bool(forKey: "nd_autosave_enabled") else { return }
         if AppEnv.demo { return }
         let d = UserDefaults.standard
         var saved = Set(d.stringArray(forKey: "nd_autosaved_ids") ?? [])
         let done = (await rides()).filter { $0.rendering != true && $0.failed != true }
-        // İLK KURULUM: mevcut tüm videoları "işlendi" say (geçmiş kütüphaneyi galeriye boşaltma)
-        if !d.bool(forKey: "nd_autosave_init") {
-            saved.formUnion(done.map { $0.id })
+        // İLK KURULUM (v2, 2026-07-27): eski kütüphaneyi baseline'la AMA son 2 günde ÜRETİLEN videoları KAYDET.
+        // v2 anahtarı -> yeni build'de YENİDEN çalışır (v1 baseline'ının yanlışlıkla yuttuğu son videolar kurtulur).
+        // Böylece "güncelledim ama son videolarım inmedi" bitiyor; eski onlarca video yine boşaltılmıyor.
+        if !d.bool(forKey: "nd_autosave_init_v2") {
+            let _cut = Date().timeIntervalSince1970 - 2 * 86400   // son 2 gün "yeni" sayılır -> otomatik iner
+            saved.formUnion(done.filter { ($0.done ?? 0) < _cut }.map { $0.id })
             d.set(Array(saved), forKey: "nd_autosaved_ids")
-            d.set(true, forKey: "nd_autosave_init")
-            return
+            d.set(true, forKey: "nd_autosave_init_v2")
+            // return YOK -> son 2 günün videoları aşağıda kaydedilir
         }
         let todo = done.filter { !saved.contains($0.id) }
         guard !todo.isEmpty else { return }
@@ -238,29 +246,39 @@ enum AuthGate { case checking, valid, needLogin, offline }
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { c.resume(returning: $0) }
         }
         guard status == .authorized || status == .limited else {
-            // Kullanıcı galeri iznini reddetti -> otomatik kayıt yapma; yine de işaretle (tekrar tekrar sorma).
-            // "Videolarım"daki manuel kaydet butonu yedek olarak kalır.
-            saved.formUnion(todo.map { $0.id })
-            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            // İzin yok -> İŞARETLEME (kalıcı kaybetme); izin sonradan açılınca otomatik yetişir. Manuel kaydet yedek.
             return
         }
+        var _savedN = 0
         for r in todo {
             var req = URLRequest(url: videoURL(r.id))
             for (k, v) in authHeader { req.setValue(v, forHTTPHeaderField: k) }
             guard let (data, _) = try? await URLSession.shared.data(for: req), !data.isEmpty else { continue }  // inemezse: işaretlenmez, sonraki öne gelişte tekrar denenir (R2'de 1 gün var)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(r.id).mp4")
             guard (try? data.write(to: tmp)) != nil else { continue }
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let _ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: tmp)
-                }) { _, _ in
+                }) { success, _ in
                     try? FileManager.default.removeItem(at: tmp)
-                    c.resume()
+                    c.resume(returning: success)
                 }
             }
-            saved.insert(r.id)
-            d.set(Array(saved), forKey: "nd_autosaved_ids")
+            if _ok {                                    // yalnız GERÇEKTEN kaydolunca işaretle (başarısızsa sonra tekrar dener)
+                saved.insert(r.id); d.set(Array(saved), forKey: "nd_autosaved_ids"); _savedN += 1
+            }
         }
+        if _savedN > 0 { notifyGallerySaved(_savedN) }   // bildirim çıksın (Barış: "kaydedince bildirim çıksın")
+    }
+    // Galeriye otomatik kayıt bildirimi (Barış 2026-07-27): video sessizce inince kullanıcıya "kaydedildi" bildirimi.
+    func notifyGallerySaved(_ n: Int) {
+        let c = UNMutableNotificationContent()
+        c.title = "Move Log"
+        c.body = n == 1 ? L("Videon galerine kaydedildi 🎬", "Your video was saved to your gallery 🎬")
+                        : L("\(n) video galerine kaydedildi 🎬", "\(n) videos saved to your gallery 🎬")
+        c.sound = .default
+        let req = UNNotificationRequest(identifier: "nd_gallery_saved", content: c, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
     }
     func positions() async -> [Position] {
         if AppEnv.demo { return DemoData.positions }
@@ -271,7 +289,12 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return try? dec().decode(Profile.self, from: await req("/api/profile")) }
     // Sunucu-taraflı premium'u cihaza senkronla (yalnızca Profil değil her yerden tetiklenir).
     func syncPremium() async {
-        guard let p = await profile(), p.premium else { return }
+        guard let d = try? await req("/api/profile") else { return }
+        // GÜVENLİ: free_tactical'ı HAM JSON'dan oku — Profile struct'ına DOKUNMA (profil decode'u asla bozulmaz)
+        if let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] {
+            UserDefaults.standard.set((o["free_tactical"] as? Bool) ?? false, forKey: "nd_free_tactical")
+        }
+        guard let p = try? dec().decode(Profile.self, from: d), p.premium else { return }
         UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium kalıcı
         UserDefaults.standard.set(true, forKey: "nd_premium")
         if p.ultra {   // sunucu/admin Ultra (StoreKit satın alma olmadan) -> kamera modları/Street View açılır
@@ -394,10 +417,15 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return r != nil
     }
     func musicLibrary() async -> [[String:String]] {
+        // SAĞLAM PARSE (Barış 2026-07-27): eski `as? [[String:String]]` cast'i JSONSerialization'ın [String:Any]
+        // değerlerinde BOŞ dönebiliyordu -> yüklenen müzikler uygulamada "eklendi" görünmüyordu. [String:Any] -> compactMap.
         guard let d = try? await req("/api/music/library"),
               let arr = (try? JSONSerialization.jsonObject(with: d)) as? [String:Any],
-              let tr = arr["tracks"] as? [[String:String]] else { return [] }
-        return tr
+              let raw = arr["tracks"] as? [[String:Any]] else { return [] }
+        return raw.compactMap { t in
+            guard let id = t["id"] as? String, let nm = t["name"] as? String else { return nil }
+            return ["id": id, "name": nm]
+        }
     }
     func musicLibraryAdd(name: String, data: Data) async -> String? {
         let dataURL = "data:audio/m4a;base64," + data.base64EncodedString()
