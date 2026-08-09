@@ -6,9 +6,8 @@ import AuthenticationServices
 // bilerek duruyor, yalnız bu ekrandan çıkarıldı.
 // - Apple: SignInWithAppleButton (sistem butonu -> 12 dilde OTOMATİK yerelleşir, HIG uyumlu).
 //   Backend /auth/apple hazırdı (JWKS doğrulamalı, aud=com.nickdegs.kisisel); entitlement eklendi.
-// - Google: backend /auth/google hazır; iOS OAuth client'ı üretilince (film-ozet Firebase'ine
-//   iOS app eklenmesi = konsoldan 2 dk) buton buraya eklenecek. O güne kadar iOS Apple-tek —
-//   Apple kuralı 4.8 zaten Apple'ı şart koşar, Google'sız yayın uyumlu.
+// - Google: SDK'sız PKCE (GoogleOAuth.swift; client move-log-500805/com.nickdegs.kisisel).
+//   Apple kuralı 4.8: üçüncü taraf giriş (Google) sunulduğu için Apple girişi ZORUNLU — ikisi de var.
 // - CI otomatik-giriş (.task/AppEnv.autoLogin) AYNEN KORUNDU — iPad doğrulaması buna bağlı.
 struct LoginView: View {
     @EnvironmentObject var store: Store
@@ -65,6 +64,33 @@ struct LoginView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .disabled(busy)
                     .overlay { if busy { ProgressView() } }
+
+                    // GOOGLE (2026-08-09): SDK'sız PKCE akışı (GoogleOAuth.swift). Kullanıcı iptali hata sayılmaz.
+                    Button {
+                        busy = true; store.loginError = false
+                        Task {
+                            do {
+                                let idTok = try await GoogleOAuth.shared.signIn()
+                                await store.googleLogin(idToken: idTok)
+                            } catch GoogleOAuthError.cancelled {
+                            } catch { store.loginError = true }
+                            busy = false
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("G").font(.system(size: 19, weight: .bold, design: .rounded))
+                                .foregroundStyle(LinearGradient(colors: [.blue, .red, .yellow, .green],
+                                                                startPoint: .leading, endPoint: .trailing))
+                            Text(L("Google ile devam et", "Continue with Google"))
+                                .font(.system(size: 17, weight: .medium))
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 52)
+                    }
+                    .background(sysScheme == .dark ? Color.white : Color.black)
+                    .foregroundStyle(sysScheme == .dark ? Color.black : Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .disabled(busy)
+                    .padding(.top, 12)
 
                     Text(L("Hesabın yoksa otomatik oluşturulur.", "No account? One is created automatically."))
                         .font(.caption2).foregroundStyle(.secondary)
