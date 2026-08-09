@@ -56,6 +56,12 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.8.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // GOOGLE İLE GİRİŞ (2026-08-08): Credential Manager + Google ID. serverClientId =
+    // film-ozet web client'ı (google-services.json'daki type-3). SMS UI kaldırıldı;
+    // NOT: eski SMS çağrıları /api/auth/... yanlış yoldaydı (backend /auth/...) -> zaten 404'tü.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)

@@ -154,6 +154,33 @@ class Store(app: Application) : AndroidViewModel(app) {
         }
 
     // ---- Auth (telefon + SMS tek-kullanımlık kod; iOS ile aynı) ----
+    // SUNUCU-GÜDÜMLÜ HARİTA (2026-08-09, Barış: "harita sunucudan değişsin, sürüm gerekmesin"):
+    // /api/mapconfig'ten XYZ şablonu gelir; boşsa OSM varsayılanı. Değiştirmek = sunucuda
+    // map-config.json'u düzenlemek — app güncellemesi GEREKMEZ.
+    var mapTiles by mutableStateOf("")
+    var mapAttribution by mutableStateOf("")
+    suspend fun loadMapConfig() {
+        val d = req("/api/mapconfig") ?: return
+        try {
+            val o = JSONObject(d)
+            mapTiles = o.optString("tiles", "")
+            mapAttribution = o.optString("attribution", "")
+        } catch (_: Exception) {}
+    }
+
+    // GOOGLE İLE GİRİŞ (2026-08-08, Barış: "Google+Apple ekle, SMS kalksın"). smsVerify ile
+    // aynı oturum deseni. Yol /auth/google (BAŞINDA /api YOK — SMS'in eski /api/auth yolu 404'tü).
+    suspend fun googleLogin(idToken: String): Boolean {
+        val d = req("/auth/google", "POST", JSONObject().put("id_token", idToken))
+            ?: run { loginError = true; return false }
+        val t = JSONObject(d).optString("token", "")
+        if (t.isEmpty()) { loginError = true; return false }
+        persistToken(t); loginError = false
+        loadProfile()
+        auth = AuthState.VALID
+        return true
+    }
+
     suspend fun smsStart(phone: String): Boolean =
         req("/api/auth/sms/start", "POST", JSONObject().put("phone", phone)) != null
 
@@ -172,6 +199,7 @@ class Store(app: Application) : AndroidViewModel(app) {
     var avatarEmoji by mutableStateOf("")   // boşsa baş harf gösterilir
 
     suspend fun loadProfile() {
+        loadMapConfig()   // harita şablonu profille birlikte tazelenir (açılış + her giriş)
         val d = req("/api/profile") ?: return
         val o = JSONObject(d)
         me = o.optString("username", me)

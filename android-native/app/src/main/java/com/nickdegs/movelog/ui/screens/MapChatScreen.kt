@@ -79,7 +79,20 @@ private fun MapPane(store: Store) {
         factory = { c ->
             org.osmdroid.config.Configuration.getInstance().userAgentValue = c.packageName
             org.osmdroid.views.MapView(c).apply {
-                setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
+                // SUNUCU-GÜDÜMLÜ KARO (2026-08-09): şablon /api/mapconfig'ten; boşsa OSM'e düş.
+                // Harita değiştirmek = sunucuda map-config.json düzenlemek, SÜRÜM GEREKMEZ.
+                val srvTiles = store.mapTiles
+                setTileSource(if (srvTiles.contains("{z}")) object :
+                    org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase(
+                        "sunucu", 0, 19, 256, "", arrayOf("")) {
+                    override fun getTileURLString(pMapTileIndex: Long): String {
+                        val z = org.osmdroid.util.MapTileIndex.getZoom(pMapTileIndex)
+                        val xx = org.osmdroid.util.MapTileIndex.getX(pMapTileIndex)
+                        val yy = org.osmdroid.util.MapTileIndex.getY(pMapTileIndex)
+                        return srvTiles.replace("{z}", z.toString())
+                            .replace("{x}", xx.toString()).replace("{y}", yy.toString())
+                    }
+                } else org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true); controller.setZoom(13.5)
             }
         },
