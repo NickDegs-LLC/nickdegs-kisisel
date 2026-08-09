@@ -77,18 +77,21 @@ struct LoginView: View {
                             busy = false
                         }
                     } label: {
-                        HStack(spacing: 8) {
-                            Text("G").font(.system(size: 19, weight: .bold, design: .rounded))
-                                .foregroundStyle(LinearGradient(colors: [.blue, .red, .yellow, .green],
-                                                                startPoint: .leading, endPoint: .trailing))
+                        // RESMÎ GOOGLE MARKASI (2026-08-09, Barış: "orijinal buton istiyorum"):
+                        // gerçek G logosu (developers.google.com/identity/images/g-logo.png,
+                        // Assets/GoogleG) + Google spesifikasyonu: BEYAZ zemin, koyu gri metin.
+                        HStack(spacing: 10) {
+                            Image("GoogleG").resizable().scaledToFit().frame(width: 20, height: 20)
                             Text(L("Google ile devam et", "Continue with Google"))
                                 .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(Color(red: 0.24, green: 0.25, blue: 0.26))
                         }
                         .frame(maxWidth: .infinity).frame(height: 52)
                     }
-                    .background(sysScheme == .dark ? Color.white : Color.black)
-                    .foregroundStyle(sysScheme == .dark ? Color.black : Color.white)
+                    .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.black.opacity(sysScheme == .dark ? 0.0 : 0.12), lineWidth: 1))
                     .disabled(busy)
                     .padding(.top, 12)
 
