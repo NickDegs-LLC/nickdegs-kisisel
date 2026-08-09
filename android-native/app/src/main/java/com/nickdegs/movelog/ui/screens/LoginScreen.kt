@@ -52,7 +52,11 @@ fun LoginScreen(store: Store) {
                     color = Color(0xFFE57373), fontSize = 13.sp)
             }
 
+            // RESMÎ GOOGLE MARKASI (2026-08-09, Barış: "orijinal buton"): gerçek G logosu
+            // (drawable/google_g) + Google spesifikasyonu: beyaz zemin, koyu gri metin.
             Button(
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White, contentColor = Color(0xFF3C4043)),
                 onClick = {
                     busy = true; store.loginError = false
                     scope.launch {
@@ -81,7 +85,14 @@ fun LoginScreen(store: Store) {
                 modifier = Modifier.fillMaxWidth().height(52.dp)
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Text(L("Google ile devam et", "Continue with Google"), fontSize = 16.sp)
+                else Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(com.nickdegs.movelog.R.drawable.google_g),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(L("Google ile devam et", "Continue with Google"), fontSize = 16.sp)
+                }
             }
 
             Text(L("Hesabın yoksa otomatik oluşturulur.", "No account? One is created automatically."),
