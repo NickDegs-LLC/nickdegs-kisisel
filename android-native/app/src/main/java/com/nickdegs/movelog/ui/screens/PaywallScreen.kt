@@ -69,10 +69,10 @@ fun PaywallScreen(store: Store, onClose: () -> Unit) {
         // ULTRA yükseltme (Play'de ürün varsa): Google 3D + kamera modları + Street View
         if (billing.ultraYearly != null || billing.ultraMonthly != null) {
             Spacer(Modifier.height(16.dp))
-            Text(L("Ultra — Google 3D + Street View", "Ultra — Google 3D + Street View"),
+            Text(L("Ultra — Taktik görev videoları", "Ultra — Tactical mission videos"),
                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(L("Foto-gerçekçi Google 3D, tüm kamera açıları ve gerçek Street View sürüş.",
-                   "Photorealistic Google 3D, all camera angles and real Street View driving."),
+            Text(L("Askeri tarzda taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita katmanı, sinematik kamera açıları ve 4 kat aylık video hakkı.",
+                   "Military-style tactical mission videos, highest-resolution map layer with 3D buildings, cinematic camera angles and 4x monthly video quota."),
                 color = Color(0xFF9AA4B2), fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
             billing.ultraYearly?.let { uy ->
                 Button(onClick = { activity?.let { billing.buy(it, uy) } }, enabled = billing.ready,

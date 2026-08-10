@@ -120,7 +120,7 @@ struct ProfileView: View {
                                          : premium ? L("Premium üyesin","You're Premium")
                                                    : L("Move Log Premium","Move Log Premium"))
                                         .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                                    Text(ultraMember ? L("Google 3D + Street View açık · faydalarını gör","Google 3D + Street View unlocked · see your perks")
+                                    Text(ultraMember ? L("Taktik görevler açık · faydalarını gör","Tactical missions unlocked · see your perks")
                                          : premium ? L("Tüm özellikler açık · faydalarını gör","All features unlocked · see your perks")
                                                    : L("3B videolar, filigransız, müzik ve dahası","3D videos, no watermark, music & more"))
                                         .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
@@ -1012,7 +1012,7 @@ struct PaywallSheet: View {
                     if iap.ultra {
                         Text(L("Ultra üyesin 👑","You're Ultra 👑")).font(.title2.bold())
                             .foregroundStyle(Brand.goldGradient)
-                        Text(L("Google 3D, tüm kamera açıları ve Street View dahil her şey açık:","Google 3D, every camera angle and Street View — all unlocked:"))
+                        Text(L("Taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita ve tüm kamera açıları dahil her şey açık:","Tactical mission videos, highest-resolution map with 3D buildings and every camera angle — all unlocked:"))
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     } else if premium {
                         Text(L("Premium üyesin ✨","You're Premium ✨")).font(.title2.bold())
@@ -1206,10 +1206,14 @@ struct PaywallSheet: View {
             VStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles").foregroundStyle(Brand.gradient)
-                    Text(L("Ultra — Google 3D + Street View","Ultra — Google 3D + Street View")).font(.subheadline.bold())
+                    // 2026-08-10: Google Photorealistic 3D + Street View ARTIK YOK — GCP faturası askıya
+                    // alındı, 3D Tiles API 404 (ölçüldü). Kullanılamayan özellik SATILMAZ (Barış kuralı).
+                    // Metin Ultra'nın GERÇEK ayrıcalıklarına çevrildi: taktik görev videoları + 3B binalı
+                    // en yüksek çözünürlüklü harita + kamera açıları + 4 kat aylık kota.
+                    Text(L("Ultra — Taktik görev videoları","Ultra — Tactical mission videos")).font(.subheadline.bold())
                 }.padding(.top, 8)
-                Text(L("Foto-gerçekçi Google 3D harita, tüm kamera açıları (Arkadan) ve gerçek Street View sokak sürüşü.",
-                       "Photorealistic Google 3D map, all camera angles (Chase) and real first-person Street View driving."))
+                Text(L("Askeri tarzda taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita katmanı, sinematik kamera açıları (Arkadan) ve 4 kat aylık video hakkı.",
+                       "Military-style tactical mission videos, highest-resolution map layer with 3D buildings, cinematic camera angles (Chase) and 4x monthly video quota."))
                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 8)
                 if let uy = iap.ultraYearly { planButton(uy, period: L("yıl","yr"), badge: "ULTRA") }
                 if let um = iap.ultraMonthly { planButton(um, period: L("ay","mo"), badge: nil) }
