@@ -125,6 +125,8 @@ enum LocalRouteVideo {
 
             let img = compose(snap: snap, pts: pts, idx: idx, size: size,
                               spd: spdNow, cumKm: hedefM / 1000, uc: c,
+                              cam: CLLocationCoordinate2D(latitude: camLat, longitude: camLon),
+                              camHeading: head, pitched: pitch > 0,
                               line: opts.line == "none" ? nil : lineColor,
                               glass: opts.line == "glass" || opts.line == "clear",
                               dot: dotColor)
@@ -200,22 +202,47 @@ enum LocalRouteVideo {
     // MARK: - kareyi bindirme ile çiz
     private static func compose(snap: MKMapSnapshotter.Snapshot, pts: [Pt], idx: Int,
                                 size: CGSize, spd: Double, cumKm: Double, uc: CLLocationCoordinate2D,
+                                cam: CLLocationCoordinate2D, camHeading: Double, pitched: Bool,
                                 line: UIColor?, glass: Bool, dot: UIColor) -> UIImage {
         let r = UIGraphicsImageRenderer(size: size)
+        let camLoc = CLLocation(latitude: cam.latitude, longitude: cam.longitude)
         return r.image { ctx in
             snap.image.draw(in: CGRect(origin: .zero, size: size))
             let g = ctx.cgContext
             // ilerleyen rota çizgisi: köşelere ek olarak UCU tam enterpolasyon noktasına çizilir
             // -> çizgi ucu ve nokta kare kare KAYAR, köşeden köşeye zıplamaz.
+            // KİRİŞ FİKSİ: veri boşluğunda (>80m) kalem kaldırılır, düz kiriş çizilmez.
+            // HAYALET FİKSİ (Barış 2026-08-26 "çizgi tek seferde oluşuyor"): kameradan >1.5km uzak
+            // köşeler ÇİZİLMEZ — eğik perspektifte kamera arkasındaki noktalar aynalanıp ekranın
+            // içine düşüyor, ekran boyu sahte düz çizgiler doğuruyordu (bulut motoru bunları kırpar,
+            // MKMapSnapshotter.point(for:) kırpmaz). 1.5km ötesi bu zoom'da zaten görünmez.
             if line != nil || glass {
                 g.setLineCap(.round); g.setLineJoin(.round)
                 let path = UIBezierPath()
                 var started = false
+                var onceki: CLLocationCoordinate2D?
                 for i in 0...idx {
-                    let p = snap.point(for: pts[i].coord)
-                    if !started { path.move(to: p); started = true } else { path.addLine(to: p) }
+                    let c = pts[i].coord
+                    let cl = CLLocation(latitude: c.latitude, longitude: c.longitude)
+                    let uzak = camLoc.distance(from: cl)
+                    if uzak > 1500 { onceki = nil; continue }
+                    // ARKA-KAMERA AYNASI: eğik perspektifte kameranın arkasındaki noktalar ekrana
+                    // AYNALANIP sahte paralel çizgi doğuruyor (az önce geçilen yol!). Kameranın
+                    // arkasında (>100° açı farkı) ve >150m uzaktaki köşeler çizilmez.
+                    if pitched, uzak > 150,
+                       abs(angDiff(bearing(cam, c), camHeading)) > 100 { onceki = nil; continue }
+                    let p = snap.point(for: c)
+                    let kopuk = onceki.map {
+                        CLLocation(latitude: $0.latitude, longitude: $0.longitude).distance(from: cl) > 80
+                    } ?? true
+                    if !started || kopuk { path.move(to: p); started = true } else { path.addLine(to: p) }
+                    onceki = c
                 }
-                if started { path.addLine(to: snap.point(for: uc)) }
+                if started, let son = onceki,
+                   CLLocation(latitude: son.latitude, longitude: son.longitude)
+                       .distance(from: CLLocation(latitude: uc.latitude, longitude: uc.longitude)) <= 80 {
+                    path.addLine(to: snap.point(for: uc))
+                }
                 let w = size.width / 240                       // çözünürlükle ölçekli kalınlık
                 if glass {
                     UIColor.white.withAlphaComponent(0.45).setStroke(); path.lineWidth = w * 2.0; path.stroke()
@@ -273,7 +300,9 @@ enum LocalRouteVideo {
                 let a = p[i].coord, b = p[i + 1].coord
                 let d = CLLocation(latitude: a.latitude, longitude: a.longitude)
                     .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
-                let n = min(8, Int(d / 25))
+                // >80m = veri boşluğu: ARA NOKTA DOLDURMA — boşluk korunur ki çizim kalemi kaldırsın
+                // (doldurulursa kiriş 25m'lik parçalara bölünüp çatıların üstünden çiziliyordu).
+                let n = d > 80 ? 0 : min(8, Int(d / 25))
                 if n > 1 {
                     for k in 1..<n {
                         let t = Double(k) / Double(n)
