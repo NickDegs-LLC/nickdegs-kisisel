@@ -78,7 +78,7 @@ struct SummariesView: View {
             // rideId: nil = TÜM GÜN aralığından (s.from–s.to) YENİ özet videosu üret
             // (s.videoId verilirse yalnız o tek aktivitenin videosu düzenlenirdi → tüm günü almazdı)
             GenerateSheet(from: s.from ?? 0, to: s.to ?? 0, type: "moto",
-                          mode: "flyover", aspect: "16:9", speed: "medium", rideId: nil)
+                          mode: "flyover", aspect: "9:16", speed: "medium", rideId: nil)
         }
         .sheet(item: $playerBox) { box in
             VideoPlayer(player: box.player).ignoresSafeArea()

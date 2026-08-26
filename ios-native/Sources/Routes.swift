@@ -237,12 +237,12 @@ struct RoutesView: View {
         }
         .sheet(item: $editRide) { r in
             GenerateSheet(from: r.ts ?? 0, to: r.to ?? 0, type: r.type ?? "moto",
-                          mode: r.mode ?? "flat", aspect: r.aspect ?? "16:9",
+                          mode: r.mode ?? "flat", aspect: r.aspect ?? "9:16",
                           speed: r.speed ?? "medium", rideId: r.id)
         }
         .sheet(item: $createRide) { r in   // videosuz rota -> sıfırdan üretim (rideId: nil)
             GenerateSheet(from: r.ts ?? 0, to: r.to ?? 0, type: r.type ?? "moto",
-                          mode: "flat", aspect: r.aspect ?? "16:9",
+                          mode: "flat", aspect: r.aspect ?? "9:16",
                           speed: r.speed ?? "medium", rideId: nil)
         }
     }

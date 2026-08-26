@@ -29,7 +29,7 @@ struct Position: Codable, Identifiable, Hashable {
 struct Profile: Codable { var username: String?; var name: String; var handle: String? = nil; var avatar: Avatar; var premium: Bool = false; var ultra: Bool = false }
 struct Announcement: Identifiable { var title: String; var body: String; var url: String; var ts: Int; var id: Int { ts } }
 struct ActivitySummary: Codable, Identifiable, Hashable { var date: String; var summary: String; var videoId: String? = nil; var from: Double? = nil; var to: Double? = nil; var id: String { date } }
-struct SummaryVid: Equatable { var mode = "flyover"; var speed = "medium"; var aspect = "16:9"; var cam = "orta"; var music = ""; var line = "#00E5FF" }
+struct SummaryVid: Equatable { var mode = "flyover"; var speed = "medium"; var aspect = "9:16"; var cam = "orta"; var music = ""; var line = "#00E5FF" }
 struct SummaryCfg { var enabled = true; var hour = 21; var video = SummaryVid() }
 struct Friend: Codable, Identifiable, Hashable {
     var username: String; var name: String?; var handle: String? = nil; var avatar: Avatar?; var online: Bool?
@@ -484,7 +484,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
             guard ["flat", "flyover", "3d"].contains(mode) else { continue }
             let pts = await track(from: frm, to: to)
             guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
-            let asp = (j["aspect"] as? String) ?? "16:9"
+            let asp = (j["aspect"] as? String) ?? "9:16"
             let tip = (j["type"] as? String) ?? "moto"
             let hiz = (j["speed"] as? String) ?? "medium"
             let mURL = await musicFile((j["music"] as? String) ?? "active", session: frm)
@@ -634,7 +634,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
         c.hour = (o["hour"] as? Int) ?? 21
         if let v = o["video"] as? [String:Any] {
             c.video = SummaryVid(mode: v["mode"] as? String ?? "flyover", speed: v["speed"] as? String ?? "medium",
-                                 aspect: v["aspect"] as? String ?? "16:9", cam: v["cam"] as? String ?? "orta",
+                                 aspect: v["aspect"] as? String ?? "9:16", cam: v["cam"] as? String ?? "orta",
                                  music: v["music"] as? String ?? "", line: v["line"] as? String ?? "#00E5FF")
         }
         return c

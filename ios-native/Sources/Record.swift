@@ -54,7 +54,7 @@ struct GenerateSheet: View {
     private var resolvedDot: String { dotColor == "line" ? (lineColor.hasPrefix("#") ? lineColor : "#FFFFFF") : dotColor }
 
     init(from: Double, to: Double, type: String, mode: String = "flat",
-         aspect: String = "16:9", speed: String = "medium", rideId: String? = nil) {
+         aspect: String = "9:16", speed: String = "medium", rideId: String? = nil) {   // varsayılan DİKEY (Barış 2026-08-26: "insanların ilgilendiği dikey")
         self.from = from; self.to = to; self.rideId = rideId
         _type = State(initialValue: type)
         _mode = State(initialValue: mode)
