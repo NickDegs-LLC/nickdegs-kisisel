@@ -119,9 +119,10 @@ struct RootView: View {
             if tracker.active, let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
             await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
+            await store.processLocalRenderQueue()      // 1.61: bekleyen oto-videoları TELEFONDA üret (bulut maliyeti sıfır)
         }
         .onChange(of: scenePhase) { _, ph in
-            if ph == .active { Task { await store.autoSaveNewVideos() } }   // her öne gelişte: 1 günlük pencereye yetiş
+            if ph == .active { Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() } }   // her öne gelişte: 1 günlük pencereye yetiş
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in
             Task { await store.registerPush() }

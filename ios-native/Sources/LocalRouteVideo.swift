@@ -5,19 +5,48 @@ import CoreLocation
 
 // CİHAZDA (lokal) rota videosu render — sunucu render etmez, telefon kendi GPU'suyla çizer.
 // Apple Maps uydu (hybridFlyover) + yumuşak kamera takibi + ilerleyen rota + hız/mesafe bindirme -> MP4.
+// 1.61 (Barış 2026-08-26 "hepsini masrafsız yap, kendi telefonlarından"): Düz/Flyover'a ek olarak
+// 3B mod da cihazda (Apple foto-gerçekçi flyover, pitch 66) + 1080p + rota renkleri + müzik miksi.
+// Buluta giden tek şey bitmiş MP4 -> sunucu GPU maliyeti SIFIR.
 enum LocalRouteVideo {
     struct Pt { let coord: CLLocationCoordinate2D; let spd: Double }
 
-    static func render(points raw: [Pt], aspect: String,
+    // Render seçenekleri — bulut motoruyla aynı kullanıcı tercihlerini taşır.
+    struct Opts {
+        var mode = "flyover"          // flat | flyover | 3d
+        var aspect = "16:9"
+        var premium = true            // true = 1080p (video üretimi zaten Premium kapılı)
+        var line = "#00E5FF"          // hex | "none" (çizgisiz) | "glass"/"clear" (buzlu beyaz)
+        var dot = "#FF3B30"           // hex
+        var camdist = "orta"          // yakin | orta | uzak
+        var musicURL: URL? = nil      // önceden indirilmiş yerel m4a (Store.musicFile)
+    }
+
+    static func render(points raw: [Pt], opts: Opts = Opts(),
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         guard raw.count >= 3 else { return nil }
-        let vertical = (aspect == "9:16")
-        let size = CGSize(width: vertical ? 720 : 1280, height: vertical ? 1280 : 720)
+        let vertical = (opts.aspect == "9:16")
+        // 1080p: modern iPhone GPU'su kaldırıyor; 60 sn'lik video ~1-3 dk'da çıkıyor.
+        let size: CGSize = opts.premium
+            ? CGSize(width: vertical ? 1080 : 1920, height: vertical ? 1920 : 1080)
+            : CGSize(width: vertical ? 720 : 1280, height: vertical ? 1280 : 720)
         let fps: Int32 = 30
         let pts = densify(raw)
         let km = routeKm(pts)
         let dur = max(8.0, min(35.0, km * 2.6))
         let frames = max(60, Int(dur * Double(fps)))
+
+        // Mod -> kamera karakteri. 3B = Apple foto-gerçekçi binalar (yakın + dik pitch),
+        // flyover = klasik eğik uçuş, flat = tepeden düz (bulut "Düz" ile aynı his).
+        let distMul: Double = opts.camdist == "yakin" ? 0.62 : (opts.camdist == "uzak" ? 1.6 : 1.0)
+        let pitch: CGFloat
+        let baseDist: Double
+        switch opts.mode {
+        case "flat":    pitch = 0;  baseDist = 1050
+        case "3d":      pitch = 66; baseDist = 520
+        default:        pitch = 55; baseDist = 720
+        }
+        let camDist = baseDist * distMul
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("route_\(Int(Date().timeIntervalSince1970)).mp4")
@@ -36,6 +65,9 @@ enum LocalRouteVideo {
         guard writer.startWriting() else { return nil }
         writer.startSession(atSourceTime: .zero)
 
+        let lineColor = color(opts.line, fallback: UIColor(red: 0, green: 0.9, blue: 1, alpha: 1))
+        let dotColor = color(opts.dot, fallback: UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1))
+
         var camLat = pts[0].coord.latitude, camLon = pts[0].coord.longitude, camHead = 0.0
         var totM = 0.0
         for f in 0..<frames {
@@ -47,11 +79,13 @@ enum LocalRouteVideo {
             camLat += (c.latitude - camLat) * 0.16
             camLon += (c.longitude - camLon) * 0.16
             camHead += angDiff(tHead, camHead) * 0.08
-            let head = (camHead.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+            // Düz mod kuzeye sabit (bulut "Düz" gibi); diğerleri rotayı takip eder.
+            let head = opts.mode == "flat" ? 0
+                : (camHead.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
 
             let opt = MKMapSnapshotter.Options()
             opt.camera = MKMapCamera(lookingAtCenter: CLLocationCoordinate2D(latitude: camLat, longitude: camLon),
-                                     fromDistance: 720, pitch: 55, heading: head)
+                                     fromDistance: camDist, pitch: pitch, heading: head)
             opt.size = size
             opt.mapType = .hybridFlyover
             opt.pointOfInterestFilter = .excludingAll
@@ -59,7 +93,10 @@ enum LocalRouteVideo {
 
             if idx > 0 { totM = cumKm(pts, upTo: idx) * 1000 }
             let img = compose(snap: snap, pts: pts, idx: idx, size: size,
-                              spd: pts[idx].spd, cumKm: totM / 1000)
+                              spd: pts[idx].spd, cumKm: totM / 1000,
+                              line: opts.line == "none" ? nil : lineColor,
+                              glass: opts.line == "glass" || opts.line == "clear",
+                              dot: dotColor)
             if let pb = pixelBuffer(from: img, size: size, pool: adaptor.pixelBufferPool) {
                 while !input.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 8_000_000) }
                 adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: fps))
@@ -70,7 +107,54 @@ enum LocalRouteVideo {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
         }
-        return writer.status == .completed ? url : nil
+        guard writer.status == .completed else { return nil }
+        // Müzik seçildiyse cihazda mikse — bulut stitcher'ın yaptığı işin yereli.
+        if let m = opts.musicURL, let muxed = await muxMusic(video: url, music: m) { return muxed }
+        return url
+    }
+
+    // MARK: - müzik miksi (video pas geçilir, yeniden kodlama yok -> hızlı)
+    private static func muxMusic(video: URL, music: URL) async -> URL? {
+        let vAsset = AVURLAsset(url: video), mAsset = AVURLAsset(url: music)
+        guard let vTrack = try? await vAsset.loadTracks(withMediaType: .video).first,
+              let mTrack = try? await mAsset.loadTracks(withMediaType: .audio).first,
+              let vDur = try? await vAsset.load(.duration),
+              let mDur = try? await mAsset.load(.duration) else { return nil }
+        let comp = AVMutableComposition()
+        guard let cv = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
+              (try? cv.insertTimeRange(CMTimeRange(start: .zero, duration: vDur), of: vTrack, at: .zero)) != nil
+        else { return nil }
+        // Müzik videodan kısaysa başa sarıp doldur; uzunsa video süresinde kes.
+        var at = CMTime.zero
+        while at < vDur {
+            let kalan = CMTimeSubtract(vDur, at)
+            let parca = CMTimeCompare(mDur, kalan) < 0 ? mDur : kalan
+            guard (try? ca.insertTimeRange(CMTimeRange(start: .zero, duration: parca), of: mTrack, at: at)) != nil else { break }
+            at = CMTimeAdd(at, parca)
+            if CMTimeCompare(parca, mDur) < 0 { break }
+        }
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route_m_\(Int(Date().timeIntervalSince1970)).mp4")
+        try? FileManager.default.removeItem(at: out)
+        guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough) else { return nil }
+        ex.outputURL = out; ex.outputFileType = .mp4
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            ex.exportAsynchronously { c.resume() }
+        }
+        if ex.status == .completed { try? FileManager.default.removeItem(at: video); return out }
+        return video   // miks olmadıysa sessiz videoyu geri ver (video kaybolmasın)
+    }
+
+    // MARK: - hex -> UIColor
+    private static func color(_ hex: String, fallback: UIColor) -> UIColor {
+        var h = hex.trimmingCharacters(in: .whitespaces)
+        guard h.hasPrefix("#") else { return fallback }
+        h.removeFirst()
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return fallback }
+        return UIColor(red: CGFloat((v >> 16) & 0xFF) / 255,
+                       green: CGFloat((v >> 8) & 0xFF) / 255,
+                       blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }
 
     // MARK: - snapshot (async sarmalayıcı)
@@ -84,29 +168,38 @@ enum LocalRouteVideo {
 
     // MARK: - kareyi bindirme ile çiz
     private static func compose(snap: MKMapSnapshotter.Snapshot, pts: [Pt], idx: Int,
-                                size: CGSize, spd: Double, cumKm: Double) -> UIImage {
+                                size: CGSize, spd: Double, cumKm: Double,
+                                line: UIColor?, glass: Bool, dot: UIColor) -> UIImage {
         let r = UIGraphicsImageRenderer(size: size)
         return r.image { ctx in
             snap.image.draw(in: CGRect(origin: .zero, size: size))
             let g = ctx.cgContext
-            // ilerleyen rota çizgisi (idx'e kadar)
-            g.setLineCap(.round); g.setLineJoin(.round)
-            let path = UIBezierPath()
-            var started = false
-            for i in 0...idx {
-                let p = snap.point(for: pts[i].coord)
-                if !started { path.move(to: p); started = true } else { path.addLine(to: p) }
+            // ilerleyen rota çizgisi (idx'e kadar); "none" -> çizgisiz, "glass" -> buzlu beyaz
+            if line != nil || glass {
+                g.setLineCap(.round); g.setLineJoin(.round)
+                let path = UIBezierPath()
+                var started = false
+                for i in 0...idx {
+                    let p = snap.point(for: pts[i].coord)
+                    if !started { path.move(to: p); started = true } else { path.addLine(to: p) }
+                }
+                let w = size.width / 240                       // çözünürlükle ölçekli kalınlık
+                if glass {
+                    UIColor.white.withAlphaComponent(0.45).setStroke(); path.lineWidth = w * 2.0; path.stroke()
+                } else {
+                    UIColor.black.withAlphaComponent(0.55).setStroke(); path.lineWidth = w * 1.8; path.stroke()
+                    line!.setStroke(); path.lineWidth = w; path.stroke()
+                }
             }
-            UIColor.black.withAlphaComponent(0.55).setStroke(); path.lineWidth = 9; path.stroke()
-            UIColor(red: 0, green: 0.9, blue: 1, alpha: 1).setStroke(); path.lineWidth = 5; path.stroke()
             // konum işareti
             let mp = snap.point(for: pts[idx].coord)
-            let dot = CGRect(x: mp.x - 13, y: mp.y - 13, width: 26, height: 26)
+            let dr = size.width / 96
+            let dotRect = CGRect(x: mp.x - dr, y: mp.y - dr, width: dr * 2, height: dr * 2)
             g.setShadow(offset: .zero, blur: 6, color: UIColor.black.withAlphaComponent(0.6).cgColor)
-            UIColor.white.setFill(); g.fillEllipse(in: dot)
+            UIColor.white.setFill(); g.fillEllipse(in: dotRect)
             g.setShadow(offset: .zero, blur: 0, color: nil)
-            UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1).setFill()
-            g.fillEllipse(in: dot.insetBy(dx: 6, dy: 6))
+            dot.setFill()
+            g.fillEllipse(in: dotRect.insetBy(dx: dr * 0.46, dy: dr * 0.46))
             // stat şeridi
             let bar = "⚡ \(Int(spd)) km/s   ▸ \(String(format: "%.1f", cumKm)) km"
             let attr: [NSAttributedString.Key: Any] = [

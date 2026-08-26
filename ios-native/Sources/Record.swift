@@ -332,13 +332,18 @@ struct GenerateSheet: View {
                         if !premium { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
-                            // CİHAZDA render (Düz/Flyover, 2026-07-06 Barış): telefon GPU'su üretir, buluta
+                            // CİHAZDA render (2026-07-06 Düz/Flyover; 1.61'de 3B de eklendi — Barış 2026-08-26
+                            // "hepsini masrafsız yap, kendi telefonlarından"): telefon GPU'su üretir, buluta
                             // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR. Olmazsa sessizce buluta düşer.
-                            if mode == "flat" || mode == "flyover" {
+                            if mode == "flat" || mode == "flyover" || mode == "3d" {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {
                                     renderPct = 0.01
-                                    if let vurl = await LocalRouteVideo.render(points: pts, aspect: aspect,
+                                    var lopt = LocalRouteVideo.Opts()
+                                    lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
+                                    lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
+                                    lopt.musicURL = await store.musicFile(music, session: from)
+                                    if let vurl = await LocalRouteVideo.render(points: pts, opts: lopt,
                                                                                onProgress: { p in Task { @MainActor in renderPct = p } }),
                                        await store.uploadLocalVideo(vurl, ts: from, to: to, mode: mode, aspect: aspect, type: type, speed: speed) {
                                         renderPct = 0; sending = false; done = true

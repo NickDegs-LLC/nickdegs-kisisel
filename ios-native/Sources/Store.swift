@@ -448,6 +448,57 @@ enum AuthGate { case checking, valid, needLogin, offline }
               let s = o["stock"] as? [[String:Any]] else { return [] }
         return s.map { item in item.mapValues { "\($0)" } }
     }
+    // 1.61 CİHAZDA ÜRETİM: seçili müziği (active/lib:/stock:/upload) yerel dosyaya indir -> render miksler.
+    func musicFile(_ ref: String, session: Double = 0) async -> URL? {
+        guard !ref.isEmpty, ref != "none" else { return nil }
+        var q = "/api/music/file?ref=" + (ref.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ref)
+        if session > 0 { q += "&session=\(Int(session))" }
+        guard let d = try? await req(q), d.count > 2000 else { return nil }
+        let u = FileManager.default.temporaryDirectory.appendingPathComponent("music_\(Int(Date().timeIntervalSince1970)).m4a")
+        try? d.write(to: u)
+        return u
+    }
+    // 1.61 OTO-VİDEO CİHAZDA: sunucunun "telefon üretsin" kuyruğu (bulut GPU maliyeti SIFIR).
+    func localRenders() async -> [[String:Any]] {
+        guard let d = try? await req("/api/local-renders"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
+              let p = o["pending"] as? [[String:Any]] else { return [] }
+        return p
+    }
+    func localRenderDone(from: Double) async {
+        _ = try? await req("/api/local-renders/done", method: "POST", body: ["from": from])
+    }
+    // Uygulama öne gelince bekleyen oto-videoları TELEFONDA üret + yükle (sessiz; push atmayız — darlama yok).
+    // Battarya nezaketi: açılış başına en çok 2 video.
+    private static var localQueueBusy = false
+    func processLocalRenderQueue() async {
+        guard !Self.localQueueBusy else { return }
+        Self.localQueueBusy = true
+        defer { Self.localQueueBusy = false }
+        guard let prof = await profile(), prof.premium else { return }   // oto-video Premium özelliği
+        let jobs = await localRenders()
+        for j in jobs.prefix(2) {
+            guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
+                  let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }
+            let mode = (j["mode"] as? String) ?? "flyover"
+            guard ["flat", "flyover", "3d"].contains(mode) else { continue }
+            let pts = await track(from: frm, to: to)
+            guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
+            var o = LocalRouteVideo.Opts()
+            o.mode = mode
+            o.aspect = (j["aspect"] as? String) ?? "16:9"
+            o.line = (j["line"] as? String) ?? o.line
+            o.dot = (j["dot"] as? String) ?? o.dot
+            o.musicURL = await musicFile((j["music"] as? String) ?? "active", session: frm)
+            if let v = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in }),
+               await uploadLocalVideo(v, ts: frm, to: to,
+                                      mode: mode, aspect: o.aspect,
+                                      type: (j["type"] as? String) ?? "moto",
+                                      speed: (j["speed"] as? String) ?? "medium") {
+                await localRenderDone(from: frm)
+            }
+        }
+    }
     func addRideMusic(session: Double, data: Data) async -> Bool {
         let dataURL = "data:audio/m4a;base64," + data.base64EncodedString()
         let r = try? await req("/api/rides/music", method: "POST", body: ["session": session, "data": dataURL])
