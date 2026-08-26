@@ -333,14 +333,13 @@ struct GenerateSheet: View {
                         sending = true; localErr = false
                         Task {
                             // CİHAZDA render (2026-07-06'dan beri Düz/Flyover): telefon GPU'su üretir, buluta
-                            // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR. Olmazsa sessizce buluta düşer.
-                            // ⚠️ 3B BİLEREK BULUTTA (Barış 2026-08-26: "eski sistemin aynısını yap, ne güzel
-                            // çalışıyordu") — MapKit'le 3B'yi taklit denemeleri (zıplama/zoom pompası) kullanıcıya
-                            // takıldı; 3B = mühürlü bulut motoru (RunPod, ~$0.03/video). Cihaza taşımanın doğru
-                            // yolu WKWebView'da AYNI motoru koşturmak — Barış isterse yapılacak, MapKit'le DEĞİL.
-                            // 3B = GERÇEK MOTOR TELEFONDA (2026-08-26 Barış "telefon üretecek ama AYNI video"):
+                            // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR.
+                            // 3B = GERÇEK MOTOR TELEFONDA (Barış "telefon üretecek ama AYNI video"):
                             // sunucu bulutla AYNI spec+sayfayı verir, WKWebView kare kare çeker.
-                            // Sayfa gelmez/render düşerse aşağıdaki bulut yoluna sessizce devam edilir.
+                            // ⚠️ BULUTA DÜŞME KALDIRILDI (Barış 2026-08-26: "bulutta hazırlanıyor diye bir şey
+                            // yok, komple kaldır"): eskiden telefon motoru hata verince SESSİZCE buluta
+                            // kaçıyordu; bulut bakiyesi olmadığı için video HİÇ üretilmiyordu ve kullanıcı
+                            // bunu anlamıyordu. Artık ya telefonda üretilir ya AÇIK HATA verilir.
                             if mode == "3d" {
                                 renderPct = 0.01
                                 let mURL = await store.musicFile(music, session: from)
@@ -353,7 +352,7 @@ struct GenerateSheet: View {
                                     renderPct = 0; sending = false; done = true
                                     store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
                                 }
-                                renderPct = 0   // telefonda olmadı -> buluta düş (aşağıda, eski yol)
+                                renderPct = 0; sending = false; localErr = true; return   // olmadı -> AÇIK HATA
                             }
                             if mode == "flat" || mode == "flyover" {
                                 let pts = await store.track(from: from, to: to)
@@ -383,15 +382,18 @@ struct GenerateSheet: View {
                                 : await store.regenerateRide(rideId!, type: type, mode: mode,
                                                              aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
                             sending = false; done = ok; localErr = !ok
-                            // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür
+                            // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür (bulut kelimesi YOK)
                             if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
                         }
                     } label: {
+                        // 2026-08-26 (Barış: "bulutta hazırlanıyor diye bir şey yok, komple kaldır"):
+                        // videolar TELEFONDA üretiliyor -> tüm metinler cihaz dilinde. Hazırlık aşaması
+                        // (motor sayfası + karo ön-ısıtma) da "Hazırlanıyor…" der, "kuyruk/bulut" YOK.
                         if sending && renderPct > 0 { HStack(spacing: 8) { ProgressView(value: renderPct)
-                            Text(L("Cihazda üretiliyor… %","Rendering on device… %") + "\(Int(renderPct * 100))") } }
+                            Text(L("Üretiliyor… %","Rendering… %") + "\(Int(renderPct * 100))") } }
                         else if sending { HStack(spacing: 8) { ProgressView()
-                            Text(L("Kuyruğa alınıyor…", "Queuing…")) } }
-                        else if done { Label(L("Bulutta hazırlanıyor 🎬","Rendering in cloud"), systemImage: "checkmark.icloud") }
+                            Text(L("Hazırlanıyor…", "Preparing…")) } }
+                        else if done { Label(L("Videon hazırlanıyor 🎬","Rendering your video"), systemImage: "checkmark.circle.fill") }
                         else { Text(rideId == nil ? L("Video oluştur","Create video")
                                                   : L("Yeniden oluştur","Regenerate")) }
                     }.buttonStyle(.glassyProminent()).disabled(sending)
