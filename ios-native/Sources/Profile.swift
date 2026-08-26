@@ -1083,26 +1083,26 @@ struct PaywallSheet: View {
                         VStack(spacing: 8) {
                             Label(L("Hediye kodun mu var?","Have a gift code?"), systemImage: "gift.fill")
                                 .font(.system(size: 14, weight: .medium)).foregroundStyle(Brand.gradient)
-                            HStack(spacing: 10) {
-                                TextField(L("KOD","CODE"), text: $code)
-                                    .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                                    .multilineTextAlignment(.center)
-                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                                Button {
-                                    redeeming = true; codeErr = false
-                                    Task {
-                                        let ok = await store.redeem(code.trimmingCharacters(in: .whitespaces))
-                                        redeeming = false
-                                        if ok { premium = true; dismiss() } else { codeErr = true }
-                                    }
-                                } label: {
-                                    if redeeming { ProgressView() } else { Text(L("Kullan","Redeem")) }
-                                }.buttonStyle(.glassy).disabled(redeeming || code.count < 6)
-                            }
-                            if codeErr {
-                                Text(L("Kod geçersiz veya kullanılmış.","Invalid or already used code."))
-                                    .font(.caption2).foregroundStyle(.red)
-                            }
+                            // APPLE RESMİ KOD EKRANI (2026-08-26, Barış: "Apple'ın resmi kodunu gir").
+                            // App Store Connect'te tanımlı Teklif Kodu / Promosyon Kodu buradan kullanılır.
+                            // ⚠️ Kendi sunucu kodumuzla premium açan alan KALDIRILDI: App Store dışı bir
+                            // mekanizmayla ücretli özellik açmak App Review 3.1.1 riskiydi. Artık abonelik
+                            // gerçekten StoreKit üzerinden başlar (yenilenir, iptal edilir, Aile Paylaşımı çalışır).
+                            Button {
+                                redeeming = true
+                                Task {
+                                    await iap.redeemOfferCode()
+                                    redeeming = false
+                                    await iap.load(); await store.syncPremium()
+                                    premium = iap.purchased || premium
+                                }
+                            } label: {
+                                if redeeming { ProgressView() }
+                                else { Text(L("Kodu kullan","Redeem code")) }
+                            }.buttonStyle(.glassy).disabled(redeeming)
+                            Text(L("App Store hediye/teklif kodunu buraya girebilirsin.",
+                                   "Redeem your App Store gift or offer code."))
+                                .font(.caption2).foregroundStyle(.secondary)
                         }.padding(14).glassPanel(16).padding(.top, 8)
                         if let e = iap.lastError {
                             Text(e).font(.footnote).foregroundStyle(.red)

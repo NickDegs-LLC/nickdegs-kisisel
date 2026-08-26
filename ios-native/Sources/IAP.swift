@@ -1,4 +1,5 @@
 import StoreKit
+import UIKit
 
 // Gerçek StoreKit 2 — premium abonelik (aylık / yıllık otomatik yenilenen)
 // iPad / "Designed for iPhone" race düzeltmesi: satın alma sonrası premium'u
@@ -146,6 +147,23 @@ import StoreKit
     func restore() async {
         try? await AppStore.sync()
         await refresh()
+    }
+
+    /// APPLE RESMİ KOD EKRANI (2026-08-26): App Store Connect'te tanımlı Teklif Kodu (offer code)
+    /// veya Promosyon Kodu bu sistem ekranıyla kullanılır. Apple'ın kendi API'si — App Review
+    /// açısından tamamen kurallara uygun; abonelik GERÇEK abonelik olarak başlar.
+    func redeemOfferCode() async {
+        guard let scene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+                ?? UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        do {
+            try await AppStore.presentOfferCodeRedeemSheet(in: scene)
+            // Kullanıcı kodu girdiyse işlem Transaction.updates'ten düşer; yine de tazele.
+            try? await Task.sleep(for: .seconds(1.5))
+            await refresh()
+        } catch {
+            lastError = L("Kod ekranı açılamadı.", "Couldn't open the redeem sheet.")
+        }
     }
 
     private func setPurchased(_ v: Bool) {
