@@ -110,7 +110,7 @@ enum LocalRouteVideo {
                              height: (hamCapa.height * kucultme).rounded())
         let olcek = 1.0 / kucultme                        // çapa pikseli -> çıktı pikseli büyütme
         var capa: MKMapSnapshotter.Snapshot?
-        var capaHead = 0.0
+        var pxPerMHedef: CGFloat = 0      // TÜM videoya tek ölçek kilidi (ilk karede ölçülür)
         for f in 0..<frames {
             let prog = Double(f) / Double(max(1, frames - 1))
             let hedefM = prog * totM
@@ -136,18 +136,34 @@ enum LocalRouteVideo {
                 opt.pointOfInterestFilter = .excludingAll
                 var yeni = await snapshot(opt)
                 if yeni == nil { yeni = await snapshot(opt) }
-                if let s = yeni { capa = s; capaHead = head }   // gelmezse eski çapa sürer (dönüşüm telafi eder)
+                if let s = yeni { capa = s }                   // gelmezse eski çapa sürer (dönüşüm telafi eder)
             }
             guard let snap = capa else { continue }
-            // çapa görüntüsünde ŞU ANKİ kamera merkezi nereye düşüyor + çapadan bu yana dönüş farkı
-            let merkezPx = snap.point(for: CLLocationCoordinate2D(latitude: camLat, longitude: camLon))
-            let donusRad = CGFloat(angDiff(head, capaHead)) * .pi / 180
+            // ═══ DÜNYA-PROBLU KİLİT (Barış "zoom in zoom in" fiksi) ═══
+            // Ölçek/dönüş TAHMİN EDİLMEZ, her karede ÖLÇÜLÜR: kamera merkezinin 25m önü ve arkası
+            // çapaya sorulur; piksel/metre + yön o vektörden çıkar. Tüm video İLK karede ölçülen
+            // TEK ölçeğe kilitlenir -> perspektif kayması, Apple'ın irtifa/zoom kuantalaması,
+            // çapa değişimi... hiçbiri ölçeği OYNATAMAZ (pompalama biter).
+            let merkez = CLLocationCoordinate2D(latitude: camLat, longitude: camLon)
+            let merkezPx = snap.point(for: merkez)
+            let hRad = head * .pi / 180
+            func kaydir(_ m: Double) -> CLLocationCoordinate2D {
+                CLLocationCoordinate2D(latitude: camLat + m * cos(hRad) / 111320,
+                                       longitude: camLon + m * sin(hRad) / (111320 * cos(camLat * .pi / 180)))
+            }
+            let pGeri = snap.point(for: kaydir(-25)), pIleri = snap.point(for: kaydir(25))
+            let vx = pIleri.x - pGeri.x, vy = pIleri.y - pGeri.y
+            let capaPxPerM = max(0.01, (vx * vx + vy * vy).squareRoot() / 50)
+            if pxPerMHedef == 0 { pxPerMHedef = capaPxPerM }          // ölçek kilidi (ilk kare)
+            let olcekF = pxPerMHedef / capaPxPerM
+            // yön: ileri-vektör çıktıda tam YUKARI baksın (ekran y aşağı) -> gereken dönüş
+            let donusRad = -(atan2(vy, vx) + .pi / 2)
 
             let img = compose(snap: snap, pts: pts, idx: idx, size: size,
                               spd: spdNow, cumKm: hedefM / 1000, uc: c,
                               cam: CLLocationCoordinate2D(latitude: camLat, longitude: camLon),
                               camHeading: head, pitched: pitch > 0,
-                              merkezPx: merkezPx, donusRad: donusRad, capaBoy: capaBoy, olcek: olcek,
+                              merkezPx: merkezPx, donusRad: donusRad, capaBoy: capaBoy, olcek: olcek * olcekF,
                               line: opts.line == "none" ? nil : lineColor,
                               glass: opts.line == "glass" || opts.line == "clear",
                               dot: dotColor)

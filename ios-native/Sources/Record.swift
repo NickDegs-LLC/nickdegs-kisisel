@@ -332,10 +332,13 @@ struct GenerateSheet: View {
                         if !premium { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
-                            // CİHAZDA render (2026-07-06 Düz/Flyover; 1.61'de 3B de eklendi — Barış 2026-08-26
-                            // "hepsini masrafsız yap, kendi telefonlarından"): telefon GPU'su üretir, buluta
+                            // CİHAZDA render (2026-07-06'dan beri Düz/Flyover): telefon GPU'su üretir, buluta
                             // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR. Olmazsa sessizce buluta düşer.
-                            if mode == "flat" || mode == "flyover" || mode == "3d" {
+                            // ⚠️ 3B BİLEREK BULUTTA (Barış 2026-08-26: "eski sistemin aynısını yap, ne güzel
+                            // çalışıyordu") — MapKit'le 3B'yi taklit denemeleri (zıplama/zoom pompası) kullanıcıya
+                            // takıldı; 3B = mühürlü bulut motoru (RunPod, ~$0.03/video). Cihaza taşımanın doğru
+                            // yolu WKWebView'da AYNI motoru koşturmak — Barış isterse yapılacak, MapKit'le DEĞİL.
+                            if mode == "flat" || mode == "flyover" {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {
                                     renderPct = 0.01
