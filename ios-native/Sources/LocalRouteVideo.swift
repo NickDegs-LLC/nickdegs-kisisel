@@ -33,8 +33,30 @@ enum LocalRouteVideo {
         let fps: Int32 = 30
         let pts = densify(raw)
         let km = routeKm(pts)
-        let dur = max(8.0, min(35.0, km * 2.6))
-        let frames = max(60, Int(dur * Double(fps)))
+        // MESAFE TABANLI İLERLEME (Barış 2026-08-26 "nokta zıplıyor" fiksi): nokta indeksiyle değil,
+        // rota üzerindeki METRE ile ilerlenir -> aralıklar eşit olmasa da nokta/kamera SABİT hızda kayar.
+        var cum: [Double] = [0]
+        cum.reserveCapacity(pts.count)
+        for i in 1..<pts.count {
+            cum.append(cum[i - 1] + CLLocation(latitude: pts[i - 1].coord.latitude, longitude: pts[i - 1].coord.longitude)
+                .distance(from: CLLocation(latitude: pts[i].coord.latitude, longitude: pts[i].coord.longitude)))
+        }
+        let totM = max(1.0, cum[pts.count - 1])
+        // tempo: kullanıcı "Kısa/Normal/Uzun" seçimiyle km başına saniye (bulut pacing'ine yakın)
+        let sPerKm: Double = 4.2
+        let dur = max(10.0, min(60.0, km * sPerKm))
+        let frames = max(90, Int(dur * Double(fps)))
+        // rota üzerindeki hedef metreye karşılık (koordinat, hız, alt-indeks) — ark uzunluğu enterpolasyonu
+        func konum(_ m: Double) -> (CLLocationCoordinate2D, Double, Int) {
+            let h = min(max(0, m), totM)
+            var lo = 0, hi = pts.count - 1
+            while lo + 1 < hi { let mid = (lo + hi) / 2; if cum[mid] <= h { lo = mid } else { hi = mid } }
+            let seg = max(1e-6, cum[hi] - cum[lo]); let t = (h - cum[lo]) / seg
+            let a = pts[lo], b = pts[hi]
+            return (CLLocationCoordinate2D(latitude: a.coord.latitude + (b.coord.latitude - a.coord.latitude) * t,
+                                           longitude: a.coord.longitude + (b.coord.longitude - a.coord.longitude) * t),
+                    a.spd + (b.spd - a.spd) * t, lo)
+        }
 
         // Mod -> kamera karakteri. 3B = Apple foto-gerçekçi binalar (yakın + dik pitch),
         // flyover = klasik eğik uçuş, flat = tepeden düz (bulut "Düz" ile aynı his).
@@ -68,17 +90,19 @@ enum LocalRouteVideo {
         let lineColor = color(opts.line, fallback: UIColor(red: 0, green: 0.9, blue: 1, alpha: 1))
         let dotColor = color(opts.dot, fallback: UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1))
 
-        var camLat = pts[0].coord.latitude, camLon = pts[0].coord.longitude, camHead = 0.0
-        var totM = 0.0
+        var camLat = pts[0].coord.latitude, camLon = pts[0].coord.longitude
+        var camHead = bearing(pts[0].coord, pts[min(pts.count - 1, 3)].coord)
+        var sonSnap: MKMapSnapshotter.Snapshot?          // kare atlamayınca son görüntü yedeği
         for f in 0..<frames {
             let prog = Double(f) / Double(max(1, frames - 1))
-            let idx = min(pts.count - 1, Int(prog * Double(pts.count - 1)))
-            let c = pts[idx].coord
-            let ahead = pts[min(pts.count - 1, idx + max(1, pts.count / 40))].coord
-            let tHead = bearing(c, ahead)
-            camLat += (c.latitude - camLat) * 0.16
-            camLon += (c.longitude - camLon) * 0.16
-            camHead += angDiff(tHead, camHead) * 0.08
+            let hedefM = prog * totM
+            let (c, spdNow, idx) = konum(hedefM)
+            let (ileri, _, _) = konum(hedefM + 90)          // 90m ilerisi -> yön (gürültüsüz)
+            let tHead = bearing(c, ileri)
+            camLat += (c.latitude - camLat) * 0.25         // sıkı takip: nokta ekran merkezine mıhlı kalır
+            camLon += (c.longitude - camLon) * 0.25
+            // dönüş kırbacı freni: kare başına en çok 1.4° (≈42°/sn) — viraj ekranı savurmasın
+            camHead += min(1.4, max(-1.4, angDiff(tHead, camHead) * 0.08))
             // Düz mod kuzeye sabit (bulut "Düz" gibi); diğerleri rotayı takip eder.
             let head = opts.mode == "flat" ? 0
                 : (camHead.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
@@ -87,13 +111,20 @@ enum LocalRouteVideo {
             opt.camera = MKMapCamera(lookingAtCenter: CLLocationCoordinate2D(latitude: camLat, longitude: camLon),
                                      fromDistance: camDist, pitch: pitch, heading: head)
             opt.size = size
-            opt.mapType = .hybridFlyover
+            // satelliteFlyover: ETİKETSİZ uydu (Barış "çizgiler oynuyor" fiksi — sokak yazıları
+            // her karede yeniden dizilip titriyordu; etiket yok = sabit görüntü, bulut görünümüne de yakın).
+            opt.mapType = .satelliteFlyover
             opt.pointOfInterestFilter = .excludingAll
-            guard let snap = await snapshot(opt) else { continue }
+            // KARE ATLAMA FİKSİ: anlık görüntü ara sıra gelmez (Apple frenler) — eskiden `continue`
+            // kareyi ATLIYORDU -> videoda zaman boşluğu = zıplama. Artık 2 kez dene, yine yoksa
+            // SON BAŞARILI kareyi kullan (bindirme yeni konumda çizilir; akış hiç kesilmez).
+            var snapNow = await snapshot(opt)
+            if snapNow == nil { snapNow = await snapshot(opt) }
+            if let s = snapNow { sonSnap = s }
+            guard let snap = sonSnap else { continue }
 
-            if idx > 0 { totM = cumKm(pts, upTo: idx) * 1000 }
             let img = compose(snap: snap, pts: pts, idx: idx, size: size,
-                              spd: pts[idx].spd, cumKm: totM / 1000,
+                              spd: spdNow, cumKm: hedefM / 1000, uc: c,
                               line: opts.line == "none" ? nil : lineColor,
                               glass: opts.line == "glass" || opts.line == "clear",
                               dot: dotColor)
@@ -168,13 +199,14 @@ enum LocalRouteVideo {
 
     // MARK: - kareyi bindirme ile çiz
     private static func compose(snap: MKMapSnapshotter.Snapshot, pts: [Pt], idx: Int,
-                                size: CGSize, spd: Double, cumKm: Double,
+                                size: CGSize, spd: Double, cumKm: Double, uc: CLLocationCoordinate2D,
                                 line: UIColor?, glass: Bool, dot: UIColor) -> UIImage {
         let r = UIGraphicsImageRenderer(size: size)
         return r.image { ctx in
             snap.image.draw(in: CGRect(origin: .zero, size: size))
             let g = ctx.cgContext
-            // ilerleyen rota çizgisi (idx'e kadar); "none" -> çizgisiz, "glass" -> buzlu beyaz
+            // ilerleyen rota çizgisi: köşelere ek olarak UCU tam enterpolasyon noktasına çizilir
+            // -> çizgi ucu ve nokta kare kare KAYAR, köşeden köşeye zıplamaz.
             if line != nil || glass {
                 g.setLineCap(.round); g.setLineJoin(.round)
                 let path = UIBezierPath()
@@ -183,6 +215,7 @@ enum LocalRouteVideo {
                     let p = snap.point(for: pts[i].coord)
                     if !started { path.move(to: p); started = true } else { path.addLine(to: p) }
                 }
+                if started { path.addLine(to: snap.point(for: uc)) }
                 let w = size.width / 240                       // çözünürlükle ölçekli kalınlık
                 if glass {
                     UIColor.white.withAlphaComponent(0.45).setStroke(); path.lineWidth = w * 2.0; path.stroke()
@@ -191,8 +224,8 @@ enum LocalRouteVideo {
                     line!.setStroke(); path.lineWidth = w; path.stroke()
                 }
             }
-            // konum işareti
-            let mp = snap.point(for: pts[idx].coord)
+            // konum işareti — tam enterpolasyon noktasında (kayarak ilerler)
+            let mp = snap.point(for: uc)
             let dr = size.width / 96
             let dotRect = CGRect(x: mp.x - dr, y: mp.y - dr, width: dr * 2, height: dr * 2)
             g.setShadow(offset: .zero, blur: 6, color: UIColor.black.withAlphaComponent(0.6).cgColor)
