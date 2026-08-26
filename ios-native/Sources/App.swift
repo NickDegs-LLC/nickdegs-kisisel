@@ -120,6 +120,21 @@ struct RootView: View {
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
             await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
             await store.processLocalRenderQueue()      // 1.61: bekleyen oto-videoları TELEFONDA üret (bulut maliyeti sıfır)
+            #if DEBUG
+            // QA (yalnız Debug/simülatör): -qaMotor3d <from> <to> -> web motoru 36 kareyle dener, Documents'a yazar
+            let _qa = ProcessInfo.processInfo.arguments
+            if let ix = _qa.firstIndex(of: "-qaMotor3d"), ix + 2 < _qa.count,
+               let qf = Double(_qa[ix + 1]), let qt = Double(_qa[ix + 2]) {
+                let u = await WebRouteVideo.render(from: qf, to: qt, type: "moto", speed: "medium",
+                                                   aspect: "16:9", camdist: "orta",
+                                                   line: "#00E5FF", dot: "#FF3B30",
+                                                   token: store.token, musicURL: nil, qaKareTavan: 36,
+                                                   onProgress: { _ in })
+                let doc = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                if let u { try? FileManager.default.moveItem(at: u, to: doc.appendingPathComponent("qa_motor3d.mp4")) }
+                try? "SONUC: \(u != nil ? "OK" : "HATA")".write(to: doc.appendingPathComponent("qa_motor3d.txt"), atomically: true, encoding: .utf8)
+            }
+            #endif
         }
         .onChange(of: scenePhase) { _, ph in
             if ph == .active { Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() } }   // her öne gelişte: 1 günlük pencereye yetiş

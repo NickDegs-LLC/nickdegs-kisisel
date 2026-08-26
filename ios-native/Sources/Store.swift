@@ -484,17 +484,28 @@ enum AuthGate { case checking, valid, needLogin, offline }
             guard ["flat", "flyover", "3d"].contains(mode) else { continue }
             let pts = await track(from: frm, to: to)
             guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
-            var o = LocalRouteVideo.Opts()
-            o.mode = mode
-            o.aspect = (j["aspect"] as? String) ?? "16:9"
-            o.line = (j["line"] as? String) ?? o.line
-            o.dot = (j["dot"] as? String) ?? o.dot
-            o.musicURL = await musicFile((j["music"] as? String) ?? "active", session: frm)
-            if let v = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in }),
-               await uploadLocalVideo(v, ts: frm, to: to,
-                                      mode: mode, aspect: o.aspect,
-                                      type: (j["type"] as? String) ?? "moto",
-                                      speed: (j["speed"] as? String) ?? "medium") {
+            let asp = (j["aspect"] as? String) ?? "16:9"
+            let tip = (j["type"] as? String) ?? "moto"
+            let hiz = (j["speed"] as? String) ?? "medium"
+            let mURL = await musicFile((j["music"] as? String) ?? "active", session: frm)
+            var video: URL?
+            if mode == "3d" {
+                // GERÇEK MOTOR (bulutla aynı sayfa) — 2026-08-26 Barış "aynı video"
+                video = await WebRouteVideo.render(from: frm, to: to, type: tip, speed: hiz,
+                                                   aspect: asp, camdist: (j["camdist"] as? String) ?? "orta",
+                                                   line: (j["line"] as? String) ?? "#00E5FF",
+                                                   dot: (j["dot"] as? String) ?? "#FF3B30",
+                                                   token: token, musicURL: mURL, onProgress: { _ in })
+            } else {
+                var o = LocalRouteVideo.Opts()
+                o.mode = mode; o.aspect = asp
+                o.line = (j["line"] as? String) ?? o.line
+                o.dot = (j["dot"] as? String) ?? o.dot
+                o.musicURL = mURL
+                video = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in })
+            }
+            if let v = video,
+               await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
                 await localRenderDone(from: frm)
             }
         }

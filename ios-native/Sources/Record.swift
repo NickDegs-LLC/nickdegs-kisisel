@@ -338,6 +338,23 @@ struct GenerateSheet: View {
                             // çalışıyordu") — MapKit'le 3B'yi taklit denemeleri (zıplama/zoom pompası) kullanıcıya
                             // takıldı; 3B = mühürlü bulut motoru (RunPod, ~$0.03/video). Cihaza taşımanın doğru
                             // yolu WKWebView'da AYNI motoru koşturmak — Barış isterse yapılacak, MapKit'le DEĞİL.
+                            // 3B = GERÇEK MOTOR TELEFONDA (2026-08-26 Barış "telefon üretecek ama AYNI video"):
+                            // sunucu bulutla AYNI spec+sayfayı verir, WKWebView kare kare çeker.
+                            // Sayfa gelmez/render düşerse aşağıdaki bulut yoluna sessizce devam edilir.
+                            if mode == "3d" {
+                                renderPct = 0.01
+                                let mURL = await store.musicFile(music, session: from)
+                                if let vurl = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
+                                                                         aspect: aspect, camdist: camdist,
+                                                                         line: lineColor, dot: resolvedDot,
+                                                                         token: store.token, musicURL: mURL,
+                                                                         onProgress: { p in Task { @MainActor in renderPct = p } }),
+                                   await store.uploadLocalVideo(vurl, ts: from, to: to, mode: mode, aspect: aspect, type: type, speed: speed) {
+                                    renderPct = 0; sending = false; done = true
+                                    store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
+                                }
+                                renderPct = 0   // telefonda olmadı -> buluta düş (aşağıda, eski yol)
+                            }
                             if mode == "flat" || mode == "flyover" {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {

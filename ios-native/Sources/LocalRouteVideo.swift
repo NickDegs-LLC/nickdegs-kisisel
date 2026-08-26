@@ -184,7 +184,7 @@ enum LocalRouteVideo {
     }
 
     // MARK: - müzik miksi (video pas geçilir, yeniden kodlama yok -> hızlı)
-    private static func muxMusic(video: URL, music: URL) async -> URL? {
+    static func muxMusic(video: URL, music: URL) async -> URL? {
         let vAsset = AVURLAsset(url: video), mAsset = AVURLAsset(url: music)
         guard let vTrack = try? await vAsset.loadTracks(withMediaType: .video).first,
               let mTrack = try? await mAsset.loadTracks(withMediaType: .audio).first,
