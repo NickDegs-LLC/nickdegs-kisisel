@@ -91,8 +91,8 @@ struct GenerateSheet: View {
                         Text(premium ? L("Otonom","Auto") : L("Otonom 🔒","Auto 🔒")).tag("auto")
                     }.pickerStyle(.segmented)
                     Text(speed == "auto"
-                         ? L("Otonom: süre TAMAMEN rotaya göre ayarlanır (max 3 dk). Şehir yolculukları için ideal. Premium, günde 1.",
-                             "Auto: length fully scales with your route (max 3 min). Great for city trips. Premium, once a day.")
+                         ? L("Otonom: süre TAMAMEN rotaya göre ayarlanır (max 3 dk). Şehir yolculukları için ideal. Premium.",
+                             "Auto: length fully scales with your route (max 3 min). Great for city trips. Premium.")
                          : L("Kısa ≈15sn, Orta ≈30sn, Uzun rotaya göre (max 60sn). Süre rota uzunluğuna göre ölçeklenir.",
                              "Short ≈15s, Medium ≈30s, Long scales with distance (max 60s)."))
                         .font(.caption2).foregroundStyle(speed == "auto" ? Brand.accent : .secondary)
