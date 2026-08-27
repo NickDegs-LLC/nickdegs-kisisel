@@ -334,26 +334,9 @@ struct GenerateSheet: View {
                         Task {
                             // CİHAZDA render (2026-07-06'dan beri Düz/Flyover): telefon GPU'su üretir, buluta
                             // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR.
-                            // 3B = GERÇEK MOTOR TELEFONDA (Barış "telefon üretecek ama AYNI video"):
-                            // sunucu bulutla AYNI spec+sayfayı verir, WKWebView kare kare çeker.
-                            // ⚠️ BULUTA DÜŞME KALDIRILDI (Barış 2026-08-26: "bulutta hazırlanıyor diye bir şey
-                            // yok, komple kaldır"): eskiden telefon motoru hata verince SESSİZCE buluta
-                            // kaçıyordu; bulut bakiyesi olmadığı için video HİÇ üretilmiyordu ve kullanıcı
-                            // bunu anlamıyordu. Artık ya telefonda üretilir ya AÇIK HATA verilir.
-                            if mode == "3d" {
-                                renderPct = 0.01
-                                let mURL = await store.musicFile(music, session: from)
-                                if let vurl = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
-                                                                         aspect: aspect, camdist: camdist,
-                                                                         line: lineColor, dot: resolvedDot,
-                                                                         token: store.token, musicURL: mURL,
-                                                                         onProgress: { p in Task { @MainActor in renderPct = p } }),
-                                   await store.uploadLocalVideo(vurl, ts: from, to: to, mode: mode, aspect: aspect, type: type, speed: speed) {
-                                    renderPct = 0; sending = false; done = true
-                                    store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
-                                }
-                                renderPct = 0; sending = false; localErr = true; return   // olmadı -> AÇIK HATA
-                            }
+                            // ⚠️ 3B BULUTTA (Barış 2026-08-27: "bulutta kalsın"): telefon motoru (WebRouteVideo)
+                            // çalışıyor ve KODU DURUYOR — geri açmak için aşağıdaki koşula "|| mode == \"3d\""
+                            // eklemek yeterli. Bulut tercih edildi: kullanıcı beklemez, app kapalıyken de üretilir.
                             if mode == "flat" || mode == "flyover" {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {

@@ -481,7 +481,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
                   let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }
             let mode = (j["mode"] as? String) ?? "flyover"
-            guard ["flat", "flyover", "3d"].contains(mode) else { continue }
+            guard ["flat", "flyover"].contains(mode) else { continue }   // 3B bulutta (Barış 2026-08-27)
             let pts = await track(from: frm, to: to)
             guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
             let asp = (j["aspect"] as? String) ?? "9:16"
