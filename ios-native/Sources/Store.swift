@@ -330,6 +330,9 @@ enum AuthGate { case checking, valid, needLogin, offline }
         // GÜVENLİ: free_tactical'ı HAM JSON'dan oku — Profile struct'ına DOKUNMA (profil decode'u asla bozulmaz)
         if let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] {
             UserDefaults.standard.set((o["free_tactical"] as? Bool) ?? false, forKey: "nd_free_tactical")
+            // SOKAK HAKKI (2026-08-27): satın alınmış hak + Ultra'nın bu ayki hediyesi duruyor mu
+            UserDefaults.standard.set((o["sokak_hak"] as? Int) ?? 0, forKey: "nd_sokak_hak")
+            UserDefaults.standard.set((o["sokak_hediye"] as? Bool) ?? false, forKey: "nd_sokak_hediye")
         }
         guard let p = try? dec().decode(Profile.self, from: d), p.premium else { return }
         UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium kalıcı

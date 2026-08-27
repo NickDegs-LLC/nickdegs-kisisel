@@ -42,6 +42,9 @@ struct GenerateSheet: View {
     private var isUltra: Bool { iap.ultra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
     @AppStorage("nd_free_tactical") private var freeTacStored = false   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (syncPremium ham JSON'dan yazar)
     private var canTactical: Bool { isUltra || freeTacStored }          // Ultra VEYA bedava-aksiyon hakkı -> taktik açık
+    @AppStorage("nd_sokak_hak") private var sokakHak = 0        // satın alınmış Sokak hakkı
+    @AppStorage("nd_sokak_hediye") private var sokakHediye = false  // Ultra'nın bu ayki hediyesi duruyor mu
+    private func sokakYenile() { Task { await store.syncPremium() } }
     @State private var stock: [[String:String]] = []
     @State private var musicUploading = false
     @State private var note = ""
@@ -132,6 +135,38 @@ struct GenerateSheet: View {
                              : L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
                                  "Camera angles (Chase, Street View) are included in Ultra."))
                             .font(.caption2).foregroundStyle(isUltra ? .secondary : Brand.accent)
+
+                        // SOKAK HAKKI (2026-08-27, Barış: "Sokak videosu ayrı bir tek satın alım olsun"):
+                        // Sokak videosu gerçek sokak fotoğraflarından kare kare üretilir, maliyeti yüksek ->
+                        // aboneliğe dahil DEĞİL. Ultra'ya ayda 1 hediye; fazlası tek satın alım.
+                        if camMode == "pacman" {
+                            VStack(spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "ticket.fill").foregroundStyle(Brand.gradient)
+                                    Text(sokakHak > 0
+                                         ? L("Sokak hakkın: ","Street credits: ") + "\(sokakHak)"
+                                         : (sokakHediye ? L("Bu ayki hediye hakkın hazır 🎁","Your monthly gift credit is ready 🎁")
+                                                        : L("Sokak hakkın kalmadı","No street credits left")))
+                                        .font(.system(size: 14, weight: .medium))
+                                }
+                                if sokakHak == 0 && !sokakHediye {
+                                    HStack(spacing: 10) {
+                                        if let p1 = iap.sokakTek {
+                                            Button { Task { if await iap.buySokak(p1) { await store.syncPremium(); sokakYenile() } } }
+                                            label: { Text("1 × \(p1.displayPrice)") }.buttonStyle(.glassy)
+                                        }
+                                        if let p3 = iap.sokakUclu {
+                                            Button { Task { if await iap.buySokak(p3) { await store.syncPremium(); sokakYenile() } } }
+                                            label: { Text("3 × \(p3.displayPrice)") }.buttonStyle(.glassyProminent())
+                                        }
+                                    }
+                                    if iap.boostWorking { ProgressView() }
+                                }
+                                if let m = iap.boostMsg {
+                                    Text(m).font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.padding(12).glassPanel(14)
+                        }
                     }
 
                     field(L("Görünüm","Style"))

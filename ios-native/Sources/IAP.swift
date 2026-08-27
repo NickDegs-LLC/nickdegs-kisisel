@@ -11,15 +11,21 @@ import UIKit
     static let ultraMonthlyID = "com.nickdegs.kisisel.ultra.monthly"   // ULTRA: Google 3D + kamera modları + Street View
     static let ultraYearlyID = "com.nickdegs.kisisel.ultra.yearly"
     static let boostID = "com.nickdegs.kisisel.boost.daily2x"   // consumable: o gün limitleri 2x
+    // SOKAK HAKKI (2026-08-27, Barış): Street View videosu ~$4.90 maliyetle aboneliğe sığmıyordu ->
+    // ayrı tek-satın-alım. Ultra üyeye ayda 1 hediye, fazlası buradan.
+    static let sokakTekID = "com.nickdegs.kisisel.sokak.tek"
+    static let sokakUcluID = "com.nickdegs.kisisel.sokak.uclu"
     static var ultraIDs: [String] { [ultraMonthlyID, ultraYearlyID] }
     static var ids: [String] { [monthlyID, yearlyID, ultraMonthlyID, ultraYearlyID] }   // TÜM abonelikler premium/purchased sağlar
-    static var allIDs: [String] { ids + [boostID] }
+    static var allIDs: [String] { ids + [boostID, sokakTekID, sokakUcluID] }
 
     @Published var monthly: Product?
     @Published var yearly: Product?
     @Published var ultraMonthly: Product?
     @Published var ultraYearly: Product?
     @Published var boost: Product?
+    @Published var sokakTek: Product?
+    @Published var sokakUclu: Product?
     @Published var purchased = UserDefaults.standard.bool(forKey: "nd_premium")
     @Published var ultra = UserDefaults.standard.bool(forKey: "nd_ultra")   // Ultra katman (Google 3D + kameralar + Street View)
     @Published var working = false
@@ -63,6 +69,8 @@ import UIKit
             ultraMonthly = prods.first { $0.id == Self.ultraMonthlyID }
             ultraYearly = prods.first { $0.id == Self.ultraYearlyID }
             boost = prods.first { $0.id == Self.boostID }
+            sokakTek = prods.first { $0.id == Self.sokakTekID }
+            sokakUclu = prods.first { $0.id == Self.sokakUcluID }
             loadMsg = prods.isEmpty
                 ? "Ürünler mağazadan gelmedi. App Store Connect → Business → Paid Apps anlaşması + banka/vergi tamamlanmalı (birkaç saat sürebilir)."
                 : nil
@@ -103,6 +111,30 @@ import UIKit
             }
         } catch {
             boostMsg = "Boost hatası: \(error.localizedDescription)"; return false
+        }
+    }
+
+    // SOKAK HAKKI satın al (consumable): backend hakkı hesaba ekler (1 veya 3).
+    @discardableResult
+    func buySokak(_ product: Product?) async -> Bool {
+        guard let product else { boostMsg = L("Ürün yüklenmedi.","Product not loaded."); return false }
+        boostWorking = true; boostMsg = nil; defer { boostWorking = false }
+        do {
+            switch try await product.purchase() {
+            case .success(let v):
+                if case .verified(let t) = v {
+                    await Self.report(v.jwsRepresentation)   // backend sokak_hak += adet
+                    await t.finish()
+                    boostMsg = L("Sokak hakkın eklendi 🛣️","Street credits added 🛣️")
+                    return true
+                }
+                boostMsg = L("Satın alma doğrulanamadı.","Purchase could not be verified."); return false
+            case .pending: boostMsg = L("Onay bekleniyor.","Waiting for approval."); return false
+            case .userCancelled: return false
+            @unknown default: return false
+            }
+        } catch {
+            boostMsg = "\(error.localizedDescription)"; return false
         }
     }
 
