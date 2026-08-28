@@ -1,14 +1,9 @@
 import XCTest
-import StoreKitTest
 
 // App Store INCELEME GORSELLERI (video paketi urunleri) — yalniz QA, uygulamaya dahil degil.
 // "Video olustur" ekranini ucretsiz kullanici gibi acar; video paketi satin alma paneli gorunur.
 final class VideoShots: XCTestCase {
-    func testVideoPaketGorselleri() throws {
-        let session = try SKTestSession(configurationFileNamed: "Products")
-        session.disableDialogs = true
-        session.clearTransactions()
-
+    func testVideoPaketGorselleri() {
         let app = XCUIApplication()
         let tok = ProcessInfo.processInfo.environment["ND_TOKEN"] ?? ""
         let frm = ProcessInfo.processInfo.environment["ND_FROM"] ?? "0"
