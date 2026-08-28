@@ -21,6 +21,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: Products.storekit
       - path: Sources
       - path: Resources
     # Info.plist DOSYASI (taban) + INFOPLIST_KEY_* (üstüne merge edilir).
@@ -112,3 +113,4 @@ schemes:
     test:
       targets:
         - MoveLogUITests
+      storeKitConfiguration: Products.storekit

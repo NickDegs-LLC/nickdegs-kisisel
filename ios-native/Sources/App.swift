@@ -65,6 +65,11 @@ struct AuthGateView: View {
 }
 
 struct RootView: View {
+    // QA (yalnız Debug/simülatör): -qaVideoSheet <from> <to> -> "Video oluştur" ekranını
+    // doğrudan açar; ücretsiz katmanda video paketi satın alma paneli görünür.
+    // App Store inceleme görselleri bu yolla çekilir. Release'e ETKİSİ YOK (#if DEBUG).
+    @State private var qaVideoSheet: (Double, Double)? = nil
+    @EnvironmentObject var iap: IAP
     @EnvironmentObject var store: Store
     @EnvironmentObject var tracker: Tracker
     @Environment(\.scenePhase) private var scenePhase
@@ -109,6 +114,13 @@ struct RootView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .sheet(isPresented: Binding(get: { qaVideoSheet != nil },
+                                    set: { if !$0 { qaVideoSheet = nil } })) {
+            if let q = qaVideoSheet {
+                GenerateSheet(from: q.0, to: q.1, type: "moto")
+                    .environmentObject(store).environmentObject(iap)
+            }
+        }
         .task {
             if store.me.isEmpty { let p = await store.profile(); store.me = p?.username ?? "" }
             await store.syncPremium()                 // premium'u açılışta cihaza yansıt (kilitler kalksın)
@@ -123,6 +135,11 @@ struct RootView: View {
             #if DEBUG
             // QA (yalnız Debug/simülatör): -qaMotor3d <from> <to> -> web motoru 36 kareyle dener, Documents'a yazar
             let _qa = ProcessInfo.processInfo.arguments
+            if let vx = _qa.firstIndex(of: "-qaVideoSheet"), vx + 2 < _qa.count,
+               let vf = Double(_qa[vx + 1]), let vt = Double(_qa[vx + 2]) {
+                try? await Task.sleep(for: .seconds(1.2))
+                qaVideoSheet = (vf, vt)
+            }
             if let ix = _qa.firstIndex(of: "-qaMotor3d"), ix + 2 < _qa.count,
                let qf = Double(_qa[ix + 1]), let qt = Double(_qa[ix + 2]) {
                 let u = await WebRouteVideo.render(from: qf, to: qt, type: "moto", speed: "medium",
