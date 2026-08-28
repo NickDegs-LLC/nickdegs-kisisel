@@ -9,9 +9,18 @@ final class VideoShots: XCTestCase {
         let frm = ProcessInfo.processInfo.environment["ND_FROM"] ?? "0"
         let to  = ProcessInfo.processInfo.environment["ND_TO"] ?? "0"
         // DEMO: giris ekranini atlar (AppEnv.demo -> gate .valid). Ucretsiz katman varsayilan.
-        app.launchArguments = ["-nd_qa_demo", "YES", "-nd_premium", "NO",
+        // INGILIZCE (App Review Ingilizce yapilir) + otomatik giris (ucretsiz test hesabi)
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "LANG=en",
+                               "AUTOLOGIN=" + (ProcessInfo.processInfo.environment["ND_QA"] ?? ""),
                                "-qaVideoSheet", frm, to]
+        addUIInterruptionMonitor(withDescription: "izinler") { alert in
+            for t in ["Allow", "İzin Ver", "OK", "Tamam"] {
+                if alert.buttons[t].exists { alert.buttons[t].tap(); return true }
+            }
+            return false
+        }
         app.launch()
+        app.tap()   // kesintiyi tetikle
 
         // panel yuklenene kadar bekle (StoreKit urun fiyatlari gelsin)
         let panel = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'video'")).firstMatch
