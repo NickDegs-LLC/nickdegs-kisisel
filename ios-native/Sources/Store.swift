@@ -93,12 +93,21 @@ enum AuthGate { case checking, valid, needLogin, offline }
     @Published var gate: AuthGate = .checking   // açılış doğrulama durumu
     var loggedIn: Bool { !token.isEmpty || (AppEnv.demo && AppEnv.screen != "hero") }
     init() {
+        #if DEBUG
+        // QA (yalnız Debug/simülatör): -nd_qa_demo YES -> giriş kapısını atla.
+        // CommandLine tabanlı DEMO bayrağı simülatörde güvenilir geçmediği için UserDefaults kullanılır.
+        // App Store derlemesinde bu blok DERLENMEZ.
+        if UserDefaults.standard.bool(forKey: "nd_qa_demo") { me = "qa"; gate = .valid; return }
+        #endif
         if AppEnv.demo && AppEnv.screen != "hero" { me = "me"; gate = .valid }
         else if token.isEmpty { gate = .needLogin }   // token yoksa giriş; varsa CHECKING (sunucuda doğrula)
     }
 
     // Token'ı SUNUCUYA doğrulat. 200=geçerli, 401/403=geçersiz->giriş, ağ hatası=OFFLINE (uygulama açılmaz).
     func validate() async {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "nd_qa_demo") { gate = .valid; return }
+        #endif
         if AppEnv.demo && AppEnv.screen != "hero" { gate = .valid; return }
         if token.isEmpty { gate = .needLogin; return }
         gate = .checking
