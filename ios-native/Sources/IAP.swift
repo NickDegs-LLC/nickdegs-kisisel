@@ -15,9 +15,13 @@ import UIKit
     // ayrı tek-satın-alım. Ultra üyeye ayda 1 hediye, fazlası buradan.
     static let sokakTekID = "com.nickdegs.kisisel.sokak.tek"
     static let sokakUcluID = "com.nickdegs.kisisel.sokak.uclu"
+    // BULUT VİDEO PAKETİ (2026-08-28, Barış): ücretsiz katmanda video üretilmez; kullanıcı
+    // ya Premium olur ya da paket alır. 5'linin birim fiyatı daha ucuz (teşvik).
+    static let videoUcluID = "com.nickdegs.kisisel.video.uclu"     // 3 video — $5.99
+    static let videoBesliID = "com.nickdegs.kisisel.video.besli"   // 5 video — $7.99
     static var ultraIDs: [String] { [ultraMonthlyID, ultraYearlyID] }
     static var ids: [String] { [monthlyID, yearlyID, ultraMonthlyID, ultraYearlyID] }   // TÜM abonelikler premium/purchased sağlar
-    static var allIDs: [String] { ids + [boostID, sokakTekID, sokakUcluID] }
+    static var allIDs: [String] { ids + [boostID, sokakTekID, sokakUcluID, videoUcluID, videoBesliID] }
 
     @Published var monthly: Product?
     @Published var yearly: Product?
@@ -26,6 +30,8 @@ import UIKit
     @Published var boost: Product?
     @Published var sokakTek: Product?
     @Published var sokakUclu: Product?
+    @Published var videoUclu: Product?
+    @Published var videoBesli: Product?
     @Published var purchased = UserDefaults.standard.bool(forKey: "nd_premium")
     @Published var ultra = UserDefaults.standard.bool(forKey: "nd_ultra")   // Ultra katman (Google 3D + kameralar + Street View)
     @Published var working = false
@@ -71,6 +77,8 @@ import UIKit
             boost = prods.first { $0.id == Self.boostID }
             sokakTek = prods.first { $0.id == Self.sokakTekID }
             sokakUclu = prods.first { $0.id == Self.sokakUcluID }
+            videoUclu = prods.first { $0.id == Self.videoUcluID }
+            videoBesli = prods.first { $0.id == Self.videoBesliID }
             loadMsg = prods.isEmpty
                 ? "Ürünler mağazadan gelmedi. App Store Connect → Business → Paid Apps anlaşması + banka/vergi tamamlanmalı (birkaç saat sürebilir)."
                 : nil
@@ -126,6 +134,28 @@ import UIKit
                     await Self.report(v.jwsRepresentation)   // backend sokak_hak += adet
                     await t.finish()
                     boostMsg = L("Sokak hakkın eklendi 🛣️","Street credits added 🛣️")
+                    return true
+                }
+                boostMsg = L("Satın alma doğrulanamadı.","Purchase could not be verified."); return false
+            case .pending: boostMsg = L("Onay bekleniyor.","Waiting for approval."); return false
+            case .userCancelled: return false
+            @unknown default: return false
+            }
+        } catch {
+            boostMsg = "\(error.localizedDescription)"; return false
+        }
+    }
+
+    func buyVideo(_ product: Product?) async -> Bool {
+        guard let product else { boostMsg = L("Ürün yüklenmedi.","Product not loaded."); return false }
+        boostWorking = true; boostMsg = nil; defer { boostWorking = false }
+        do {
+            switch try await product.purchase() {
+            case .success(let v):
+                if case .verified(let t) = v {
+                    await Self.report(v.jwsRepresentation)   // backend video_hak += adet
+                    await t.finish()
+                    boostMsg = L("Video hakkın eklendi 🎬","Video credits added 🎬")
                     return true
                 }
                 boostMsg = L("Satın alma doğrulanamadı.","Purchase could not be verified."); return false

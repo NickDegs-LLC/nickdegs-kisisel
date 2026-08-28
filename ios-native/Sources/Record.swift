@@ -43,6 +43,7 @@ struct GenerateSheet: View {
     @AppStorage("nd_free_tactical") private var freeTacStored = false   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (syncPremium ham JSON'dan yazar)
     private var canTactical: Bool { isUltra || freeTacStored }          // Ultra VEYA bedava-aksiyon hakkı -> taktik açık
     @AppStorage("nd_sokak_hak") private var sokakHak = 0        // satın alınmış Sokak hakkı
+    @AppStorage("nd_video_hak") private var videoHak = 0        // satın alınmış bulut video hakkı (3'lü/5'li paket)
     @AppStorage("nd_sokak_hediye") private var sokakHediye = false  // Ultra'nın bu ayki hediyesi duruyor mu
     private func sokakYenile() { Task { await store.syncPremium() } }
     @State private var stock: [[String:String]] = []
@@ -362,59 +363,67 @@ struct GenerateSheet: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
 
+                    // ═══ VİDEO PAKETİ (2026-08-28, Barış) ═══
+                    // Ücretsiz katmanda video üretilmez. Kullanıcı ya Premium olur ya paket alır.
+                    // 5'li paketin birim fiyatı 3'lüden ucuz — teşvik burada görünür.
+                    if !premium {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(videoHak > 0
+                                  ? L("Video hakkın: \(videoHak)", "Your video credits: \(videoHak)")
+                                  : L("Video hakkın yok", "No video credits"),
+                                  systemImage: "film.stack")
+                                .font(.subheadline.weight(.semibold))
+                            Text(L("Sürüşlerin Rotalar'da kayıtlı. Videoya dönüştürmek için paket al ya da Premium'a geç — Premium'da her sürüş otomatik videoya döner.",
+                                   "Your rides are saved in Routes. Buy a pack to turn them into videos, or go Premium — Premium turns every ride into a video automatically."))
+                                .font(.caption2).foregroundStyle(.secondary)
+                            HStack(spacing: 10) {
+                                if let p3 = iap.videoUclu {
+                                    Button { Task { if await iap.buyVideo(p3) { await store.syncPremium() } } }
+                                    label: { Text(L("3 video · \(p3.displayPrice)", "3 videos · \(p3.displayPrice)")) }
+                                        .buttonStyle(.glassy)
+                                }
+                                if let p5 = iap.videoBesli {
+                                    Button { Task { if await iap.buyVideo(p5) { await store.syncPremium() } } }
+                                    label: { Text(L("5 video · \(p5.displayPrice)", "5 videos · \(p5.displayPrice)")) }
+                                        .buttonStyle(.glassyProminent())
+                                }
+                            }
+                            if iap.boostWorking { ProgressView() }
+                            if let m = iap.boostMsg { Text(m).font(.caption2).foregroundStyle(.secondary) }
+                        }.padding(12).glassPanel(14)
+                    }
+
                     Button {
-                        // ═══ YOL AYRIMI (Barış 2026-08-28) ═══
-                        //   ÜCRETSİZ      -> video SADECE TELEFONDA üretilir, buluta HİÇ gitmez,
-                        //                    sunucuya da YÜKLENMEZ; doğrudan galeriye kaydedilir.
-                        //                    ("Kendi telefonunda ürettiğini niye sunucuya yüklüyor ki?" — Barış)
-                        //   PREMIUM/ULTRA -> düz/kuşbakışı telefonda, 3B bulutta (ödediği konfor:
-                        //                    uygulama kapalıyken de üretilir, telefon yorulmaz).
-                        // Taktik/Sokak gibi özel modlar ücretsize kapalı (mod seçicide zaten kilitli).
-                        if !premium && !["flat", "flyover", "3d"].contains(mode) { showPaywall = true; return }
+                        // ═══ KATMAN KURALI (Barış 2026-08-28, nihai) ═══
+                        //   ÜCRETSİZ      -> VİDEO YOK. Sürüşler Rotalar'da görüntülenir, o kadar.
+                        //                    Video isterse: Premium olur VEYA video paketi satın alır.
+                        //                    ("Hem telefonda üretme verip hem video başına satın alım
+                        //                     koymak saçma oldu; bedavalardan video üretmeyi kaldır.")
+                        //   PREMIUM/ULTRA -> düz/kuşbakışı telefonda, 3B bulutta (ödediği konfor).
+                        //   VİDEO HAKKI   -> ücretsiz kullanıcı paket aldıysa video BULUTTA üretilir.
+                        if !premium && videoHak <= 0 { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
-                            // Ücretsizde HER mod cihazda; premium'da yalnız düz/kuşbakışı cihazda.
-                            let cihazda = !premium || mode == "flat" || mode == "flyover"
-                            if cihazda {
+                            // Cihazda üretim yalnız PREMIUM'un düz/kuşbakışı videosunda.
+                            // Ücretsiz (hak satın almış) kullanıcının işi BULUTTA üretilir.
+                            // Cihazda üretim YALNIZ premium'un düz/kuşbakışı videosunda (aylardır öyle,
+                            // maliyeti sıfır). Diğer her şey bulutta: premium 3B + hak satın almış ücretsiz.
+                            if premium && (mode == "flat" || mode == "flyover") {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {
                                     renderPct = 0.01
-                                    let mURL = await store.musicFile(music, session: from)
-                                    var vurl: URL?
-                                    if mode == "3d" {
-                                        // GERÇEK MOTOR telefonda (bulutla aynı sayfa) — harita+rota sunucudan gelir
-                                        vurl = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
-                                                                          aspect: aspect, camdist: camdist,
-                                                                          line: lineColor, dot: resolvedDot,
-                                                                          token: store.token, musicURL: mURL,
-                                                                          onProgress: { p in Task { @MainActor in renderPct = p } })
-                                    } else {
-                                        var lopt = LocalRouteVideo.Opts()
-                                        lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
-                                        lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
-                                        lopt.musicURL = mURL
-                                        vurl = await LocalRouteVideo.render(points: pts, opts: lopt,
-                                                                            onProgress: { p in Task { @MainActor in renderPct = p } })
+                                    var lopt = LocalRouteVideo.Opts()
+                                    lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
+                                    lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
+                                    lopt.musicURL = await store.musicFile(music, session: from)
+                                    if let v = await LocalRouteVideo.render(points: pts, opts: lopt,
+                                                                            onProgress: { p in Task { @MainActor in renderPct = p } }),
+                                       await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
+                                                                    aspect: aspect, type: type, speed: speed) {
+                                        renderPct = 0; sending = false; done = true
+                                        store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
                                     }
-                                    if let v = vurl {
-                                        if !premium {
-                                            // ÜCRETSİZ: yükleme YOK. Telefonda üretildi, telefonda kalsın.
-                                            // (Eskiden yükleyip yerel dosyayı siliyor, sonra sunucudan indirip
-                                            //  galeriye kaydediyorduk — gereksiz gidiş-dönüş + mobil veri israfı.)
-                                            _ = await saveToPhotos(v)
-                                            renderPct = 0; sending = false; done = true
-                                            try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
-                                        }
-                                        if await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
-                                                                        aspect: aspect, type: type, speed: speed) {
-                                            renderPct = 0; sending = false; done = true
-                                            store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
-                                        }
-                                    }
-                                    renderPct = 0   // cihazda olmadı
-                                }
-                                if !premium {       // ücretsizde bulut YOK -> burada biter
-                                    sending = false; localErr = true; return
+                                    renderPct = 0   // cihazda olmadı -> buluta düş (aşağıda)
                                 }
                             }
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
@@ -447,7 +456,7 @@ struct GenerateSheet: View {
                     // TELEFONDA ÜRETİM UYARISI (Barış 2026-08-28: "kapatma şeklinde uyarı koymamız lazım").
                     // Cihazda üretim uygulama ön plandayken sürer; kullanıcı kapatırsa iş yarıda kalır.
                     // Bulutta üretilen (premium 3B) işlerde bu uyarı GÖSTERİLMEZ — orada kapatmak serbest.
-                    if sending && (!premium || mode == "flat" || mode == "flyover") {
+                    if sending && premium && (mode == "flat" || mode == "flyover") {
                         Label(L("Video telefonunda üretiliyor — uygulamayı kapatma, ekranı açık tut.",
                                 "Rendering on your phone — keep the app open."),
                               systemImage: "exclamationmark.triangle.fill")

@@ -332,6 +332,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
             UserDefaults.standard.set((o["free_tactical"] as? Bool) ?? false, forKey: "nd_free_tactical")
             // SOKAK HAKKI (2026-08-27): satın alınmış hak + Ultra'nın bu ayki hediyesi duruyor mu
             UserDefaults.standard.set((o["sokak_hak"] as? Int) ?? 0, forKey: "nd_sokak_hak")
+            UserDefaults.standard.set((o["video_hak"] as? Int) ?? 0, forKey: "nd_video_hak")
             UserDefaults.standard.set((o["sokak_hediye"] as? Bool) ?? false, forKey: "nd_sokak_hediye")
         }
         guard let p = try? dec().decode(Profile.self, from: d), p.premium else { return }
@@ -492,10 +493,9 @@ enum AuthGate { case checking, valid, needLogin, offline }
         guard !Self.localQueueBusy else { return }
         Self.localQueueBusy = true
         defer { Self.localQueueBusy = false }
-        // YOL AYRIMI (Barış 2026-08-28): cihazda üretim artık ÜCRETSİZ kullanıcının ANA yolu.
-        // Eskiden burada `prof.premium` şartı vardı; ücretsiz kullanıcı buluta gidiyor, bakiye
-        // bitince HİÇ video alamıyordu (28 Ağustos: bir kullanıcının 6 sürüşü üretilmedi).
-        guard let prof = await profile() else { return }
+        // Cihazda üretim PREMIUM'a özel (Barış 2026-08-28 nihai: ücretsiz katmanda video YOK;
+        // kullanıcı ya Premium olur ya video paketi alır — paketle üretim BULUTTA yapılır).
+        guard let prof = await profile(), prof.premium else { return }
         let jobs = await localRenders()
         for j in jobs.prefix(2) {
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
@@ -528,15 +528,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
                 video = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in })
             }
             guard let v = video else { continue }
-            if prof.premium {
-                // PREMIUM/ULTRA: buluta yükle -> "Videolarım"da durur, her cihazdan erişilir.
-                if await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
-                    await localRenderDone(from: frm)
-                }
-            } else {
-                // ÜCRETSİZ: yükleme YOK — video telefonda kalır, doğrudan galeriye kaydedilir.
-                // Sunucuya sadece "bu iş bitti" denir ki kuyruktan düşsün.
-                _ = await Self.galeriyeKaydet(v)
+            if await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
                 await localRenderDone(from: frm)
             }
         }
