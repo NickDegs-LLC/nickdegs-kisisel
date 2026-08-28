@@ -474,11 +474,28 @@ enum AuthGate { case checking, valid, needLogin, offline }
     // Uygulama öne gelince bekleyen oto-videoları TELEFONDA üret + yükle (sessiz; push atmayız — darlama yok).
     // Battarya nezaketi: açılış başına en çok 2 video.
     private static var localQueueBusy = false
+    /// Telefonda üretilen videoyu doğrudan galeriye kaydet (ücretsiz katman yolu).
+    /// Sunucuya yükleme yapılmaz: video zaten cihazda, gidip geri gelmesinin anlamı yok.
+    static func galeriyeKaydet(_ url: URL) async -> Bool {
+        let st = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard st == .authorized || st == .limited else { return false }
+        let ok: Bool = await withCheckedContinuation { cont in
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            } completionHandler: { ok, _ in cont.resume(returning: ok) }
+        }
+        if ok { try? FileManager.default.removeItem(at: url) }   // galeride duruyor, kopyayı bırakma
+        return ok
+    }
+
     func processLocalRenderQueue() async {
         guard !Self.localQueueBusy else { return }
         Self.localQueueBusy = true
         defer { Self.localQueueBusy = false }
-        guard let prof = await profile(), prof.premium else { return }   // oto-video Premium özelliği
+        // YOL AYRIMI (Barış 2026-08-28): cihazda üretim artık ÜCRETSİZ kullanıcının ANA yolu.
+        // Eskiden burada `prof.premium` şartı vardı; ücretsiz kullanıcı buluta gidiyor, bakiye
+        // bitince HİÇ video alamıyordu (28 Ağustos: bir kullanıcının 6 sürüşü üretilmedi).
+        guard let prof = await profile() else { return }
         let jobs = await localRenders()
         for j in jobs.prefix(2) {
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
@@ -510,8 +527,16 @@ enum AuthGate { case checking, valid, needLogin, offline }
                 o.musicURL = mURL
                 video = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in })
             }
-            if let v = video,
-               await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
+            guard let v = video else { continue }
+            if prof.premium {
+                // PREMIUM/ULTRA: buluta yükle -> "Videolarım"da durur, her cihazdan erişilir.
+                if await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
+                    await localRenderDone(from: frm)
+                }
+            } else {
+                // ÜCRETSİZ: yükleme YOK — video telefonda kalır, doğrudan galeriye kaydedilir.
+                // Sunucuya sadece "bu iş bitti" denir ki kuyruktan düşsün.
+                _ = await Self.galeriyeKaydet(v)
                 await localRenderDone(from: frm)
             }
         }

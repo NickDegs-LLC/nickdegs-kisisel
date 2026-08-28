@@ -363,30 +363,58 @@ struct GenerateSheet: View {
                     }
 
                     Button {
-                        // Kural: algılama free, videoya dökme premium.
-                        if !premium { showPaywall = true; return }
+                        // ═══ YOL AYRIMI (Barış 2026-08-28) ═══
+                        //   ÜCRETSİZ      -> video SADECE TELEFONDA üretilir, buluta HİÇ gitmez,
+                        //                    sunucuya da YÜKLENMEZ; doğrudan galeriye kaydedilir.
+                        //                    ("Kendi telefonunda ürettiğini niye sunucuya yüklüyor ki?" — Barış)
+                        //   PREMIUM/ULTRA -> düz/kuşbakışı telefonda, 3B bulutta (ödediği konfor:
+                        //                    uygulama kapalıyken de üretilir, telefon yorulmaz).
+                        // Taktik/Sokak gibi özel modlar ücretsize kapalı (mod seçicide zaten kilitli).
+                        if !premium && !["flat", "flyover", "3d"].contains(mode) { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
-                            // CİHAZDA render (2026-07-06'dan beri Düz/Flyover): telefon GPU'su üretir, buluta
-                            // sadece hazır mp4 yüklenir -> sunucu GPU maliyeti SIFIR.
-                            // ⚠️ 3B BULUTTA (Barış 2026-08-27: "bulutta kalsın"): telefon motoru (WebRouteVideo)
-                            // çalışıyor ve KODU DURUYOR — geri açmak için aşağıdaki koşula "|| mode == \"3d\""
-                            // eklemek yeterli. Bulut tercih edildi: kullanıcı beklemez, app kapalıyken de üretilir.
-                            if mode == "flat" || mode == "flyover" {
+                            // Ücretsizde HER mod cihazda; premium'da yalnız düz/kuşbakışı cihazda.
+                            let cihazda = !premium || mode == "flat" || mode == "flyover"
+                            if cihazda {
                                 let pts = await store.track(from: from, to: to)
                                 if pts.count >= 3 {
                                     renderPct = 0.01
-                                    var lopt = LocalRouteVideo.Opts()
-                                    lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
-                                    lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
-                                    lopt.musicURL = await store.musicFile(music, session: from)
-                                    if let vurl = await LocalRouteVideo.render(points: pts, opts: lopt,
-                                                                               onProgress: { p in Task { @MainActor in renderPct = p } }),
-                                       await store.uploadLocalVideo(vurl, ts: from, to: to, mode: mode, aspect: aspect, type: type, speed: speed) {
-                                        renderPct = 0; sending = false; done = true
-                                        store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
+                                    let mURL = await store.musicFile(music, session: from)
+                                    var vurl: URL?
+                                    if mode == "3d" {
+                                        // GERÇEK MOTOR telefonda (bulutla aynı sayfa) — harita+rota sunucudan gelir
+                                        vurl = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
+                                                                          aspect: aspect, camdist: camdist,
+                                                                          line: lineColor, dot: resolvedDot,
+                                                                          token: store.token, musicURL: mURL,
+                                                                          onProgress: { p in Task { @MainActor in renderPct = p } })
+                                    } else {
+                                        var lopt = LocalRouteVideo.Opts()
+                                        lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
+                                        lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
+                                        lopt.musicURL = mURL
+                                        vurl = await LocalRouteVideo.render(points: pts, opts: lopt,
+                                                                            onProgress: { p in Task { @MainActor in renderPct = p } })
                                     }
-                                    renderPct = 0   // cihazda olmadı -> buluta düş (aşağıda)
+                                    if let v = vurl {
+                                        if !premium {
+                                            // ÜCRETSİZ: yükleme YOK. Telefonda üretildi, telefonda kalsın.
+                                            // (Eskiden yükleyip yerel dosyayı siliyor, sonra sunucudan indirip
+                                            //  galeriye kaydediyorduk — gereksiz gidiş-dönüş + mobil veri israfı.)
+                                            _ = await saveToPhotos(v)
+                                            renderPct = 0; sending = false; done = true
+                                            try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
+                                        }
+                                        if await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
+                                                                        aspect: aspect, type: type, speed: speed) {
+                                            renderPct = 0; sending = false; done = true
+                                            store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
+                                        }
+                                    }
+                                    renderPct = 0   // cihazda olmadı
+                                }
+                                if !premium {       // ücretsizde bulut YOK -> burada biter
+                                    sending = false; localErr = true; return
                                 }
                             }
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
@@ -415,6 +443,17 @@ struct GenerateSheet: View {
                         else { Text(rideId == nil ? L("Video oluştur","Create video")
                                                   : L("Yeniden oluştur","Regenerate")) }
                     }.buttonStyle(.glassyProminent()).disabled(sending)
+
+                    // TELEFONDA ÜRETİM UYARISI (Barış 2026-08-28: "kapatma şeklinde uyarı koymamız lazım").
+                    // Cihazda üretim uygulama ön plandayken sürer; kullanıcı kapatırsa iş yarıda kalır.
+                    // Bulutta üretilen (premium 3B) işlerde bu uyarı GÖSTERİLMEZ — orada kapatmak serbest.
+                    if sending && (!premium || mode == "flat" || mode == "flyover") {
+                        Label(L("Video telefonunda üretiliyor — uygulamayı kapatma, ekranı açık tut.",
+                                "Rendering on your phone — keep the app open."),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote).foregroundStyle(.orange)
+                            .padding(.top, 2)
+                    }
 
                     // Günlük limit dolunca / proaktif: bugünün limitini 2x yapan boost (consumable IAP)
                     if premium, let b = iap.boost {
