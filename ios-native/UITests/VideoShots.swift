@@ -13,8 +13,8 @@ final class VideoShots: XCTestCase {
         let tok = ProcessInfo.processInfo.environment["ND_TOKEN"] ?? ""
         let frm = ProcessInfo.processInfo.environment["ND_FROM"] ?? "0"
         let to  = ProcessInfo.processInfo.environment["ND_TO"] ?? "0"
-        app.launchArguments = ["-nd_token", tok,
-                               "-nd_premium", "NO",          // UCRETSIZ katman -> paket paneli gorunur
+        // DEMO: giris ekranini atlar (AppEnv.demo -> gate .valid). Ucretsiz katman varsayilan.
+        app.launchArguments = ["DEMO", "-nd_token", tok, "-nd_premium", "NO",
                                "-qaVideoSheet", frm, to]
         app.launch()
 
