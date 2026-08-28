@@ -22,10 +22,10 @@ final class VideoShots: XCTestCase {
         app.launch()
         app.tap()   // kesintiyi tetikle
 
-        // panel yuklenene kadar bekle (StoreKit urun fiyatlari gelsin)
-        let panel = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'video'")).firstMatch
-        _ = panel.waitForExistence(timeout: 25)
-        Thread.sleep(forTimeInterval: 4)
+        Thread.sleep(forTimeInterval: 12)          // giris + sheet acilsin
+        // video paketi paneli sayfanin ALTINDA -> kaydir
+        for _ in 0..<6 { app.swipeUp(); Thread.sleep(forTimeInterval: 0.5) }
+        Thread.sleep(forTimeInterval: 3)
 
         let s1 = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         s1.name = "QA-VIDEO-PANEL"; s1.lifetime = .keepAlways
