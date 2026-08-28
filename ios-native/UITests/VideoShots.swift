@@ -12,6 +12,7 @@ final class VideoShots: XCTestCase {
         // INGILIZCE (App Review Ingilizce yapilir) + otomatik giris (ucretsiz test hesabi)
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "LANG=en",
                                "AUTOLOGIN=" + (ProcessInfo.processInfo.environment["ND_QA"] ?? ""),
+                               "-nd_premium", "NO", "-nd_ultra", "NO",   // UCRETSIZ katman zorla
                                "-qaVideoSheet", frm, to]
         addUIInterruptionMonitor(withDescription: "izinler") { alert in
             for t in ["Allow", "İzin Ver", "OK", "Tamam"] {
