@@ -484,7 +484,10 @@ enum AuthGate { case checking, valid, needLogin, offline }
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
                   let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }
             let mode = (j["mode"] as? String) ?? "flyover"
-            guard ["flat", "flyover"].contains(mode) else { continue }   // 3B bulutta (Barış 2026-08-27)
+            // 3B de CİHAZDA üretilebilir (Barış 2026-08-28, YEDEK YOL): sunucu bulut kapalıyken
+            // (bakiye bitti/dispatch gitmedi) 3B işi bu kuyruğa yazıyor; harita+rota sunucudan
+            // gelir, video telefonda üretilir. Premium kontrolü yukarıda YAPILDI.
+            guard ["flat", "flyover", "3d"].contains(mode) else { continue }
             let pts = await track(from: frm, to: to)
             guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
             let asp = (j["aspect"] as? String) ?? "9:16"
