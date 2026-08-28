@@ -97,6 +97,8 @@ targets:
     platform: iOS
     sources:
       - path: UITests
+      - path: Products.storekit
+        buildPhase: resources
     dependencies:
       - target: MoveLog
     settings:
