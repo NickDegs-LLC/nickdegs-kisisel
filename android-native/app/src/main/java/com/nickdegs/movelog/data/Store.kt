@@ -42,6 +42,10 @@ class Store(app: Application) : AndroidViewModel(app) {
     var ultra by mutableStateOf(prefs.getBoolean("nd_ultra", false))   // Ultra tier: Google 3D + kamera modları + Street View
     var freeTactical by mutableStateOf(prefs.getBoolean("nd_free_tactical", false))   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (iOS 1.57 paritesi)
     val canTactical: Boolean get() = ultra || freeTactical                            // Ultra VEYA bedava hak -> taktik açık
+    // Paket hakları (1.61). Yalnız GÖSTERİM içindir; gerçek kapı sunucuda (/api/rides/generate 402 döner).
+    var videoHak by mutableStateOf(0)
+    var sokakHak by mutableStateOf(0)
+    val canGenerate: Boolean get() = premium || ultra || videoHak > 0 || freeTactical
     var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
@@ -210,6 +214,8 @@ class Store(app: Application) : AndroidViewModel(app) {
         // TEK-SEFERLİK BEDAVA AKSİYON (iOS 1.57 paritesi): yeni kullanıcıya 1 ücretsiz taktik video hakkı.
         freeTactical = o.optBoolean("free_tactical", false)
         prefs.edit().putBoolean("nd_free_tactical", freeTactical).apply()
+        videoHak = o.optInt("video_hak", 0)
+        sokakHak = o.optInt("sokak_hak", 0)
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -359,15 +365,18 @@ class Store(app: Application) : AndroidViewModel(app) {
     suspend fun summarizeToday(): Boolean = req("/api/activities/summarize", "POST", JSONObject()) != null
 
     // ---- Video üret (iOS generateRide ile aynı gövde) ----
+    // HTTP durumunu döner: 200 = üretim başladı, 402 = hak yok (paket panelini aç), diğer = hata.
     suspend fun generate(from: Double, to: Double, type: String, mode: String, aspect: String,
-                         speed: String, camdist: String = "orta", music: String = "", line: String = "", cam: String = "", dot: String = ""): Boolean {
+                         speed: String, camdist: String = "orta", music: String = "", line: String = "", cam: String = "", dot: String = ""): Int {
         val b = JSONObject().put("from", from).put("to", to).put("type", type).put("mode", mode)
             .put("aspect", aspect).put("speed", speed).put("premium", true).put("camdist", camdist).put("cam", cam)
         if (music.isNotEmpty()) b.put("music", music)
         if (line.isNotEmpty()) b.put("line", line)
         if (dot.isNotEmpty()) b.put("dot", dot)
-        val d = req("/api/rides/generate", "POST", b) ?: return false
-        return JSONObject(d).optBoolean("ok", false)
+        val (code, txt) = reqCode("/api/rides/generate", "POST", b)
+        if (code != 200) return code
+        // 200 gövdesinde ok=false gelirse bunu başarı sayma (sunucu yumuşak hata döndürebiliyor)
+        return if (runCatching { JSONObject(txt).optBoolean("ok", false) }.getOrDefault(false)) 200 else 0
     }
 
     suspend fun musicList(): List<Pair<String, String>> {
@@ -421,10 +430,19 @@ class Store(app: Application) : AndroidViewModel(app) {
         return ok
     }
 
-    // Boost (consumable) -> o gün render limiti +1 kat
-    suspend fun verifyGoogleBoost(token: String): Boolean {
-        val d = req("/api/iap/google/boost", "POST", JSONObject().put("token", token)) ?: return false
-        return JSONObject(d).optBoolean("ok", false)
+    // Tüketilebilir (boost / video paketi / sokak paketi) -> sunucu hakkı yazar.
+    // sku GÖNDERİLİR: sunucu 1.61'den beri beyaz liste uyguluyor, sku'suz istek boost sayılır.
+    suspend fun verifyGoogleBoost(token: String, sku: String = BOOST_SKU): Boolean {
+        val d = req("/api/iap/google/boost", "POST",
+            JSONObject().put("token", token).put("sku", sku)) ?: return false
+        val o = JSONObject(d)
+        val ok = o.optBoolean("ok", false)
+        if (ok) {
+            // Sunucu güncel toplamı döner; profili beklemeden sayaçları tazele
+            if (o.has("video")) videoHak = o.optInt("video", videoHak)
+            if (o.has("sokak")) sokakHak = o.optInt("sokak", sokakHak)
+        }
+        return ok
     }
 
     // ---- GPX/TCX yükle (ham body; iOS uploadRoute ile aynı) -> (from,to,km) ----

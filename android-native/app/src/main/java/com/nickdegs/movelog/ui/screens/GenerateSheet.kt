@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
@@ -23,7 +24,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nickdegs.movelog.data.Billing
 import com.nickdegs.movelog.data.Store
+import com.nickdegs.movelog.data.VIDEO_SKULARI
 import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
 import kotlinx.coroutines.launch
@@ -46,7 +49,22 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var userTracks by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var paketAcik by remember { mutableStateOf(false) }   // 402 sonrası paket paneli
+    var paketMsg by remember { mutableStateOf("") }
     val ctx = LocalContext.current
+    // Paket satın alma: sunucu doğrularsa consume edilir, hak sayacı tazelenir.
+    val billing = remember {
+        Billing(ctx, onPurchase = {}, onConsumable = { tok, sku, bitti ->
+            scope.launch {
+                val ok = store.verifyGoogleBoost(tok, sku)
+                bitti(ok)
+                paketMsg = if (ok) L("Hakkın eklendi.", "Credits added.")
+                           else L("Doğrulanamadı, birazdan tekrar denenecek.",
+                                  "Couldn't verify — it will retry shortly.")
+                if (ok) paketAcik = false
+            }
+        })
+    }
     LaunchedEffect(Unit) {
         stock = store.musicList(); userTracks = store.musicLibrary()
         // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (iOS 1.57 paritesi): kullanıcı müzik yüklediyse ve henüz seçim yapmadıysa
@@ -193,14 +211,48 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                     }
                 }
             }
+            // ---- VİDEO PAKETİ (1.61): sunucu 402 dediyse abonelik yerine tek seferlik paket sun ----
+            if (paketAcik) {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(Color(0x1AFFFFFF)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(L("Video hakkın kalmadı", "You're out of video credits"),
+                        color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    Text(L("Abonelik istemiyorsan tek seferlik paket alabilirsin.",
+                           "Don't want a subscription? Buy a one-time pack."),
+                        color = Color(0xFF9AA4B2), fontSize = 13.sp)
+                    VIDEO_SKULARI.forEach { sku ->
+                        val fiyat = billing.paketFiyati(sku)
+                        if (fiyat.isNotEmpty()) {
+                            val adet = if (sku == "video_uclu") 3 else 5
+                            Button(
+                                onClick = { (ctx as? android.app.Activity)?.let { billing.buyPaket(it, sku) } },
+                                colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
+                                modifier = Modifier.fillMaxWidth().height(46.dp)
+                            ) {
+                                Text(L("$adet video · $fiyat", "$adet videos · $fiyat"),
+                                    fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    if (billing.paketler.keys.none { it in VIDEO_SKULARI })
+                        Text(L("Paketler şu an yüklenemedi.", "Packs couldn't load right now."),
+                            color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                    if (paketMsg.isNotEmpty())
+                        Text(paketMsg, color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                }
+            }
             Button(
                 onClick = {
                     busy = true
                     scope.launch {
-                        val ok = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "",
+                        val kod = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "",
                             if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot)
                         busy = false
-                        if (ok) onClose()
+                        when (kod) {
+                            200 -> onClose()
+                            402 -> paketAcik = true       // hak yok → paket panelini aç, sayfayı KAPATMA
+                        }
                     }
                 },
                 enabled = !busy,

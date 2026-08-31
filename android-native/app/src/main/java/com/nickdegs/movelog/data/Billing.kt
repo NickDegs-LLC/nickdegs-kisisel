@@ -9,19 +9,28 @@ import com.android.billingclient.api.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-// Google Play Billing — "premium" aboneliği (monthly/yearly) + "boost" consumable. iOS StoreKit karşılığı.
+// Google Play Billing — "premium" aboneliği (monthly/yearly) + tüketilebilirler. iOS StoreKit karşılığı.
 const val BOOST_SKU = "boost_daily2x"
+// Video/Sokak paketleri (1.61) — Play ürün adları Apple'ınkilerle eşlenik: …video.uclu → video_uclu
+val VIDEO_SKULARI = listOf("video_uclu", "video_besli")
+val SOKAK_SKULARI = listOf("sokak_tek", "sokak_uclu")
+private val TUKETILEBILIR = listOf(BOOST_SKU) + VIDEO_SKULARI + SOKAK_SKULARI
 
 class Billing(
     context: Context,
     private val onPurchase: (purchaseToken: String) -> Unit,
-    private val onBoost: (purchaseToken: String) -> Unit = {},
+    // Tüketilebilir: sunucu doğrulaması BİTENE kadar consume edilmez. bitti(true) gelirse tüketilir,
+    // gelmezse satın alma Play'de durur ve bir sonraki açılışta restore() yeniden dener.
+    private val onConsumable: (purchaseToken: String, sku: String, bitti: (Boolean) -> Unit) -> Unit =
+        { _, _, _ -> },
 ) {
     var monthly by mutableStateOf<Pair<ProductDetails, String>?>(null)   // (ürün, offerToken)
     var yearly by mutableStateOf<Pair<ProductDetails, String>?>(null)
     var ultraMonthly by mutableStateOf<Pair<ProductDetails, String>?>(null)   // ULTRA: Google 3D + kameralar + Street View
     var ultraYearly by mutableStateOf<Pair<ProductDetails, String>?>(null)
     var boost by mutableStateOf<ProductDetails?>(null)                   // consumable; Play'de yoksa null kalır (buton gizli)
+    // Paket ürünleri sku -> detay; Play'de olmayan sku haritaya hiç girmez (o kart gizli kalır)
+    var paketler by mutableStateOf<Map<String, ProductDetails>>(emptyMap())
     var ready by mutableStateOf(false)
 
     private val purchasesListener = PurchasesUpdatedListener { result, purchases ->
@@ -77,13 +86,31 @@ class Billing(
                 }
             }
         }
-        // Boost (consumable INAPP) — Play'de ürün yoksa liste boş döner, boost null kalır (buton gizli)
+        // Tüketilebilirler (INAPP): boost + video/sokak paketleri. Play'de olmayan sku listeye hiç girmez.
         val bparams = QueryProductDetailsParams.newBuilder().setProductList(
-            listOf(QueryProductDetailsParams.Product.newBuilder()
-                .setProductId(BOOST_SKU).setProductType(BillingClient.ProductType.INAPP).build())
+            TUKETILEBILIR.map {
+                QueryProductDetailsParams.Product.newBuilder()
+                    .setProductId(it).setProductType(BillingClient.ProductType.INAPP).build()
+            }
         ).build()
-        client.queryProductDetailsAsync(bparams) { _, res -> boost = res.productDetailsList.firstOrNull() }
+        client.queryProductDetailsAsync(bparams) { _, res ->
+            val hepsi = res.productDetailsList.associateBy { it.productId }
+            boost = hepsi[BOOST_SKU]
+            paketler = hepsi.filterKeys { it != BOOST_SKU }
+        }
     }
+
+    fun buyPaket(activity: Activity, sku: String) {
+        val product = paketler[sku] ?: return
+        val params = BillingFlowParams.newBuilder().setProductDetailsParamsList(
+            listOf(BillingFlowParams.ProductDetailsParams.newBuilder()
+                .setProductDetails(product).build())
+        ).build()
+        client.launchBillingFlow(activity, params)
+    }
+
+    fun paketFiyati(sku: String): String =
+        paketler[sku]?.oneTimePurchaseOfferDetails?.formattedPrice ?: ""
 
     fun buyBoost(activity: Activity) {
         val product = boost ?: return
@@ -107,12 +134,15 @@ class Billing(
 
     private fun handle(p: Purchase) {
         if (p.purchaseState != Purchase.PurchaseState.PURCHASED) return
-        if (BOOST_SKU in p.products) {
-            // Consumable: SUNUCUDA doğrula -> o gün +1 kat, sonra consume (tekrar alınabilsin)
-            onBoost(p.purchaseToken)
-            client.consumeAsync(
-                ConsumeParams.newBuilder().setPurchaseToken(p.purchaseToken).build()
-            ) { _, _ -> }
+        val tuketilebilir = p.products.firstOrNull { it in TUKETILEBILIR }
+        if (tuketilebilir != null) {
+            // ÖNCE sunucuda doğrula, SONRA consume. Ters sırada doğrulama başarısız olursa
+            // satın alma Play'de de silinmiş olur ve hak hiç verilemez (para gider, ürün gelmez).
+            onConsumable(p.purchaseToken, tuketilebilir) { ok ->
+                if (ok) client.consumeAsync(
+                    ConsumeParams.newBuilder().setPurchaseToken(p.purchaseToken).build()
+                ) { _, _ -> }
+            }
             return
         }
         if (!p.isAcknowledged) {
@@ -126,6 +156,11 @@ class Billing(
     private fun restore() {
         client.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+        ) { _, purchases -> purchases.forEach { handle(it) } }
+        // INAPP da taranır: doğrulaması yarıda kalmış (uygulama kapandı / ağ gitti) tüketilebilir
+        // satın alma burada yeniden doğrulanır. Doğrulanmadan consume edilmediği için kaybolmaz.
+        client.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { _, purchases -> purchases.forEach { handle(it) } }
     }
 
