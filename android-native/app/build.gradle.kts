@@ -7,12 +7,12 @@ plugins {
 
 android {
     namespace = "com.nickdegs.movelog"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.nickdegs.movelog"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
         versionName = "1.62"
     }

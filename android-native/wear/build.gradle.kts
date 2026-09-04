@@ -6,14 +6,13 @@ plugins {
 
 android {
     namespace = "com.nickdegs.movelog.wear"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.nickdegs.movelog"   // telefonla AYNI kimlik (standalone Wear app)
         minSdk = 30                              // Wear OS 3 = Samsung Galaxy Watch4 ve üstü
-        // 1.62: Play zorunluluğu (CLAUDE.md) — saat APK'si de aynı applicationId ile gidiyor,
-        // targetSdk 34'te kalırsa yayın uyarısı/reddi saat tarafından gelir.
-        targetSdk = 35
+        // 1.62: Play zorunluluğu — saat APK'si de aynı applicationId ile gidiyor.
+        targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
         versionName = "1.2"
     }
