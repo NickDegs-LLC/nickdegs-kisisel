@@ -25,7 +25,9 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          # AGP 8.9.2 (targetSdk 36 için gerekli) EN AZ Gradle 8.11.1 ister — 8.9 ile
+          # "Minimum supported Gradle version is 8.11.1" diye derleme düşüyor (05.09'da yaşandı).
+          gradle-version: '8.11.1'
 
       - name: Versiyon (build number = epoch)
         run: echo "BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
