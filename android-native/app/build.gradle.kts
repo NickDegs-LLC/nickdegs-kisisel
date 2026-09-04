@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.61"
+        versionName = "1.62"
     }
 
     signingConfigs {
@@ -29,9 +29,19 @@ android {
         }
     }
 
+    // 16 KB SAYFA BOYUTU (Android 15+) — CLAUDE.md zorunlu ayar tablosu. Eksikti (1.62'de eklendi):
+    // native kütüphaneler (WebRTC/LiveKit, osmdroid, Play services) 16 KB hizalı paketlenir.
+    packaging { jniLibs { useLegacyPackaging = false } }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 — CLAUDE.md zorunlu ("Play optimizasyon düşük uyarısı"). 1.62'de açıldı.
+            // ⚠️ Aynı yerdeki uyarı gereği ÖNCE İÇ TESTTE doğrulanmalı; CI zaten yalnız
+            // `track: internal`'a yüklüyor (android-native.yml), production'a geçiş elle yapılıyor.
+            // Kurallar: app/proguard-rules.pro (LiveKit/WebRTC JNI, googleid, FCM servisi, osmdroid…)
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (System.getenv("MOVELOG_KEYSTORE") != null) signingConfigs.getByName("release") else null
         }
     }

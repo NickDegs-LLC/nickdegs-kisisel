@@ -5,6 +5,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -56,6 +61,12 @@ class MoveLogMessaging : FirebaseMessagingService() {
         val silent = d["silent"] ?: ""
         // ANLIK NABIZ: izleyen arkadaş bakıyor -> saate "kısa nabız ölçümü başlat" de (bildirim YOK)
         if (silent == "hrpeek") { triggerWearHrPeek(); return }
+        // TELSİZ KLİBİ (1.62): sunucu `silent = "ptt:<id>:<gönderen>"` yolluyor
+        // (cf/api/src/routes/grup4.ts:438,467 → cron/lib-push.ts FCM data.silent).
+        // Bu dal Android'de HİÇ YOKTU: aşağıdaki `silent.isNotEmpty() && body.isEmpty()` satırı
+        // klibi sessizce yutuyordu, yani telsiz iOS'ta çalışıp Android'de hiç çalmıyordu.
+        // iOS karşılığı: Push.swift:50-52 → Ptt.swift playIncoming(id:from:)
+        if (silent.startsWith("ptt:")) { telsizKlibiCal(silent.removePrefix("ptt:")); return }
         // diğer sessiz (telsiz/beacon uyandırma) -> bildirim gösterme
         if (silent.isNotEmpty() && body.isEmpty()) return
         val ch = "movelog_push"
@@ -74,5 +85,70 @@ class MoveLogMessaging : FirebaseMessagingService() {
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(pi).build())
+    }
+
+    /**
+     * Gelen telsiz klibini indirip çalar — iOS Ptt.swift:60-79 davranışının birebir karşılığı:
+     * indir → sesi "duck"la → gönderenin adını TTS ile anons et → klibi çal.
+     * Yük biçimi: "<klipId>:<gönderen adı>" (ilk ':' ayırır; adda ':' olabilir diye limit=2).
+     * Klip yoksa (sunucuda süresi dolmuş: ptt/ 1 gün lifecycle) SESSİZCE çıkar — iOS de öyle yapıyor.
+     */
+    private fun telsizKlibiCal(yuk: String) {
+        val parca = yuk.split(":", limit = 2)
+        val id = parca.getOrNull(0)?.trim().orEmpty()
+        val gonderen = parca.getOrNull(1)?.trim().orEmpty().ifEmpty { "Rider" }
+        if (id.isEmpty()) return
+        val auth = getSharedPreferences("movelog", Context.MODE_PRIVATE).getString("nd_token", "") ?: ""
+        if (auth.isEmpty()) return
+        Thread {
+            var dosya: java.io.File? = null
+            try {
+                val c = (URL("https://kisisel-api.nickdegs.com/api/ptt/$id").openConnection() as HttpURLConnection)
+                c.setRequestProperty("Authorization", "Bearer $auth")
+                c.connectTimeout = 15000; c.readTimeout = 30000
+                if (c.responseCode != 200) return@Thread          // 404 = klip yok/yetkisiz -> sessiz
+                val veri = c.inputStream.readBytes()
+                if (veri.size < 512) return@Thread
+                dosya = java.io.File(cacheDir, "ptt_$id.m4a").apply { writeBytes(veri) }
+
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val nitelik = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+                val istek = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(nitelik).build()
+                am.requestAudioFocus(istek)
+
+                // Önce kim gönderdi anonsu, sonra klip (iOS'taki 0.9 sn gecikmenin karşılığı).
+                var tts: TextToSpeech? = null
+                tts = TextToSpeech(applicationContext) { durum ->
+                    try {
+                        if (durum == TextToSpeech.SUCCESS) {
+                            tts?.language = java.util.Locale.getDefault()
+                            tts?.speak("$gonderen:", TextToSpeech.QUEUE_FLUSH, null, "ptt-$id")
+                        }
+                    } catch (e: Exception) { }
+                }
+                Thread.sleep(900)
+
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(nitelik)
+                mp.setDataSource(dosya.absolutePath)
+                mp.setOnCompletionListener {
+                    try { it.release() } catch (e: Exception) { }
+                    try { am.abandonAudioFocusRequest(istek) } catch (e: Exception) { }
+                    try { tts?.shutdown() } catch (e: Exception) { }
+                    try { dosya?.delete() } catch (e: Exception) { }
+                }
+                mp.setOnErrorListener { p, _, _ ->
+                    try { p.release() } catch (e: Exception) { }
+                    try { am.abandonAudioFocusRequest(istek) } catch (e: Exception) { }
+                    true
+                }
+                mp.prepare(); mp.start()
+            } catch (e: Exception) {
+                try { dosya?.delete() } catch (e2: Exception) { }
+            }
+        }.start()
     }
 }
