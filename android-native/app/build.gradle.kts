@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.61"
+        versionName = "1.62"
     }
 
     signingConfigs {
@@ -29,9 +29,25 @@ android {
         }
     }
 
+    // 16 KB SAYFA BOYUTU (Android 15+) — CLAUDE.md zorunlu ayar tablosu. Eksikti (1.62'de eklendi):
+    // native kütüphaneler (WebRTC/LiveKit, osmdroid, Play services) 16 KB hizalı paketlenir.
+    packaging { jniLibs { useLegacyPackaging = false } }
+
     buildTypes {
         release {
+            // R8 — CLAUDE.md zorunlu ayar ("Play optimizasyon düşük uyarısı"), kuralları HAZIR
+            // (app/proguard-rules.pro: LiveKit/WebRTC JNI, googleid, FCM servisi, osmdroid, media3…).
+            // ⚠️ 1.62'de BİLEREK KAPALI. Gerekçe: Barış 05.09'da Play'i OTO YAYIN'a aldı
+            // (android-native.yml → track: production), yani main'e merge = doğrudan TÜM kullanıcılar.
+            // CLAUDE.md'nin kendi uyarısı: "R8'i test etmeden açma — reflection/Compose kullanan
+            // uygulamayı ÇALIŞMA ANINDA bozabilir; önce internal track'te aç-kapa test et."
+            // Otomatik yayınla birlikte o test kapısı ortadan kalktığı için R8 bu sürüme BİNMİYOR:
+            // 1.62 kullanıcıya giden düzeltmeleri taşır, R8 ayrı bir sürümde (1.63) iç testle açılır.
+            // AÇMAK İÇİN: alttaki üç satırı yorumdan çıkar — dosya ve kurallar hazır.
             isMinifyEnabled = false
+            // isMinifyEnabled = true
+            // isShrinkResources = true
+            // proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (System.getenv("MOVELOG_KEYSTORE") != null) signingConfigs.getByName("release") else null
         }
     }

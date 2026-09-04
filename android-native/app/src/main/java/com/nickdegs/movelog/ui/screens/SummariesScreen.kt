@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,11 +21,13 @@ import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)   // PullToRefreshBox deneysel API
 @Composable
 fun SummariesScreen(store: Store) {
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<Summary>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
+    var yenileniyor by remember { mutableStateOf(false) }   // aşağı çek-tazele göstergesi
     var playUrl by remember { mutableStateOf<String?>(null) }
     var genFor by remember { mutableStateOf<Summary?>(null) }
     suspend fun reload() { items = store.summaries() }
@@ -43,10 +46,21 @@ fun SummariesScreen(store: Store) {
             else { Icon(Icons.Filled.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text(L("Bugünü özetle", "Summarize today")) }
         }
         Spacer(Modifier.height(14.dp))
-        if (items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(L("Henüz özet yok", "No summaries yet"), color = Color(0xFF9AA4B2))
-        }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // AŞAĞI ÇEK-TAZELE (1.62): bu ekranda hiç yoktu (Barış: "aşağı kaydırsam da yenilenmiyor").
+        // ⚠️ Boş-durum metni LazyColumn'un İÇİNE alındı: PullToRefreshBox nested-scroll ile çalışır,
+        // dışarıda fillMaxSize bir Box kalırsa liste boşken jest HİÇ tetiklenmez — ki asıl senaryo
+        // tam olarak bu (özet 30-60 sn sonra sunucuda oluşuyor, kullanıcı boş ekranı çekiyor).
+        PullToRefreshBox(
+            isRefreshing = yenileniyor,
+            onRefresh = { yenileniyor = true; scope.launch { reload(); yenileniyor = false } },
+            modifier = Modifier.fillMaxSize()
+        ) {
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (items.isEmpty()) item {
+                Box(Modifier.fillMaxWidth().padding(top = 64.dp), contentAlignment = Alignment.Center) {
+                    Text(L("Henüz özet yok", "No summaries yet"), color = Color(0xFF9AA4B2))
+                }
+            }
             items(items) { s ->
                 Surface(color = Brand.card, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -70,6 +84,7 @@ fun SummariesScreen(store: Store) {
                 }
             }
         }
+        }   // PullToRefreshBox
     }
 
     genFor?.let { s ->

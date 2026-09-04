@@ -69,12 +69,18 @@ struct SummariesView: View {
                         }
                     }.padding(16)
                 }
+                // AŞAĞI ÇEK-TAZELE (1.62): Barış'ın şikayeti "aşağı kaydırsam da yenilenmiyor".
+                // Bu ekranda hiç yoktu; Rotalar (Routes.swift:166) ve Videolarım (Videos.swift:199)
+                // ile AYNI desen. ScrollView'a takılı olmalı — ZStack/NavigationStack'e takılırsa
+                // jest hiç görünmez (sessiz arıza). Liste boşken de çalışır: boş-durum kartı
+                // LazyVStack'in içinde, ScrollView kaydırılabilir kalıyor.
+                .refreshable { await tazele() }
             }
             .navigationTitle(L("Özet", "Summary"))
         }
-        .task { items = await store.activities() }
+        .task { await tazele() }
         .sheet(isPresented: $showRange) { RangeSheet { from, to in Task { await genRange(from, to) } } }
-        .sheet(item: $genSummary, onDismiss: { Task { items = await store.activities() } }) { s in
+        .sheet(item: $genSummary, onDismiss: { Task { await tazele() } }) { s in
             // rideId: nil = TÜM GÜN aralığından (s.from–s.to) YENİ özet videosu üret
             // (s.videoId verilirse yalnız o tek aktivitenin videosu düzenlenirdi → tüm günü almazdı)
             GenerateSheet(from: s.from ?? 0, to: s.to ?? 0, type: "moto",
@@ -84,6 +90,13 @@ struct SummariesView: View {
             VideoPlayer(player: box.player).ignoresSafeArea()
                 .onAppear { box.player.play() }.onDisappear { box.player.pause() }
         }
+    }
+
+    /// Özet listesini sunucudan yeniden çeker. Hem ilk açılış (.task) hem aşağı-çek (.refreshable)
+    /// buradan geçer — tek yol, tek davranış.
+    func tazele() async {
+        let taze = await store.activities()
+        await MainActor.run { items = taze }
     }
 
     func play(_ id: String) {
