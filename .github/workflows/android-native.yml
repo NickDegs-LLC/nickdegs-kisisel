@@ -63,6 +63,9 @@ jobs:
           # OTO YAYIN (Baris 2026-09-05: "Google oto yayinla"). Onceden internal track'e
           # yuklenip production'a gecis ELLE yapiliyordu; artik main'e merge = Play'de yayin.
           track: production
+          # SÜRÜM NOTLARI (05.09): eskiden hiç gönderilmiyordu -> Play'de "Yenilikler" boş kalıyordu.
+          # Dosya adları Play dil kodlarıyla: whatsnew-tr-TR, whatsnew-en-US, ... (12 dil, <=500 karakter)
+          whatsNewDirectory: android-native/whatsnew
           # TASLAK BIRAKMA (Baris 2026-08-03): 'draft' birakilinca paket Play Console'da
           # "degisiklikler incelemeye gonderilmedi" diye bekliyor ve karisiklik yaratiyordu.
           status: completed

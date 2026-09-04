@@ -1,0 +1,18 @@
+{
+  "surum": "1.62",
+  "asc": {
+    "tr": "• Günlük özet ekranı: aşağı çekerek yenileyebilirsin, özetler artık anında görünüyor\n• Videolar: beyaz ekran sorunu giderildi, harita hareketi daha akıcı\n• Video üretimi artık takılmıyor; bekleyen videolar tamamlanıyor\n• Müziksiz kalan videolar düzeltildi\n• Telsiz ve günlük özet tarafında genel iyileştirmeler",
+    "en-US": "• Daily summary: pull down to refresh — summaries now appear right away\n• Videos: fixed the white screen issue, smoother map motion\n• Video creation no longer gets stuck; pending videos now finish\n• Fixed videos that came out without music\n• General improvements to walkie-talkie and daily summary",
+    "de-DE": "• Tagesübersicht: zum Aktualisieren nach unten ziehen — Zusammenfassungen erscheinen jetzt sofort\n• Videos: weißer Bildschirm behoben, flüssigere Kartenbewegung\n• Videoerstellung bleibt nicht mehr hängen; ausstehende Videos werden fertiggestellt\n• Videos ohne Musik korrigiert\n• Allgemeine Verbesserungen bei Funk und Tagesübersicht",
+    "es-ES": "• Resumen diario: desliza hacia abajo para actualizar; los resúmenes aparecen al instante\n• Vídeos: corregida la pantalla en blanco y movimiento del mapa más fluido\n• La creación de vídeos ya no se queda bloqueada; los pendientes se completan\n• Corregidos los vídeos que salían sin música\n• Mejoras generales en el walkie-talkie y el resumen diario",
+    "fr-FR": "• Résumé quotidien : tirez vers le bas pour actualiser, les résumés s'affichent immédiatement\n• Vidéos : écran blanc corrigé, mouvement de carte plus fluide\n• La création de vidéos ne bloque plus ; les vidéos en attente se terminent\n• Vidéos sans musique corrigées\n• Améliorations générales du talkie-walkie et du résumé quotidien",
+    "it": "• Riepilogo giornaliero: trascina verso il basso per aggiornare, i riepiloghi appaiono subito\n• Video: risolto lo schermo bianco, movimento della mappa più fluido\n• La creazione dei video non si blocca più; i video in sospeso vengono completati\n• Corretti i video senza musica\n• Miglioramenti generali a walkie-talkie e riepilogo giornaliero",
+    "pt-BR": "• Resumo diário: puxe para baixo para atualizar — os resumos aparecem na hora\n• Vídeos: tela branca corrigida e movimento do mapa mais suave\n• A criação de vídeos não trava mais; os vídeos pendentes são concluídos\n• Corrigidos os vídeos que saíam sem música\n• Melhorias gerais no walkie-talkie e no resumo diário",
+    "ru": "• Дневная сводка: потяните вниз, чтобы обновить — сводки появляются сразу\n• Видео: исправлен белый экран, движение карты стало плавнее\n• Создание видео больше не зависает; отложенные видео завершаются\n• Исправлены видео без музыки\n• Общие улучшения рации и дневной сводки",
+    "ar-SA": "• الملخص اليومي: اسحب للأسفل للتحديث — تظهر الملخصات فورًا\n• الفيديو: تم إصلاح مشكلة الشاشة البيضاء وحركة الخريطة أصبحت أكثر سلاسة\n• لم يعد إنشاء الفيديو يتوقف؛ يتم إكمال مقاطع الفيديو المعلقة\n• تم إصلاح مقاطع الفيديو التي كانت بلا موسيقى\n• تحسينات عامة على جهاز اللاسلكي والملخص اليومي",
+    "ja": "• デイリーサマリー: 下に引いて更新できるようになり、サマリーがすぐに表示されます\n• 動画: 白い画面の不具合を修正し、地図の動きがなめらかになりました\n• 動画の作成が止まらなくなり、保留中の動画も完了します\n• 音楽が入らない動画を修正しました\n• トランシーバーとデイリーサマリーの全般的な改善",
+    "ko": "• 일일 요약: 아래로 당겨 새로고침할 수 있고, 요약이 바로 표시됩니다\n• 동영상: 흰 화면 문제를 수정하고 지도 움직임이 더 부드러워졌습니다\n• 동영상 생성이 더 이상 멈추지 않으며 대기 중인 동영상이 완료됩니다\n• 음악이 없던 동영상 문제를 수정했습니다\n• 무전기와 일일 요약 전반 개선",
+    "zh-Hans": "• 每日摘要：下拉即可刷新，摘要现在会立即显示\n• 视频：修复白屏问题，地图移动更流畅\n• 视频生成不再卡住，待处理的视频会完成\n• 修复了没有音乐的视频\n• 对讲机与每日摘要的整体优化"
+  },
+  "inceleme_notu": "Bu güncelleme hata düzeltmelerinden oluşuyor: günlük özet ekranına aşağı-çek-tazele eklendi; sunucu tarafında video üretimindeki beyaz ekran ve takılma sorunları giderildi. Yeni izin, yeni hesap türü veya yeni satın alma yok."
+}
