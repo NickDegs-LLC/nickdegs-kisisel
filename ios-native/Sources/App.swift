@@ -125,6 +125,7 @@ struct RootView: View {
             if store.me.isEmpty { let p = await store.profile(); store.me = p?.username ?? "" }
             await store.syncPremium()                 // premium'u açılışta cihaza yansıt (kilitler kalksın)
             await store.registerPush()
+            await store.refreshTokenIfNeeded()         // 05.09: 30 günde bir zorla çıkışı önler
             await store.beacon()                       // canlı-takip: son batarya/konum (arkadaşlar görsün)
             // Oto-takip açıksa her açılışta GPS göndermeyi yeniden başlat (relaunch'ta sessizce
             // durmasın diye). start() idempotent: zaten çalışıyorsa zarar vermez.

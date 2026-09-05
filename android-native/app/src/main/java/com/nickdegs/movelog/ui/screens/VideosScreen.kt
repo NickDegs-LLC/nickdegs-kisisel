@@ -50,7 +50,9 @@ fun VideosScreen(store: Store) {
     var pendingDelete by remember { mutableStateOf<Ride?>(null) }
 
     suspend fun reload() {
-        rides = store.rides().filter { it.rendering || (!it.novideo) }
+        // FIX 05.09: filtre "failed" kartlari da geciriyordu -> oynatilabilir gibi gorunup
+        // dokununca 404 aliniyordu (olculdu: 14 sahte kart). Basarisiz olanlar artik ayirt edilir.
+        rides = store.rides().filter { it.rendering || it.failed || (!it.novideo) }
             .sortedByDescending { sortKey(it) }
         store.autoSaveNewVideos()   // aktif oturumda yeni biten videoyu hemen galeriye kaydet
     }
@@ -82,6 +84,16 @@ fun VideosScreen(store: Store) {
                                 CircularProgressIndicator(Modifier.size(18.dp), color = Brand.accent, strokeWidth = 2.dp)
                                 Spacer(Modifier.width(8.dp))
                                 Text(L("Hazırlanıyor…", "Rendering…"), color = Brand.accent, fontSize = 13.sp)
+                            }
+                        } else if (r.failed) {
+                            // FIX 05.09: basarisiz render OYNAT dugmesiyle cikiyordu -> 404. Artik
+                            // hata karti: sebebi yazar, yalniz SIL islemi sunar (iOS ile ayni davranis).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.error?.take(60) ?: L("Üretilemedi", "Couldn't be created"),
+                                     color = Color(0xFFFF6B6B), fontSize = 13.sp)
+                                IconButton(onClick = { pendingDelete = r }) {
+                                    Icon(Icons.Filled.Delete, L("Sil", "Delete"), tint = Color(0xFFFF6B6B))
+                                }
                             }
                         } else {
                             // Kaydet (galeriye indir)

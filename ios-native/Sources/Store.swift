@@ -169,6 +169,35 @@ enum AuthGate { case checking, valid, needLogin, offline }
         return data
     }
 
+    // ---------------------------------------------------------------------------
+    // 🔴 FİKS 05.09 — TOKEN YENİLEME. Token 30 gün (auth.ts:90) ve yenileme mekanizması
+    // hiç yoktu; süre dolduğu an ilk 401 `logout()` çağırıyor ve kullanıcı ayda bir sebepsiz
+    // yere giriş ekranına düşüyordu. Artık açılışta bakılır: 10 günden az kaldıysa tazelenir.
+    // (Sunucu ucu süresi DOLMUŞ tokenı kabul etmez — bu yüzden kontrol proaktiftir.)
+    // ---------------------------------------------------------------------------
+    /// JWT payload'ından `exp` (epoch sn). Çözemezse nil.
+    private func tokenExp(_ t: String) -> Double? {
+        let p = t.split(separator: ".")
+        guard p.count == 3 else { return nil }
+        var b = String(p[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while b.count % 4 != 0 { b += "=" }
+        guard let d = Data(base64Encoded: b),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let e = o["exp"] as? Double else { return nil }
+        return e
+    }
+
+    /// Açılışta çağrılır. Token'ın bitmesine 10 günden az kaldıysa sunucudan yenisini alır.
+    func refreshTokenIfNeeded() async {
+        guard !token.isEmpty, let exp = tokenExp(token) else { return }
+        let kalan = exp - Date().timeIntervalSince1970
+        guard kalan > 0, kalan < 10 * 86400 else { return }
+        guard let d = try? await req("/auth/refresh", method: "POST"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let t = o["token"] as? String, !t.isEmpty else { return }
+        await MainActor.run { self.token = t }
+    }
+
     func login(_ user: String, _ pass: String) async {
         loginError = false
         do {
@@ -249,7 +278,20 @@ enum AuthGate { case checking, valid, needLogin, offline }
         } catch { loginError = true }
     }
 
-    func logout() { token = ""; UserDefaults.standard.removeObject(forKey: "nd_token"); gate = .needLogin }
+    /// 🔴 FİKS 05.09: çıkış YALNIZCA token'ı siliyordu. Takip servisi çalışmaya DEVAM ediyordu ve
+    /// `sendLoc` kimlik olarak sadece `nd_dev`+`nd_ingest`i kullandığı için (token yok) GPS eski
+    /// hesabın tracker'ına yazmayı sürdürüyordu; aynı cihaza ikinci hesap girerse rotalar
+    /// karışıyordu. Ayrıca hak/abonelik anahtarları kalıyordu. Cihaz TERCİHLERİ (font/tema) kalır.
+    func logout() {
+        Tracker.shared.stop()
+        let d = UserDefaults.standard
+        for k in ["nd_token", "nd_dev", "nd_ingest", "nd_tracking", "nd_premium", "nd_ultra",
+                  "nd_gift", "nd_video_hak", "nd_sokak_hak", "nd_free_tactical", "nd_apns"] {
+            d.removeObject(forKey: k)
+        }
+        token = ""
+        gate = .needLogin
+    }
 
     func deleteAccount() async {
         _ = try? await req("/api/account", method: "DELETE")
@@ -468,7 +510,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
         var q = "/api/music/file?ref=" + (ref.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ref)
         if session > 0 { q += "&session=\(Int(session))" }
         guard let d = try? await req(q), d.count > 2000 else { return nil }
-        let u = FileManager.default.temporaryDirectory.appendingPathComponent("music_\(Int(Date().timeIntervalSince1970)).m4a")
+        // 05.09: ad UUID'li — aynı saniyede iki üretim aynı dosyaya yazabiliyordu. Ayrıca bu
+        // dosyalar HİÇBİR yolda silinmiyordu (grep: tek removeItem yoktu) → tmp'de birikiyordu.
+        // Temizliği Record.telefondaUret sonundaki defer yapar.
+        let u = FileManager.default.temporaryDirectory
+            .appendingPathComponent("music_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(8)).m4a")
         try? d.write(to: u)
         return u
     }
@@ -484,7 +530,20 @@ enum AuthGate { case checking, valid, needLogin, offline }
     }
     // Uygulama öne gelince bekleyen oto-videoları TELEFONDA üret + yükle (sessiz; push atmayız — darlama yok).
     // Battarya nezaketi: açılış başına en çok 2 video.
+    // 🔴 FİKS 05.09 — PAYLAŞILAN KİLİT. Öncesi: bu bayrak YALNIZ otomatik kuyruk yolunda
+    // alınıyordu; elle basılan "Telefonda üret" düğmesi (Record.telefondaUret) kilide HİÇ
+    // dokunmuyordu. İki tetikleyici de kuyruğu başlatabiliyor (App.swift açılış `.task` ve
+    // scenePhase == .active) → kullanıcı üretim katmanı AÇIKKEN uygulama değiştiriciyi açıp
+    // kapatınca ikinci bir render başlıyor, ikisi de @MainActor'ü paylaştığı için kare/sn kabaca
+    // YARIYA iniyordu. Artık iki yol da AYNI kilidi kullanır: aynı anda tek telefon render'ı.
     private static var localQueueBusy = false
+    /// Telefon render kilidini al. `false` dönerse başka bir üretim sürüyor demektir.
+    @MainActor static func telefonKilidiAl() -> Bool {
+        if localQueueBusy { return false }
+        localQueueBusy = true
+        return true
+    }
+    @MainActor static func telefonKilidiBirak() { localQueueBusy = false }
     /// TELEFONDA üretim sürüyor mu (1.63). UI "Hazırlanıyor…" yerine "Telefonunda üretiliyor…"
     /// yazsın diye: Barış 05.09 — "üret tuşuna basınca direkt 'üretiliyor' yazıyor, telefondan
     /// üretiliyorsa telefonunda üretiliyor diye yazacak." Kullanıcı uygulamayı kapatırsa üretimin
@@ -504,12 +563,13 @@ enum AuthGate { case checking, valid, needLogin, offline }
     }
 
     func processLocalRenderQueue() async {
-        guard !Self.localQueueBusy else { return }
-        Self.localQueueBusy = true
+        guard await MainActor.run(body: { Self.telefonKilidiAl() }) else { return }
         await MainActor.run { self.telefondaUretiliyor = true }
         defer {
-            Self.localQueueBusy = false
-            Task { @MainActor in self.telefondaUretiliyor = false }
+            Task { @MainActor in
+                Self.telefonKilidiBirak()
+                self.telefondaUretiliyor = false
+            }
         }
         // Cihazda üretim PREMIUM'a özel (Barış 2026-08-28 nihai: ücretsiz katmanda video YOK;
         // kullanıcı ya Premium olur ya video paketi alır — paketle üretim BULUTTA yapılır).
@@ -583,9 +643,36 @@ enum AuthGate { case checking, valid, needLogin, offline }
                                   "aspect": aspect, "speed": speed, "premium": premium, "music": music,
                                   "line": line, "dot": dot, "camdist": camdist, "cam": cam,
                                   "theme": theme, "callsign": callsign, "reel": reel]
-        guard let d = try? await req("/api/rides/generate", method: "POST", body: body),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
-        return (o["ok"] as? Bool) ?? false
+        // 🔴 FİKS 05.09: yalnız Bool dönüyordu → sunucunun 402/429/503 için yazdığı AÇIKLAYICI
+        // Türkçe metinler (ör. "Bu ayki üretim payını doldurdun", "Sokak videosu hakkın kalmadı",
+        // Traccar/bakım 503'leri) kullanıcıya HİÇ ulaşmıyor, ekranda sabit "Üretilemedi" yazıyordu.
+        // Barış'ın "niye üretilemedi ki?" sorusunun sebebi buydu. Sebep artık `sonUretimHatasi`de.
+        sonUretimHatasi = ""
+        guard let (d, kod) = try? await reqKod("/api/rides/generate", method: "POST", body: body) else {
+            sonUretimHatasi = L("sunucuya ulaşılamadı (bağlantı?)", "couldn't reach the server (network?)")
+            return false
+        }
+        let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        if kod == 200, ((o?["ok"] as? Bool) ?? false) { return true }
+        sonUretimHatasi = (o?["detail"] as? String) ?? (o?["error"] as? String)
+            ?? L("sunucu \(kod) döndü", "server returned \(kod)")
+        return false
+    }
+    /// Üretim hatasının sunucudan gelen AÇIKLAMASI (generateRide/regenerateRide sonrası okunur).
+    @Published var sonUretimHatasi = ""
+
+    /// `req` ile aynı ama HTTP durum kodunu da döndürür (hata metnini gösterebilmek için).
+    private func reqKod(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> (Data, Int) {
+        var r = URLRequest(url: URL(string: API + path)!)
+        r.httpMethod = method
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
+        if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let (data, resp) = try await URLSession.shared.data(for: r)
+        let kod = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if kod == 401 { await MainActor.run { self.logout() } }
+        return (data, kod)
     }
     // GPX/TCX dosyası yükle (ham body) -> backend parse eder, Rotalar'a ekler. (from,to) döner.
     // 402 = premium değil, 400 = geçersiz/iz yok. Dönüş nil ise hata.
@@ -615,20 +702,51 @@ enum AuthGate { case checking, valid, needLogin, offline }
         }
     }
     // CİHAZDA üretilen videoyu backend'e yükle -> R2 + Videolarım'da normal video gibi görünür
-    func uploadLocalVideo(_ url: URL, ts: Double, to: Double, mode: String, aspect: String, type: String, speed: String) async -> Bool {
-        guard let data = try? Data(contentsOf: url) else { return false }
+    func uploadLocalVideo(_ url: URL, ts: Double, to: Double, mode: String, aspect: String, type: String,
+                          speed: String, onProgress: @escaping (Double) -> Void = { _ in }) async -> Bool {
+        // 🔴 FİKS 05.09 — üç sorun birden:
+        //  1) `Data(contentsOf:)` 26,8 MB'ı tamamen RAM'e alıyordu, URLSession ikinci kopyayı
+        //     çıkarıyordu (~54 MB anlık zirve). Artık DOSYADAN akıtılıyor (fromFile).
+        //  2) İlerleme delegesi yoktu → yükleme boyunca yüzde donuk kalıyordu ("%96'da takıldı").
+        //  3) Başarısızlıkta dosya SİLİNMİYORDU ama yeniden de denenmiyordu: video sessizce
+        //     kayboluyordu. Artık 3 deneme, sonra dosya galeriye düşürülüp korunuyor.
         var comp = URLComponents(string: API + "/api/videos/upload")!
         comp.queryItems = [.init(name: "ts", value: String(Int(ts))), .init(name: "to", value: String(Int(to))),
                            .init(name: "mode", value: mode), .init(name: "aspect", value: aspect),
                            .init(name: "type", value: type), .init(name: "speed", value: speed)]
         guard let u = comp.url else { return false }
-        var rq = URLRequest(url: u); rq.httpMethod = "POST"; rq.timeoutInterval = 240
+        var rq = URLRequest(url: u); rq.httpMethod = "POST"; rq.timeoutInterval = 600
         rq.setValue("video/mp4", forHTTPHeaderField: "Content-Type")
         authHeader.forEach { rq.setValue($1, forHTTPHeaderField: $0) }
-        guard let (_, resp) = try? await URLSession.shared.upload(for: rq, from: data),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return false }
-        try? FileManager.default.removeItem(at: url)
-        return true
+
+        for deneme in 1...3 {
+            let izleyici = YuklemeIzleyici(onProgress)
+            let oturum = URLSession(configuration: .default, delegate: izleyici, delegateQueue: nil)
+            defer { oturum.finishTasksAndInvalidate() }
+            if let (_, resp) = try? await oturum.upload(for: rq, fromFile: url),
+               (resp as? HTTPURLResponse)?.statusCode == 200 {
+                try? FileManager.default.removeItem(at: url)
+                return true
+            }
+            if Task.isCancelled { return false }
+            if deneme < 3 { try? await Task.sleep(for: .seconds(Double(deneme) * 3)) }
+        }
+        // Yükleme kalıcı olarak başarısız: video KAYBOLMASIN — kullanıcının galerisine kaydet.
+        _ = await Self.galeriyeKaydet(url)
+        return false
+    }
+
+    /// Yükleme ilerlemesi (0-1). `URLSession.upload(for:fromFile:)` gövdeyi akıtır; bu delege
+    /// gönderilen bayt oranını bildirir — kullanıcı 26 MB'lık yüklemede donmuş yüzde görmez.
+    private final class YuklemeIzleyici: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        private let bildir: (Double) -> Void
+        init(_ bildir: @escaping (Double) -> Void) { self.bildir = bildir }
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
+                        totalBytesExpectedToSend totalBytesExpectedToSend: Int64) {
+            guard totalBytesExpectedToSend > 0 else { return }
+            bildir(min(1.0, Double(totalBytesSent) / Double(totalBytesExpectedToSend)))
+        }
     }
     // Videoyu geçmişten sil (yumuşak-sil)
     @discardableResult
@@ -643,9 +761,16 @@ enum AuthGate { case checking, valid, needLogin, offline }
                                   "speed": speed, "premium": premium, "music": music,
                                   "line": line, "dot": dot, "camdist": camdist, "cam": cam,
                                   "theme": theme, "callsign": callsign, "reel": reel]
-        guard let d = try? await req("/api/rides/\(id)/regenerate", method: "POST", body: body),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
-        return (o["ok"] as? Bool) ?? false
+        sonUretimHatasi = ""
+        guard let (d, kod) = try? await reqKod("/api/rides/\(id)/regenerate", method: "POST", body: body) else {
+            sonUretimHatasi = L("sunucuya ulaşılamadı (bağlantı?)", "couldn't reach the server (network?)")
+            return false
+        }
+        let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        if kod == 200, ((o?["ok"] as? Bool) ?? false) { return true }
+        sonUretimHatasi = (o?["detail"] as? String) ?? (o?["error"] as? String)
+            ?? L("sunucu \(kod) döndü", "server returned \(kod)")
+        return false
     }
     // Uygulama içi duyuru (admin panelinden)
     func announcement() async -> Announcement? {

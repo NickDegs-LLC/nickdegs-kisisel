@@ -190,9 +190,9 @@ enum LocalRouteVideo {
                 while !input.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 8_000_000) }
                 adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: fps))
             }
-            onProgress(Double(f) / Double(frames) * 0.90)   // 0.90-1.00 finalize/mux/yükleme'ye ayrıldı
+            onProgress(Double(f) / Double(frames) * 0.85)   // 0.85 üstü: finalize/mux/yükleme (05.09 hizalama)
         }
-        onAsama("video kapatılıyor"); onProgress(0.92)
+        onAsama("video kapatılıyor"); onProgress(0.88)
         input.markAsFinished()
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
@@ -201,7 +201,7 @@ enum LocalRouteVideo {
         if Task.isCancelled { try? FileManager.default.removeItem(at: url); return bitir("iptal edildi") }
         // Müzik seçildiyse cihazda mikse — bulut stitcher'ın yaptığı işin yereli.
         if let m = opts.musicURL {
-            onAsama("müzik ekleniyor"); onProgress(0.95)
+            onAsama("müzik ekleniyor"); onProgress(0.90)
             if let muxed = await muxMusic(video: url, music: m) { return muxed }
         }
         return url

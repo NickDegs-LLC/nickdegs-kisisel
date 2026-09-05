@@ -48,8 +48,8 @@ import UIKit
             // Uçuş sonrası / Ask to Buy / Family Sharing: bitmemiş işlemleri yakala
             for await result in Transaction.unfinished {
                 if case .verified(let t) = result {
-                    apply(t, jws: result.jwsRepresentation)
-                    await t.finish()
+                    // report başarısızsa BİTİRME — StoreKit sonraki açılışta tekrar sunar
+                    if await apply(t, jws: result.jwsRepresentation) { await t.finish() }
                 }
             }
             await refresh()
@@ -59,12 +59,19 @@ import UIKit
 
     // Doğrulanmış transaction'dan premium'u HEMEN aç (cache bekleme) + backend'e bildir.
     // jws = VerificationResult.jwsRepresentation (Transaction'da yok, sonuç sarmalayıcısında).
-    private func apply(_ t: Transaction, jws: String) {
-        if Self.ids.contains(t.productID), t.revocationDate == nil {
+    /// 🔴 FİKS 05.09: `apply` YALNIZ `Self.ids` (4 abonelik) ile eşleşiyordu. Boost / sokak / video
+    /// hakları `allIDs`'te var, `ids`'te yok → `Transaction.unfinished` ve `Transaction.updates`
+    /// döngüleri onları sunucuya HİÇ bildirmeden `finish()` ediyor, yani Ask-to-Buy onayı veya
+    /// uçuş sonrası gelen tüketilebilir satın alma sessizce İMHA oluyordu. Artık tüm ürünler
+    /// bildirilir ve dönüş değeri, çağıranın `finish()` kararını belirler.
+    @discardableResult
+    private func apply(_ t: Transaction, jws: String) async -> Bool {
+        guard Self.allIDs.contains(t.productID), t.revocationDate == nil else { return true }
+        if Self.ids.contains(t.productID) {
             setPurchased(true)
             if Self.ultraIDs.contains(t.productID) { setUltra(true) }   // ultra abonelik -> ultra + premium
-            Task { await Self.report(jws) }   // backend premium/ultra (sunucu render kilidi açılır)
         }
+        return await Self.report(jws)   // backend premium/ultra/hak (sunucu render kilidi açılır)
     }
 
     func load() async {
@@ -88,14 +95,33 @@ import UIKit
     }
 
     // Satın almayı backend'e bildir (StoreKit2 jwsRepresentation). Abonelik->premium, boost->günlük 2x.
-    static func report(_ jws: String) async {
-        guard let url = URL(string: API + "/api/iap/verify") else { return }
+    /// 🔴 FİKS 05.09 — ÖDENMİŞ ÜRÜN KAYBI. Öncesi: `_ = try? await URLSession...` — durum kodu
+    /// HİÇ okunmuyordu ve çağıranlar koşulsuz `t.finish()` ediyordu. Sunucu/ağ o anda hata
+    /// verirse: Apple parayı almış, işlem "bitmiş" işaretlenmiş, kullanıcıya hak VERİLMEMİŞ ve
+    /// geri dönüş yolu yok (App Store Server Notifications ucu da bulunmuyor). Artık sonuç
+    /// okunur; başarısızsa işlem BİTİRİLMEZ ve StoreKit onu bir sonraki açılışta tekrar sunar.
+    /// Ağ hatasında 3 deneme (2/4/8 sn) yapılır.
+    @discardableResult
+    static func report(_ jws: String) async -> Bool {
+        guard let url = URL(string: API + "/api/iap/verify") else { return false }
         let token = UserDefaults.standard.string(forKey: "nd_token") ?? ""
         var r = URLRequest(url: url); r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["jws": jws])
-        _ = try? await URLSession.shared.data(for: r)
+        for deneme in 1...3 {
+            if let (d, resp) = try? await URLSession.shared.data(for: r),
+               let http = resp as? HTTPURLResponse {
+                if http.statusCode == 200 {
+                    let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+                    if ((o??["ok"]) as? Bool) ?? true { return true }
+                }
+                // 4xx = kalıcı ret (ör. jws geçersiz); tekrar denemek işe yaramaz
+                if (400..<500).contains(http.statusCode) { return false }
+            }
+            if deneme < 3 { try? await Task.sleep(for: .seconds(pow(2.0, Double(deneme)))) }
+        }
+        return false
     }
 
     // BOOST satın al (consumable): o gün limitleri 2x. Her alım +1 kat (üst üste alınabilir).
@@ -107,7 +133,12 @@ import UIKit
             switch try await product.purchase() {
             case .success(let v):
                 if case .verified(let t) = v {
-                    await Self.report(v.jwsRepresentation)   // backend o günün limitini 2x yapar
+                    // finish YALNIZ sunucu hakkı işlediyse (yoksa para gider, hak gelmez)
+                    guard await Self.report(v.jwsRepresentation) else {
+                        boostMsg = L("Satın alma alındı ama sunucuya işlenemedi — uygulamayı yeniden açınca otomatik tamamlanır.",
+                                     "Purchase received but not applied yet — reopen the app to finish it.")
+                        return false
+                    }
                     await t.finish()
                     boostMsg = "Bugünkü limitin 2 katına çıktı 🚀"
                     return true
@@ -131,7 +162,11 @@ import UIKit
             switch try await product.purchase() {
             case .success(let v):
                 if case .verified(let t) = v {
-                    await Self.report(v.jwsRepresentation)   // backend sokak_hak += adet
+                    guard await Self.report(v.jwsRepresentation) else {
+                        boostMsg = L("Satın alma alındı ama sunucuya işlenemedi — uygulamayı yeniden açınca otomatik tamamlanır.",
+                                     "Purchase received but not applied yet — reopen the app to finish it.")
+                        return false
+                    }
                     await t.finish()
                     boostMsg = L("Sokak hakkın eklendi 🛣️","Street credits added 🛣️")
                     return true
@@ -153,7 +188,11 @@ import UIKit
             switch try await product.purchase() {
             case .success(let v):
                 if case .verified(let t) = v {
-                    await Self.report(v.jwsRepresentation)   // backend video_hak += adet
+                    guard await Self.report(v.jwsRepresentation) else {
+                        boostMsg = L("Satın alma alındı ama sunucuya işlenemedi — uygulamayı yeniden açınca otomatik tamamlanır.",
+                                     "Purchase received but not applied yet — reopen the app to finish it.")
+                        return false
+                    }
                     await t.finish()
                     boostMsg = L("Video hakkın eklendi 🎬","Video credits added 🎬")
                     return true
@@ -188,8 +227,15 @@ import UIKit
             switch try await product.purchase() {
             case .success(let v):
                 if case .verified(let t) = v {
-                    apply(t, jws: v.jwsRepresentation)   // ← premium'u HEMEN aç + backend'e bildir
+                    // ← premium'u HEMEN aç + backend'e bildir. Abonelikte finish'i geciktirmiyoruz
+                    // (StoreKit yenilemeyi zaten `updates` üzerinden tekrar sunar), ama sunucu
+                    // bildirimi başarısızsa kullanıcıya söylüyoruz.
+                    let bildirildi = await apply(t, jws: v.jwsRepresentation)
                     await t.finish()
+                    if !bildirildi {
+                        lastError = L("Abonelik alındı, sunucuya işlenmesi birkaç dakika sürebilir.",
+                                      "Subscription purchased; it may take a few minutes to activate.")
+                    }
                     return purchased
                 }
                 lastError = "Satın alma doğrulanamadı."; return false
@@ -244,8 +290,8 @@ import UIKit
         Task { [weak self] in
             for await update in Transaction.updates {
                 if case .verified(let t) = update {
-                    self?.apply(t, jws: update.jwsRepresentation)   // ← cache'e güvenme, direkt aç
-                    await t.finish()
+                    // ← cache'e güvenme, direkt aç; ama sunucu onaylamadan BİTİRME
+                    if await self?.apply(t, jws: update.jwsRepresentation) ?? false { await t.finish() }
                 }
             }
         }

@@ -33,9 +33,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             Self.scheduleRefresh()
         }
         UNUserNotificationCenter.current().delegate = NotifDelegate.shared
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            if granted { DispatchQueue.main.async { application.registerForRemoteNotifications() } }
-        }
+        // 🔴 FİKS 05.09: kayıt SADECE `granted` iken yapılıyordu. Ama SESSİZ push
+        // (content-available) alert iznine İHTİYAÇ DUYMAZ — bildirim iznini reddeden kullanıcıda
+        // telsiz uyandırması, canlı takip, nabız-peek ve oto-takip re-arm'ının TAMAMI ölüyordu.
+        // Kayıt artık koşulsuz; izin yalnız GÖRÜNÜR bildirimi etkiler.
+        DispatchQueue.main.async { application.registerForRemoteNotifications() }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

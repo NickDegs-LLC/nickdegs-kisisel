@@ -40,6 +40,10 @@ struct GenerateSheet: View {
     // bilmiyordu ve uygulamadan çıkınca üretim beyaz kareler yazıyordu.
     @State private var telefonAktif = false            // tam ekran üretim katmanı açık mı
     @State private var telefonPct: Double = 0
+    /// 🔴 FİKS 05.09: yüzdeyi TÜKETİCİDE monotonlaştır. Motorlar 0.99 raporlayıp ardından sabit
+    /// bir değere (0.88/0.92) düşebiliyor; kullanıcı bunu "geri gitti / takıldı" diye görüyordu.
+    /// Tek kapı: yüzde asla azalmaz, yalnız ileri gider (sıfırlama açıkça `telefonPct = 0`).
+    @MainActor private func pctYaz(_ p: Double) { if p > telefonPct { telefonPct = min(1.0, p) } }
     @State private var telefonIs: Task<Void, Never>?   // ekrandan çıkılırsa iptal edilir
     @State private var telefonHata = false
     @State private var telefonNeden = ""
@@ -428,6 +432,9 @@ struct GenerateSheet: View {
                                 : await store.regenerateRide(rideId!, type: type, mode: mode,
                                                              aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
                             sending = false; done = ok; localErr = !ok
+                            // 05.09: sunucunun AÇIKLAMASINI göster ("Üretilemedi" tek başına
+                            // hiçbir şey söylemiyordu — Barış: "niye üretilemedi ki?")
+                            if !ok && !store.sonUretimHatasi.isEmpty { note = store.sonUretimHatasi }
                             // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür (bulut kelimesi YOK)
                             if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
                         }
@@ -627,6 +634,32 @@ struct GenerateSheet: View {
     /// Başarılıysa video sunucuya yüklenir ve Videolarım'a geçilir; başarısızsa katmanda hata gösterilir
     /// (kullanıcı buluta düşmeyi kendi seçer — sessizce para harcamayız).
     func telefondaUret() async {
+        // 🔴 FİKS 05.09 — EKRAN KİLİDİ: koruma yalnız WebRouteVideo (3B) içindeydi. Düz/kuşbakışı
+        // yolunda YOKTU; kullanıcı ekrana dokunmazsa iOS otomatik kilit devreye giriyor,
+        // `didEnterBackground` düşüyor ve LocalRouteVideo üretimi iptal ediyordu. Yani telefonda
+        // düz/kuşbakışı üretimi neredeyse HER ZAMAN ölüyordu. Koruma artık iki motoru da kapsıyor.
+        await MainActor.run { UIApplication.shared.isIdleTimerDisabled = true }
+        // 🔴 FİKS 05.09 — PAYLAŞILAN KİLİT: elle üretim kuyruk render'ıyla AYNI kilidi alır.
+        // Öncesi: tek koruma `guard telefonIs == nil` idi (yalnız kendi çift dokunuşuna karşı);
+        // otomatik kuyruk aynı anda ikinci bir render başlatabiliyor, ikisi de ana aktörü
+        // paylaştığı için üretim kabaca yarı hıza düşüyordu.
+        guard await MainActor.run(body: { Store.telefonKilidiAl() }) else {
+            await MainActor.run {
+                telefonNeden = L("telefonda zaten bir video üretiliyor — bitmesini bekle",
+                                 "a video is already being made on your phone — please wait")
+                telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil
+            }
+            return
+        }
+        // "Telefonunda üretiliyor…" etiketi ELLE üretimde de yansın (Barış 05.09)
+        await MainActor.run { store.telefondaUretiliyor = true }
+        defer {
+            Task { @MainActor in
+                UIApplication.shared.isIdleTimerDisabled = false
+                store.telefondaUretiliyor = false
+                Store.telefonKilidiBirak()
+            }
+        }
         let pts = await store.track(from: from, to: to)
         if pts.count < 3 {
             await MainActor.run { telefonNeden = L("bu sürüşte yeterli GPS noktası yok (\(pts.count))",
@@ -635,6 +668,8 @@ struct GenerateSheet: View {
             return
         }
         let mURL = await store.musicFile(music, session: from)
+        // müzik geçici dosyası: hangi yoldan çıkarsak çıkalım silinsin (eskiden hiç silinmiyordu)
+        defer { if let m = mURL { try? FileManager.default.removeItem(at: m) } }
         var video: URL?
         if mode == "3d" {
             video = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
@@ -642,7 +677,7 @@ struct GenerateSheet: View {
                                                line: lineColor, dot: resolvedDot,
                                                token: store.token, musicURL: mURL,
                                                onAsama: { a in Task { @MainActor in telefonAsama = a } },
-                                               onProgress: { p in Task { @MainActor in telefonPct = p } })
+                                               onProgress: { p in Task { @MainActor in pctYaz(p) } })
         } else {
             var lopt = LocalRouteVideo.Opts()
             lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
@@ -650,7 +685,7 @@ struct GenerateSheet: View {
             lopt.musicURL = mURL
             video = await LocalRouteVideo.render(points: pts, opts: lopt,
                                                  onAsama: { a in Task { @MainActor in telefonAsama = a } },
-                                                 onProgress: { p in Task { @MainActor in telefonPct = p } })
+                                                 onProgress: { p in Task { @MainActor in pctYaz(p) } })
         }
         if Task.isCancelled { return }                       // iptal edildi -> hiçbir şey yükleme
         guard let v = video else {
@@ -659,9 +694,12 @@ struct GenerateSheet: View {
                                   telefonAsama = ""; telefonIs = nil }
             return
         }
-        await MainActor.run { telefonAsama = L("yükleniyor", "uploading"); telefonPct = 0.96 }
+        // 🔴 FİKS 05.09: burada yüzde 0.96'ya SABİTLENİYOR ve yükleme boyunca (ölçülen: 26,8 MB)
+        // hiç kıpırdamıyordu — kullanıcı "%96'da takıldı" diye görüyordu. Artık gerçek ilerleme.
+        await MainActor.run { telefonAsama = L("yükleniyor", "uploading"); pctYaz(0.90) }
         guard await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
-                                           aspect: aspect, type: type, speed: speed) else {
+                                           aspect: aspect, type: type, speed: speed,
+                                           onProgress: { p in Task { @MainActor in pctYaz(0.90 + 0.10 * p) } }) else {
             await MainActor.run { telefonNeden = L("video yüklenemedi (bağlantı?)", "upload failed (network?)")
                                   telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil }
             return

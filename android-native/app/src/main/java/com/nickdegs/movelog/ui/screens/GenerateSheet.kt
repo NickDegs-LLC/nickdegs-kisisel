@@ -50,6 +50,8 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var paketAcik by remember { mutableStateOf(false) }   // 402 sonrası paket paneli
+    // FIX 05.09: uretim hatasi mesaji (400/429/503) — oncesinde hicbir yerde gosterilmiyordu
+    var hataMetni by remember { mutableStateOf("") }
     var paketMsg by remember { mutableStateOf("") }
     val ctx = LocalContext.current
     // Paket satın alma: sunucu doğrularsa consume edilir, hak sayacı tazelenir.
@@ -244,7 +246,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
             }
             Button(
                 onClick = {
-                    busy = true
+                    busy = true; hataMetni = ""
                     scope.launch {
                         val kod = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "",
                             if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot)
@@ -252,6 +254,11 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                         when (kod) {
                             200 -> onClose()
                             402 -> paketAcik = true       // hak yok → paket panelini aç, sayfayı KAPATMA
+                            // FIX 05.09: 400/429/503 icin DAL YOKTU -> dugme sonuclanmiyor, ekran
+                            // sessizce donuyordu. Sunucunun kendi aciklamasini goster.
+                            else -> hataMetni = store.sonUretimHatasi.ifEmpty {
+                                if (kod == 0) "Sunucuya ulasilamadi (baglanti?)" else "Video olusturulamadi (sunucu $kod)"
+                            }
                         }
                     }
                 },
@@ -261,6 +268,10 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
                 else Text(L("Video oluştur", "Create video"), fontWeight = FontWeight.SemiBold)
+            }
+            if (hataMetni.isNotEmpty()) {
+                Text(hataMetni, color = Color(0xFFFF6B6B), fontSize = 13.sp,
+                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
         }
     }

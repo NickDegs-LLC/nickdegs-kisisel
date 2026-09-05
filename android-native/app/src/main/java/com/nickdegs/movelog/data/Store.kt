@@ -26,6 +26,10 @@ data class Ride(
     val id: String, val date: String, val type: String?, val mode: String?,
     val size: Double, val ts: Double?, val to: Double?, val aspect: String?,
     val speed: String?, val done: Double?, val rendering: Boolean, val novideo: Boolean,
+    // FIX 05.09: sunucu /api/rides icin "failed"+"error" doner, iOS bunlari okuyor (Videos.swift),
+    // Android modelinde ALAN YOKTU -> basarisiz render kartlari OYNATILABILIR gibi gorunuyor,
+    // dokununca 404 aliniyordu. OLCULDU: 14 adet sahte oynatilabilir kart.
+    val failed: Boolean = false, val error: String? = null,
 )
 
 data class Profile(val username: String?, val name: String, val premium: Boolean)
@@ -296,8 +300,17 @@ class Store(app: Application) : AndroidViewModel(app) {
                 done = if (o.has("done")) o.optDouble("done") else null,
                 rendering = o.optBoolean("rendering", false),
                 novideo = o.optBoolean("novideo", false),
+                failed = o.optBoolean("failed", false),
+                error = o.optString("error", null),
             )
-        }
+        // FIX 05.09: iOS Routes.swift'teki dedupedByRide karsiligi Android'de YOKTU -> ayni rota
+        // icin uc parcali rid + up_* cogalmasi yuzunden LISTEDE KOPYA KART cikiyordu (olculdu:
+        // 97 kayit / 70 gercek rota). Ayni date_ts icin tek kart: rendering > en yeni done.
+        }.groupBy { "${it.date}_${(it.ts ?: 0.0).toLong()}" }
+            .values.map { grup ->
+                grup.firstOrNull { it.rendering } ?: grup.maxByOrNull { it.done ?: 0.0 } ?: grup.first()
+            }
+            .sortedByDescending { it.ts ?: 0.0 }
     }
 
     fun videoUrl(id: String) = "$API/api/rides/$id/video"
@@ -366,6 +379,10 @@ class Store(app: Application) : AndroidViewModel(app) {
 
     // ---- Video üret (iOS generateRide ile aynı gövde) ----
     // HTTP durumunu döner: 200 = üretim başladı, 402 = hak yok (paket panelini aç), diğer = hata.
+    /** Son uretim isteginin sunucudan gelen ACIKLAMASI (bos = hata yok). */
+    var sonUretimHatasi: String = ""
+        private set
+
     suspend fun generate(from: Double, to: Double, type: String, mode: String, aspect: String,
                          speed: String, camdist: String = "orta", music: String = "", line: String = "", cam: String = "", dot: String = ""): Int {
         val b = JSONObject().put("from", from).put("to", to).put("type", type).put("mode", mode)
@@ -374,6 +391,11 @@ class Store(app: Application) : AndroidViewModel(app) {
         if (line.isNotEmpty()) b.put("line", line)
         if (dot.isNotEmpty()) b.put("dot", dot)
         val (code, txt) = reqCode("/api/rides/generate", "POST", b)
+        // FIX 05.09: sunucunun 429/503 aciklamalari (butce doldu, Traccar/bakim, kapasite)
+        // hicbir yerde gosterilmiyordu -> ekran sessizce donuyordu. Metni burada sakla.
+        sonUretimHatasi = if (code == 200) "" else
+            runCatching { JSONObject(txt).optString("detail", JSONObject(txt).optString("error", "")) }
+                .getOrDefault("")
         if (code != 200) return code
         // 200 gövdesinde ok=false gelirse bunu başarı sayma (sunucu yumuşak hata döndürebiliyor)
         return if (runCatching { JSONObject(txt).optBoolean("ok", false) }.getOrDefault(false)) 200 else 0
@@ -493,13 +515,16 @@ class Store(app: Application) : AndroidViewModel(app) {
 
     // ---- Canlı konumlar (Harita) ----
     suspend fun positions(): List<Position> {
-        val d = req("/api/positions") ?: return emptyList()
+        // FIX 05.09: "/api/positions" sunucuda YOK (404 olcuLDU) -> Android canli arkadas haritasi
+        // HER ZAMAN bostu. Dogru uc "/api/gps/live"; hiz alani da "speed_kmh" (camelCase degil).
+        val d = req("/api/gps/live") ?: return emptyList()
         val arr = JSONObject(d).optJSONArray("positions") ?: (JSONObject(d).optJSONArray("data") ?: JSONArray())
         return (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             Position(o.optString("device", o.optString("name", "")),
                 o.optDouble("lat"), o.optDouble("lon"),
-                o.optDouble("speedKmh", o.optDouble("spd", 0.0)), o.optBoolean("online", false))
+                o.optDouble("speed_kmh", o.optDouble("speedKmh", o.optDouble("spd", 0.0))),
+                o.optBoolean("online", false))
         }
     }
 

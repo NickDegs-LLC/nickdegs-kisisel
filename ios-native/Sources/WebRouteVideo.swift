@@ -14,7 +14,14 @@ enum WebRouteVideo {
     /// biz de "Üretilemedi"den başka bir şey görmüyorduk (Barış 05.09: "niye üretilemedi ki?").
     /// Artık her çıkış noktası nedenini buraya yazar, UI onu gösterir.
     static var sonHata = ""
-    private static func bitir(_ neden: String) -> URL? { sonHata = neden; return nil }
+    // 05.09: iptal/hata yollarında yarım kalan MP4 tmp'de birikiyordu (yalnız :69'da, ÜRETMEDEN
+    // ÖNCE siliniyordu). Artık her çıkışta temizlenir.
+    private static var kismiCikti: URL?
+    private static func bitir(_ neden: String) -> URL? {
+        sonHata = neden
+        if let u = kismiCikti { try? FileManager.default.removeItem(at: u); kismiCikti = nil }
+        return nil
+    }
 
     struct Meta: Decodable { let html: String; let frames: Int; let fps: Int; let W: Int; let H: Int }
 
@@ -65,8 +72,9 @@ enum WebRouteVideo {
 
         // 4) MP4 yazıcı
         let outURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("motor_\(Int(Date().timeIntervalSince1970)).mp4")
+            .appendingPathComponent("motor_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(8)).mp4")
         try? FileManager.default.removeItem(at: outURL)
+        kismiCikti = outURL
         guard let writer = try? AVAssetWriter(outputURL: outURL, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
         let boy = CGSize(width: meta.W, height: meta.H)
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
@@ -136,7 +144,7 @@ enum WebRouteVideo {
                 } else { bosKare = 0 }
                 await yaz(img)
             }
-            if f % 5 == 0 { onProgress(Double(f) / toplamIs) }
+            if f % 5 == 0 { onProgress(Double(f) / toplamIs * 0.85) }
         }
         // 7) outro / dünya finali
         let hedefOutro = qaKareTavan != nil ? min(12, outroN) : outroN
@@ -146,10 +154,15 @@ enum WebRouteVideo {
             if arkaPlan.dustu { input.markAsFinished(); writer.cancelWriting(); return bitir("uygulama arka plana alındı — üretim durduruldu") }
             _ = try? await wv.callAsyncJavaScript("return await window.finalCiz(\(k));", contentWorld: .page)
             if let img = await cek(wv, boy: boy) { await yaz(img) }
-            if k % 5 == 0 { onProgress(Double(hedefKare + k) / toplamIs) }
+            if k % 5 == 0 { onProgress(Double(hedefKare + k) / toplamIs * 0.85) }
         }
         onAsama("video kapatılıyor")
-        onProgress(0.92)   // 0.92-1.00 finalize/mux/yükleme
+        // 🔴 FİKS 05.09 — İLERLEME GERİ GİDİYORDU. Eskiden outro son raporu ~0.99'a çıkıyor,
+        // hemen ardından buradaki SABİT 0.92 yüzdeyi 7 puan GERİ ATIYORDU; Record.swift de
+        // arkasından 0.96 yazıyordu. Barış'ın gördüğü dizi tam olarak buydu: "%99 oldu, yazılar
+        // geldi, %96 yükleniyorda geri kaldı". Artık bütçe monoton: kareler+outro 0-0.85,
+        // finalize 0.88, mux 0.90, yükleme 0.90-1.00 (Store.uploadLocalVideo gerçek ilerlemeyle).
+        onProgress(0.88)
         input.markAsFinished()
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
@@ -158,8 +171,14 @@ enum WebRouteVideo {
         // 8) müzik (cihazda miks — LocalRouteVideo ile ortak yol)
         if let m = musicURL {
             onAsama("müzik ekleniyor")
-            if let muxed = await LocalRouteVideo.muxMusic(video: outURL, music: m) { return muxed }
+            if let muxed = await LocalRouteVideo.muxMusic(video: outURL, music: m) {
+                kismiCikti = nil
+                onProgress(0.90)
+                return muxed
+            }
         }
+        kismiCikti = nil            // başarı: dosya çağırana devredildi
+        onProgress(0.90)
         return outURL
     }
 

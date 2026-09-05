@@ -172,7 +172,10 @@ final class WorkoutManager: NSObject, ObservableObject {
             URLQueryItem(name: "lat", value: String(loc.coordinate.latitude)),
             URLQueryItem(name: "lon", value: String(loc.coordinate.longitude)),
             URLQueryItem(name: "timestamp", value: String(Int(loc.timestamp.timeIntervalSince1970))),
-            URLQueryItem(name: "speed", value: String(max(0, loc.speed))),
+            // 🔴 FİKS 05.09: saat hızı m/s gönderiyordu ama sunucu KNOT varsayıp ×1.852 ile km/h'ye
+            // çeviriyor (motor3d/iz.ts:75, grup7.ts:347/352/584) → %94 hatalı hız. Telefon tarafı
+            // (Tracker.swift:383) zaten ×1.94384 ile knot'a çeviriyordu; saat de aynı sözleşmeye uyar.
+            URLQueryItem(name: "speed", value: String(max(0, loc.speed) * 1.94384)),
             URLQueryItem(name: "bearing", value: String(max(0, loc.course))),
             URLQueryItem(name: "altitude", value: String(loc.altitude)),
             URLQueryItem(name: "accuracy", value: String(loc.horizontalAccuracy)),

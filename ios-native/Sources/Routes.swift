@@ -272,8 +272,13 @@ struct RoutesView: View {
             guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(r.id).mp4")
             try? data.write(to: tmp)
-            if UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(tmp.path) {
-                UISaveVideoAtPathToSavedPhotosAlbum(tmp.path, nil, nil, nil)
+            // 🔴 FİKS 05.09: `UISaveVideoAtPathToSavedPhotosAlbum(..., nil, nil, nil)` sonucu HİÇ
+            // okunmuyordu ve `savedId` koşulsuz atanıyordu → izin reddedilse veya kaydetme başarısız
+            // olsa bile kullanıcıya "kaydedildi ✓" gösteriliyordu (SAHTE onay). Ayrıca tmp dosyası
+            // silinmiyordu. `Store.galeriyeKaydet` izni ister, sonucu okur ve dosyayı siler.
+            guard await Store.galeriyeKaydet(tmp) else {
+                try? FileManager.default.removeItem(at: tmp)
+                return
             }
             savedId = r.id
             try? await Task.sleep(for: .seconds(2))
