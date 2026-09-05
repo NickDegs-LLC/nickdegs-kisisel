@@ -42,7 +42,8 @@ struct GenerateSheet: View {
     @State private var telefonPct: Double = 0
     @State private var telefonIs: Task<Void, Never>?   // ekrandan çıkılırsa iptal edilir
     @State private var telefonHata = false
-    @State private var telefonNeden = ""      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
+    @State private var telefonNeden = ""
+    @State private var telefonAsama = ""   // "kareler çiziliyor" / "kapanış sahnesi" / "yükleniyor"…      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
     @State private var showPaywall = false
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
     @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
@@ -447,9 +448,9 @@ struct GenerateSheet: View {
                     // Premium + düz/kuşbakışı/3B. Bedava (GPU parası yok) ama uygulama ön planda
                     // kalmalı: WKWebView arka planda BOŞ kare döndürüyor. O yüzden ayrı düğme,
                     // tam ekran ilerleme ve açık uyarı — kullanıcı ne yaptığını bilerek seçsin.
-                    if premium && !sending && !done && ["flat", "flyover", "3d"].contains(mode) {
+                    if premium && !sending && ["flat", "flyover", "3d"].contains(mode) {
                         Button {
-                            telefonHata = false; telefonNeden = ""; telefonPct = 0.001; telefonAktif = true
+                            telefonHata = false; telefonNeden = ""; telefonAsama = ""; telefonPct = 0.001; telefonAktif = true
                             telefonIs = Task { await telefondaUret() }
                         } label: {
                             Label(L("Telefonda üret (bedava)", "Render on this phone (free)"),
@@ -516,6 +517,9 @@ struct GenerateSheet: View {
                     ProgressView(value: max(0.001, telefonPct)).progressViewStyle(.linear)
                         .frame(width: 240).tint(Brand.accent)
                     Text("%\(Int(telefonPct * 100))").font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                    if !telefonAsama.isEmpty {
+                        Text(telefonAsama).font(.caption).foregroundStyle(.secondary)
+                    }
                     Label(L("Bu ekrandan çıkarsan üretim iptal olur.",
                             "Leaving this screen cancels the render."),
                           systemImage: "exclamationmark.triangle.fill")
@@ -542,8 +546,8 @@ struct GenerateSheet: View {
                 }.padding(28)
             }
             .interactiveDismissDisabled(true)
+            .onDisappear { telefonIptal() }   // katman kapandıysa üretim de kapanır
         }
-        .onDisappear { telefonIptal() }   // sayfa kapanırsa üretim de kapanır
         .task {
             await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
             // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
@@ -636,6 +640,7 @@ struct GenerateSheet: View {
                                                aspect: aspect, camdist: camdist,
                                                line: lineColor, dot: resolvedDot,
                                                token: store.token, musicURL: mURL,
+                                               onAsama: { a in Task { @MainActor in telefonAsama = a } },
                                                onProgress: { p in Task { @MainActor in telefonPct = p } })
         } else {
             var lopt = LocalRouteVideo.Opts()
@@ -646,6 +651,7 @@ struct GenerateSheet: View {
                                                  onProgress: { p in Task { @MainActor in telefonPct = p } })
         }
         if Task.isCancelled { return }                       // iptal edildi -> hiçbir şey yükleme
+        await MainActor.run { telefonAsama = L("yükleniyor", "uploading") }
         guard let v = video else {
             let neden = mode == "3d" ? WebRouteVideo.sonHata : LocalRouteVideo.sonHata
             await MainActor.run { telefonNeden = neden; telefonHata = true; telefonPct = 0 }

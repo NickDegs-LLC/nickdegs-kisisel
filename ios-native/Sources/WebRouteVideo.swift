@@ -21,6 +21,7 @@ enum WebRouteVideo {
     static func render(from: Double, to: Double, type: String, speed: String,
                        aspect: String, camdist: String, line: String, dot: String,
                        token: String, musicURL: URL?, qaKareTavan: Int? = nil,
+                       onAsama: @escaping (String) -> Void = { _ in },
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         sonHata = ""
         // 1) motor sayfasını al (bulutla aynı spec; sunucu sadece CPU-saniyesi harcar)
@@ -107,7 +108,16 @@ enum WebRouteVideo {
         // 6) rota kareleri — kamera matematiği sayfada, bulutla birebir
         let hedefKare = qaKareTavan.map { min($0, meta.frames) } ?? meta.frames
         var bosKare = 0
+        // İLERLEME FİKSİ (05.09): eskiden payda `meta.frames` idi; ana döngü bitince yüzde %99'da
+        // DONUYOR, arkasından 360 karelik outro + finalize + ses miksi + yükleme sessizce sürüyordu.
+        // Barış: "%99'da takılı kaldı, bayağı uzun sürdü" — sebebi tam olarak buydu.
+        let toplamIs = Double(max(1, hedefKare + (qaKareTavan != nil ? min(12, outroN) : outroN)))
+        onAsama("kareler çiziliyor")
         for f in 0..<hedefKare {
+            if Task.isCancelled {         // İPTAL artık dinleniyor (eskiden hiç bakılmıyordu)
+                input.markAsFinished(); writer.cancelWriting()
+                return bitir("iptal edildi")
+            }
             if arkaPlan.dustu {           // uygulama arka plana geçti -> beyaz kare üretmeden çık
                 input.markAsFinished(); writer.cancelWriting()
                 return bitir("uygulama arka plana alındı — üretim durduruldu")
@@ -122,21 +132,30 @@ enum WebRouteVideo {
                 } else { bosKare = 0 }
                 yaz(img)
             }
-            if f % 5 == 0 { onProgress(Double(f) / Double(max(1, meta.frames))) }
+            if f % 5 == 0 { onProgress(Double(f) / toplamIs) }
         }
         // 7) outro / dünya finali
         let hedefOutro = qaKareTavan != nil ? min(12, outroN) : outroN
+        onAsama("kapanış sahnesi")
         for k in 0..<hedefOutro {
+            if Task.isCancelled { input.markAsFinished(); writer.cancelWriting(); return bitir("iptal edildi") }
+            if arkaPlan.dustu { input.markAsFinished(); writer.cancelWriting(); return bitir("uygulama arka plana alındı — üretim durduruldu") }
             _ = try? await wv.callAsyncJavaScript("return await window.finalCiz(\(k));", contentWorld: .page)
             if let img = await cek(wv, boy: boy) { yaz(img) }
+            if k % 5 == 0 { onProgress(Double(hedefKare + k) / toplamIs) }
         }
+        onAsama("video kapatılıyor")
+        onProgress(1.0)
         input.markAsFinished()
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
         }
         guard writer.status == .completed, kareNo > Int64(hedefKare / 2) else { return bitir("video tamamlanamadı (\(kareNo)/\(hedefKare) kare)") }
         // 8) müzik (cihazda miks — LocalRouteVideo ile ortak yol)
-        if let m = musicURL, let muxed = await LocalRouteVideo.muxMusic(video: outURL, music: m) { return muxed }
+        if let m = musicURL {
+            onAsama("müzik ekleniyor")
+            if let muxed = await LocalRouteVideo.muxMusic(video: outURL, music: m) { return muxed }
+        }
         return outURL
     }
 
