@@ -26,7 +26,7 @@ enum WebRouteVideo {
         // 1) motor sayfasını al (bulutla aynı spec; sunucu sadece CPU-saniyesi harcar)
         guard let meta = await sayfaAl(from: from, to: to, type: type, speed: speed,
                                        aspect: aspect, camdist: camdist, line: line, dot: dot, token: token)
-        else { return bitir("motor sayfası alınamadı (sunucu /api/motor3d)") }
+        else { return sonHata.isEmpty ? bitir("motor sayfası alınamadı (sunucu /api/motor3d)") : nil }
 
         // 2) görünmez WKWebView (ekran hiyerarşisinde olmalı — yoksa snapshot boş döner)
         let cfg = WKWebViewConfiguration()
@@ -187,9 +187,24 @@ enum WebRouteVideo {
         rq.httpBody = try? JSONSerialization.data(withJSONObject: [
             "from": from, "to": to, "type": type, "speed": speed, "aspect": aspect,
             "camdist": camdist, "line": line, "dot": dot])
-        guard let (d, resp) = try? await URLSession.shared.data(for: rq),
-              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return try? JSONDecoder().decode(Meta.self, from: d)
+        guard let (d, resp) = try? await URLSession.shared.data(for: rq) else {
+            sonHata = "sunucuya ulaşılamadı (bağlantı?)"
+            return nil
+        }
+        let kod = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard kod == 200 else {
+            // SUNUCUNUN KENDİ MESAJINI göster — 05.09'da "spec uretilemedi" (500) çıkmıştı ve
+            // kullanıcıya yalnız "Üretilemedi" deniyordu. Sunucu artık 422 + anlaşılır sebep dönüyor
+            // ("bu rotada hareket yok", "yeterli konum yok (4 nokta)"); onu aynen aktarıyoruz.
+            let detay = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])??["detail"] as? String
+            sonHata = detay ?? "sunucu \(kod) döndü"
+            return nil
+        }
+        guard let m = try? JSONDecoder().decode(Meta.self, from: d) else {
+            sonHata = "sunucu cevabı çözülemedi"
+            return nil
+        }
+        return m
     }
 
     private static func bekle(_ wv: WKWebView, js: String, saniye: Int) async -> Bool {
