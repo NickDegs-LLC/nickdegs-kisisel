@@ -86,5 +86,7 @@ final class NotifDelegate: NSObject, UNUserNotificationCenterDelegate {
 
 extension Notification.Name {
     static let ndApns = Notification.Name("nd_apns")
+    /// 05.09: sunucu premium'u düşürdü → IAP `owned || gift` hesabını yeniden yapsın.
+    static let ndPremiumDegisti = Notification.Name("nd_premium_degisti")
     static let ndDeepLink = Notification.Name("nd_deeplink")   // bildirim dokunma -> ilgili ekran
 }

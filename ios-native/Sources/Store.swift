@@ -387,13 +387,31 @@ enum AuthGate { case checking, valid, needLogin, offline }
             UserDefaults.standard.set((o["video_hak"] as? Int) ?? 0, forKey: "nd_video_hak")
             UserDefaults.standard.set((o["sokak_hediye"] as? Bool) ?? false, forKey: "nd_sokak_hediye")
         }
-        guard let p = try? dec().decode(Profile.self, from: d), p.premium else { return }
-        UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium kalıcı
-        UserDefaults.standard.set(true, forKey: "nd_premium")
-        if p.ultra {   // sunucu/admin Ultra (StoreKit satın alma olmadan) -> kamera modları/Street View açılır
-            UserDefaults.standard.set(true, forKey: "nd_gift_ultra")
-            UserDefaults.standard.set(true, forKey: "nd_ultra")
+        // 🔴 FİKS 05.09 — PREMIUM DÜŞMÜYORDU. Eski satır: `guard ..., p.premium else { return }`
+        // yani sunucu "premium değil" dediğinde HİÇBİR ŞEY yapılmıyor, `nd_gift` mandalı açık
+        // kalıyordu. `setPurchased(v)` de `v || gift` hesapladığı için StoreKit aboneliği bitse
+        // bile uygulama premium görünmeye devam ediyordu: sunucu tarafında abonelik düşürülse
+        // dahi kullanıcıda hiçbir şey değişmezdi. Sunucu ARTIK tek doğruluk kaynağı.
+        // ⚠️ Ağ/decode hatasında DOKUNMA — çevrimdışıyken premium kapanmasın.
+        guard let p = try? dec().decode(Profile.self, from: d) else { return }
+        if p.premium {
+            UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium
+            UserDefaults.standard.set(true, forKey: "nd_premium")
+            if p.ultra {   // sunucu/admin Ultra (StoreKit satın alma olmadan) -> kamera modları/Street View
+                UserDefaults.standard.set(true, forKey: "nd_gift_ultra")
+                UserDefaults.standard.set(true, forKey: "nd_ultra")
+            }
+        } else {
+            // Sunucu premium'u DÜŞÜRDÜ (abonelik bitti/iptal edildi). Yerel mandalı temizle.
+            // `nd_premium`/`nd_ultra` KAPATILMAZ: StoreKit'te hâlâ geçerli bir abonelik olabilir
+            // (sunucu bildirimi gecikmiş olabilir). IAP.refresh() açılışta `owned || gift`
+            // hesabını yeniden yapar; gift artık false olduğu için sonuç DOĞRU olur ve
+            // gerçekten aboneliği bitmiş kullanıcıda premium kapanır.
+            UserDefaults.standard.set(false, forKey: "nd_gift")
+            UserDefaults.standard.set(false, forKey: "nd_gift_ultra")
+            NotificationCenter.default.post(name: .ndPremiumDegisti, object: nil)
         }
+        if !p.ultra { UserDefaults.standard.set(false, forKey: "nd_gift_ultra") }
     }
     /// 🔴 FİKS 05.09: sunucudaki `DELETE /api/friends/{uname}` (grup3) HİÇBİR istemciden
     /// çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU (uçtan uca tarama bulgusu).

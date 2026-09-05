@@ -54,6 +54,11 @@ import UIKit
             }
             await refresh()
         }
+        // 05.09: sunucu premium'u düşürünce (Store.syncPremium) hemen yeniden hesapla —
+        // aksi halde `owned || gift` sonucu ancak bir sonraki açılışta güncellenirdi.
+        NotificationCenter.default.addObserver(forName: .ndPremiumDegisti, object: nil, queue: .main) { [weak self] _ in
+            Task { await self?.refresh() }
+        }
     }
     deinit { updates?.cancel() }
 
