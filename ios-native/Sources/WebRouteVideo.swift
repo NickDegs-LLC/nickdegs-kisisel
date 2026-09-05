@@ -14,6 +14,8 @@ enum WebRouteVideo {
     /// biz de "Üretilemedi"den başka bir şey görmüyorduk (Barış 05.09: "niye üretilemedi ki?").
     /// Artık her çıkış noktası nedenini buraya yazar, UI onu gösterir.
     static var sonHata = ""
+    /// Kare hizası (güvenli alan payı) sıfırlanamadıysa tanı metni — üretim yine de sürer.
+    static var hizaUyarisi = ""
     // 05.09: iptal/hata yollarında yarım kalan MP4 tmp'de birikiyordu (yalnız :69'da, ÜRETMEDEN
     // ÖNCE siliniyordu). Artık her çıkışta temizlenir.
     private static var kismiCikti: URL?
@@ -31,6 +33,7 @@ enum WebRouteVideo {
                        onAsama: @escaping (String) -> Void = { _ in },
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         sonHata = ""
+        hizaUyarisi = ""
         // Ekran kilidi koruması EN BAŞTA: `sayfaAl` 190 sn'ye kadar sürebiliyor ve o pencerede
         // ekran kendiliğinden kilitlenirse üretim daha başlamadan "arka plana alındı" ile ölüyordu.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -81,13 +84,21 @@ enum WebRouteVideo {
         wv.loadHTMLString(meta.html, baseURL: URL(string: "https://kisisel-api.nickdegs.com"))
         onAsama("motor yükleniyor")
         guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return bitir("motor 60 sn içinde hazırlanamadı (harita/karo yüklenmedi?)") }
-        // KARE HİZASI NÖBETÇİSİ: yukarıdaki iki katman da tutmazsa şerit videoya yazılmasın.
-        // Yalnız özellik okuması — yanlış pozitif yok, kare başına maliyet yok.
+        // KARE HİZASI — SON ÇARE DÜZELTME (ÜRETİMİ ASLA DURDURMAZ).
+        // ⚠️ Bu blok önce üretimi İPTAL ediyordu. Yanlıştı: yukarıdaki iki katmanın gerçek cihazda
+        // tuttuğunu doğrulayamıyorum (burada iOS cihaz/simülatör yok). Tutmazsa iptal etmek,
+        // "beyaz şeritli ama ÇALIŞAN" durumu "hiç çalışmayan"a çevirirdi — kullanıcı için daha kötü.
+        // Bu yüzden: bir kez daha sıfırlamayı dene, sonuç ne olursa olsun DEVAM ET.
+        // En kötü hâl = bugünkü davranış (şerit), asla toptan başarısızlık değil.
+        wv.scrollView.contentInsetAdjustmentBehavior = .never
+        wv.scrollView.contentInset = .zero
         wv.scrollView.contentOffset = .zero
         let pay = wv.scrollView.adjustedContentInset
         let ofs = wv.scrollView.contentOffset
         if pay.top > 0.5 || pay.left > 0.5 || abs(ofs.y) > 0.5 || abs(ofs.x) > 0.5 {
-            return bitir("kare hizası bozuk (pay \(Int(pay.top))px / ofset \(Int(ofs.y))px) — bulutta üretmeyi dene")
+            // Tanı için sakla; kullanıcıyı engelleme.
+            hizaUyarisi = "pay \(Int(pay.top))px / ofset \(Int(ofs.y))px"
+            print("⚠️ WebRouteVideo: kare hizası sıfırlanamadı — \(hizaUyarisi)")
         }
         _ = try? await wv.callAsyncJavaScript("return await window.motorHazir();", contentWorld: .page)
 
