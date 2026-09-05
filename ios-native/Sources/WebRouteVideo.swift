@@ -24,6 +24,11 @@ enum WebRouteVideo {
                        onAsama: @escaping (String) -> Void = { _ in },
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         sonHata = ""
+        // Ekran kilidi koruması EN BAŞTA: `sayfaAl` 190 sn'ye kadar sürebiliyor ve o pencerede
+        // ekran kendiliğinden kilitlenirse üretim daha başlamadan "arka plana alındı" ile ölüyordu.
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+        onAsama("harita hazırlanıyor")
         // 1) motor sayfasını al (bulutla aynı spec; sunucu sadece CPU-saniyesi harcar)
         guard let meta = await sayfaAl(from: from, to: to, type: type, speed: speed,
                                        aspect: aspect, camdist: camdist, line: line, dot: dot, token: token)
@@ -51,11 +56,10 @@ enum WebRouteVideo {
         // İPTAL edilir (yarım/beyaz video ÜRETİLMEZ) — sunucudaki yerelq-bekçisi 6 saat sonra işi
         // buluta devreder, yani iş kaybolmaz.
         let arkaPlan = ArkaPlanGozcu()
-        UIApplication.shared.isIdleTimerDisabled = true
-        defer { UIApplication.shared.isIdleTimerDisabled = false }
 
         // 3) sayfayı yükle + motor hazır olsun (karo ön-ısıtma dahil — bulutla aynı)
         wv.loadHTMLString(meta.html, baseURL: URL(string: "https://kisisel-api.nickdegs.com"))
+        onAsama("motor yükleniyor")
         guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return bitir("motor 60 sn içinde hazırlanamadı (harita/karo yüklenmedi?)") }
         _ = try? await wv.callAsyncJavaScript("return await window.motorHazir();", contentWorld: .page)
 
@@ -94,7 +98,7 @@ enum WebRouteVideo {
                 son = karart(img, oran: max(0, min(1, a)))
             }
             if let pb = pixelBuffer(son, size: boy, pool: adaptor.pixelBufferPool) {
-                while !input.isReadyForMoreMediaData { usleep(6000) }
+                while !input.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 6_000_000) }
                 adaptor.append(pb, withPresentationTime: CMTime(value: kareNo, timescale: fps))
             }
             kareNo += 1
@@ -145,7 +149,7 @@ enum WebRouteVideo {
             if k % 5 == 0 { onProgress(Double(hedefKare + k) / toplamIs) }
         }
         onAsama("video kapatılıyor")
-        onProgress(1.0)
+        onProgress(0.92)   // 0.92-1.00 finalize/mux/yükleme
         input.markAsFinished()
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
@@ -161,23 +165,6 @@ enum WebRouteVideo {
 
     // MARK: - yardımcılar
 
-    /// Uygulama arka plana düştü mü — üretim sırasında tek seferlik bayrak.
-    /// (Ana aktöre bağlı; bildirimler main queue'da gelir.)
-    @MainActor
-    final class ArkaPlanGozcu {
-        private(set) var dustu = false
-        private var gozlemler: [NSObjectProtocol] = []
-        init() {
-            let nc = NotificationCenter.default
-            for ad in [UIApplication.didEnterBackgroundNotification,
-                       UIApplication.willResignActiveNotification] {
-                gozlemler.append(nc.addObserver(forName: ad, object: nil, queue: .main) { [weak self] _ in
-                    self?.dustu = true
-                })
-            }
-        }
-        deinit { gozlemler.forEach { NotificationCenter.default.removeObserver($0) } }
-    }
 
     /// Kare pratikte boş mu (beyaz/şeffaf)? 5x5 örnekle ortalama parlaklık + değişim ölçülür.
     /// Gerçek harita karesinde renk değişimi her zaman vardır; boş snapshot'ta yoktur.
@@ -228,6 +215,7 @@ enum WebRouteVideo {
 
     private static func bekle(_ wv: WKWebView, js: String, saniye: Int) async -> Bool {
         for _ in 0..<(saniye * 4) {
+            if Task.isCancelled { return false }
             if let v = try? await wv.evaluateJavaScript(js), (v as? Bool) == true { return true }
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
@@ -272,4 +260,23 @@ enum WebRouteVideo {
         ctx.draw(cg, in: CGRect(origin: .zero, size: size))
         return buf
     }
+}
+
+/// Uygulama arka plana düştü mü — cihazda video üretimi sırasında tek seferlik bayrak.
+/// İKİ MOTOR DA kullanır (WebRouteVideo 3B + LocalRouteVideo düz/kuşbakışı): arka planda
+/// WKWebView snapshot'ı ve MKMapSnapshotter boş/donuk kare üretir; üretim orada kesilmeli.
+/// ⚠️ YALNIZ `didEnterBackground` dinlenir. `willResignActive` Control Center, Bildirim Merkezi,
+/// gelen arama, Siri ve uygulama değiştiricide de gelir — bunların hiçbirinde kare bozulmaz;
+/// o bildirimi dinlemek kullanıcı Control Center'a dokununca üretimi öldürüyordu (denetim bulgusu).
+@MainActor
+final class ArkaPlanGozcu {
+    private(set) var dustu = false
+    private var gozlem: NSObjectProtocol?
+    init() {
+        gozlem = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.dustu = true
+            }
+    }
+    deinit { if let g = gozlem { NotificationCenter.default.removeObserver(g) } }
 }

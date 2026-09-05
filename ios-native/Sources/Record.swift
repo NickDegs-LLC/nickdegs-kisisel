@@ -450,13 +450,14 @@ struct GenerateSheet: View {
                     // tam ekran ilerleme ve açık uyarı — kullanıcı ne yaptığını bilerek seçsin.
                     if premium && !sending && ["flat", "flyover", "3d"].contains(mode) {
                         Button {
+                            guard telefonIs == nil else { return }   // çift dokunuş -> ikinci üretim başlatma
                             telefonHata = false; telefonNeden = ""; telefonAsama = ""; telefonPct = 0.001; telefonAktif = true
                             telefonIs = Task { await telefondaUret() }
                         } label: {
                             Label(L("Telefonda üret (bedava)", "Render on this phone (free)"),
                                   systemImage: "iphone.gen3")
                         }
-                        .buttonStyle(.glassy)
+                        .buttonStyle(.glassy).disabled(telefonAktif || telefonIs != nil)
                         Text(L("Telefonda üretim bedavadır ama ekranı açık tutman gerekir.",
                                "On-device rendering is free but the screen must stay on."))
                             .font(.caption2).foregroundStyle(.secondary)
@@ -619,7 +620,7 @@ struct GenerateSheet: View {
     /// Görevin kendisi de `Task.isCancelled` ve WebRouteVideo'nun arka plan gözcüsüyle korunuyor.
     func telefonIptal() {
         telefonIs?.cancel(); telefonIs = nil
-        telefonAktif = false; telefonPct = 0
+        telefonAktif = false; telefonPct = 0; telefonAsama = ""
     }
 
     /// TELEFONDA ÜRET: düz/kuşbakışı LocalRouteVideo, 3B WebRouteVideo (bulutla aynı motor sayfası).
@@ -630,7 +631,7 @@ struct GenerateSheet: View {
         if pts.count < 3 {
             await MainActor.run { telefonNeden = L("bu sürüşte yeterli GPS noktası yok (\(pts.count))",
                                                    "not enough GPS points in this ride (\(pts.count))")
-                                  telefonHata = true; telefonPct = 0 }
+                                  telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil }
             return
         }
         let mURL = await store.musicFile(music, session: from)
@@ -648,19 +649,21 @@ struct GenerateSheet: View {
             lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
             lopt.musicURL = mURL
             video = await LocalRouteVideo.render(points: pts, opts: lopt,
+                                                 onAsama: { a in Task { @MainActor in telefonAsama = a } },
                                                  onProgress: { p in Task { @MainActor in telefonPct = p } })
         }
         if Task.isCancelled { return }                       // iptal edildi -> hiçbir şey yükleme
-        await MainActor.run { telefonAsama = L("yükleniyor", "uploading") }
         guard let v = video else {
             let neden = mode == "3d" ? WebRouteVideo.sonHata : LocalRouteVideo.sonHata
-            await MainActor.run { telefonNeden = neden; telefonHata = true; telefonPct = 0 }
+            await MainActor.run { telefonNeden = neden; telefonHata = true; telefonPct = 0
+                                  telefonAsama = ""; telefonIs = nil }
             return
         }
+        await MainActor.run { telefonAsama = L("yükleniyor", "uploading"); telefonPct = 0.96 }
         guard await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
                                            aspect: aspect, type: type, speed: speed) else {
             await MainActor.run { telefonNeden = L("video yüklenemedi (bağlantı?)", "upload failed (network?)")
-                                  telefonHata = true; telefonPct = 0 }
+                                  telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil }
             return
         }
         await MainActor.run {

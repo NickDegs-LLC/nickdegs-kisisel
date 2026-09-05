@@ -28,6 +28,7 @@ enum LocalRouteVideo {
     }
 
     static func render(points raw: [Pt], opts: Opts = Opts(),
+                       onAsama: @escaping (String) -> Void = { _ in },
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         guard raw.count >= 3 else { return bitir("bu sürüşte yeterli GPS noktası yok (\(raw.count))") }
         let vertical = (opts.aspect == "9:16")
@@ -76,7 +77,7 @@ enum LocalRouteVideo {
         let camDist = baseDist * distMul
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("route_\(Int(Date().timeIntervalSince1970)).mp4")
+            .appendingPathComponent("route_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(6)).mp4")
         try? FileManager.default.removeItem(at: url)
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
@@ -116,7 +117,20 @@ enum LocalRouteVideo {
         let olcek = 1.0 / kucultme                        // çapa pikseli -> çıktı pikseli büyütme
         var capa: MKMapSnapshotter.Snapshot?
         var pxPerMHedef: CGFloat = 0      // TÜM videoya tek ölçek kilidi (ilk karede ölçülür)
+        // 05.09 FİKSLERİ (denetimde bulundu — bu yol giriş noktalarının 4/5'i):
+        //  · İPTAL: Task.isCancelled kontrolü HİÇ YOKTU; İptal'e basınca render dakikalarca sürüyordu.
+        //  · %99: ilerleme `f/frames` idi, en fazla 0.999 -> ekranda %99'da donuyor, arkasından
+        //    finalize + ses miksi + yükleme sessizce sürüyordu. Artık kareler 0.90'a kadar; kalanı
+        //    finalize/mux/yükleme aşamalarına ayrıldı ve aşama metniyle bildiriliyor.
+        //  · ARKA PLAN: ekran kilitlenince MapKit anlık görüntüleri askıya alınıyor, ilerleme donuyordu.
+        let arkaPlan = ArkaPlanGozcu()
+        onAsama("kareler çiziliyor")
         for f in 0..<frames {
+            if Task.isCancelled { input.markAsFinished(); writer.cancelWriting()
+                                  try? FileManager.default.removeItem(at: url); return bitir("iptal edildi") }
+            if arkaPlan.dustu { input.markAsFinished(); writer.cancelWriting()
+                                try? FileManager.default.removeItem(at: url)
+                                return bitir("uygulama arka plana alındı — üretim durduruldu") }
             let prog = Double(f) / Double(max(1, frames - 1))
             let hedefM = prog * totM
             let (c, spdNow, idx) = konum(hedefM)
@@ -176,15 +190,20 @@ enum LocalRouteVideo {
                 while !input.isReadyForMoreMediaData { try? await Task.sleep(nanoseconds: 8_000_000) }
                 adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: fps))
             }
-            onProgress(Double(f) / Double(frames))
+            onProgress(Double(f) / Double(frames) * 0.90)   // 0.90-1.00 finalize/mux/yükleme'ye ayrıldı
         }
+        onAsama("video kapatılıyor"); onProgress(0.92)
         input.markAsFinished()
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
         }
         guard writer.status == .completed else { return bitir("video tamamlanamadı") }
+        if Task.isCancelled { try? FileManager.default.removeItem(at: url); return bitir("iptal edildi") }
         // Müzik seçildiyse cihazda mikse — bulut stitcher'ın yaptığı işin yereli.
-        if let m = opts.musicURL, let muxed = await muxMusic(video: url, music: m) { return muxed }
+        if let m = opts.musicURL {
+            onAsama("müzik ekleniyor"); onProgress(0.95)
+            if let muxed = await muxMusic(video: url, music: m) { return muxed }
+        }
         return url
     }
 
