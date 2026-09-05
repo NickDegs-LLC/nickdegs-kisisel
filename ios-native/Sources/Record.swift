@@ -574,7 +574,12 @@ struct GenerateSheet: View {
             await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
             // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
             // varsayılan "active" (son yüklenen) -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
-            if !userTracks.isEmpty && music.isEmpty { music = "active" }
+            // 🔴 KALDIRILDI 05.09 (Barış: "garip bir müzik çalıyor, müzik seçmediğim halde").
+            // Bu satır, kütüphanesinde yüklü parçası olan kullanıcıya SEÇMEDİĞİ hâlde son
+            // yüklediği parçayı ("active") otomatik atıyordu. Aynı dosyanın 632. satırı
+            // `if music.isEmpty { return L("Sessiz","Silent") } // boş = SESSİZ (Barış kuralı)`
+            // diyor — yani kod kendi kuralını burada eziyordu. Varsayılan artık SESSİZ;
+            // kullanıcı müzik isterse listeden kendisi seçer.
         }
         .fileImporter(isPresented: $showAudioPicker, allowedContentTypes: [.audio]) { res in
             if case .success(let url) = res {

@@ -48,12 +48,25 @@ enum WebRouteVideo {
         wv.isUserInteractionEnabled = false
         guard let pencere = UIApplication.shared.connectedScenes
                 .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return bitir("ekran penceresi bulunamadı") }
-        let kap = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        // 🔴 FİKS 05.09 — ÜSTTE 62 PİKSEL BEYAZ ŞERİT.
+        // `kap` pencerenin (0,0) noktasına ekleniyor (durum çubuğu bölgesi), UIKit güvenli alan
+        // payını alt görünümlere yayıyor ve WKWebView'ın kaydırma görünümü onu içerik boşluğuna
+        // çeviriyordu: sayfa 62 px AŞAĞI kayıyor, üstte webview'ın beyaz zemini kalıyor, ALTTA da
+        // belgenin son 62 px'i kırpılıyordu — oradaki harita lisans satırı ("© OpenStreetMap ·
+        // Esri, Maxar", sayfa.js:461, taban çizgisi y=1901 → 1963 = kare dışı) videoya HİÇ girmiyor.
+        // Bu aynı zamanda bir LİSANS UYUM sorunu: o satır görünmek zorunda.
+        // ÖLÇÜLDÜ: 2136 karenin 2042'sinde (%95,6) satır 0..61 düz RGB(253,253,253); bulut 0/2136.
+        // İki katman: (a) kapsayıcı payı hiç yaymasın, (b) kaydırma görünümü payı hiç uygulamasın.
+        let kap = GuvenliAlansizKap(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         kap.clipsToBounds = true                       // 1px kap: webview "ekranda" ama görünmez
         kap.alpha = 0.02
         kap.addSubview(wv)
         pencere.addSubview(kap)
         defer { kap.removeFromSuperview() }
+        wv.scrollView.contentInsetAdjustmentBehavior = .never
+        wv.scrollView.contentInset = .zero
+        wv.scrollView.contentOffset = .zero
+        wv.scrollView.bounces = false
 
         // 🔴 ARKA PLAN KORUMASI (1.63, Barış 05.09: "telefonda üretiliyorsa ve arka planı alıyorsa
         // beyaz ekran sorunu olabilir" — DOĞRU çıktı). Yukarıdaki yorumun dediği gibi WKWebView'ın
@@ -68,6 +81,14 @@ enum WebRouteVideo {
         wv.loadHTMLString(meta.html, baseURL: URL(string: "https://kisisel-api.nickdegs.com"))
         onAsama("motor yükleniyor")
         guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return bitir("motor 60 sn içinde hazırlanamadı (harita/karo yüklenmedi?)") }
+        // KARE HİZASI NÖBETÇİSİ: yukarıdaki iki katman da tutmazsa şerit videoya yazılmasın.
+        // Yalnız özellik okuması — yanlış pozitif yok, kare başına maliyet yok.
+        wv.scrollView.contentOffset = .zero
+        let pay = wv.scrollView.adjustedContentInset
+        let ofs = wv.scrollView.contentOffset
+        if pay.top > 0.5 || pay.left > 0.5 || abs(ofs.y) > 0.5 || abs(ofs.x) > 0.5 {
+            return bitir("kare hizası bozuk (pay \(Int(pay.top))px / ofset \(Int(ofs.y))px) — bulutta üretmeyi dene")
+        }
         _ = try? await wv.callAsyncJavaScript("return await window.motorHazir();", contentWorld: .page)
 
         // 4) MP4 yazıcı
@@ -77,8 +98,18 @@ enum WebRouteVideo {
         kismiCikti = outURL
         guard let writer = try? AVAssetWriter(outputURL: outURL, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
         let boy = CGSize(width: meta.W, height: meta.H)
+        // 🔴 FİKS 05.09 — BİT HIZI TAVANI. Ayar verilmediği için AVAssetWriter varsayılanı
+        // kullanıyordu: ÖLÇÜLDÜ 14,0 Mbit/s → 62,5 MB. AYNI rotanın bulut çıktısı 6,1 Mbit/s →
+        // 27,1 MB, üstelik telefon çıktısı ondan DAHA AZ keskin (5,75 vs 6,18 @ t=6s). Yani fazla
+        // bit kaliteye gitmiyordu, sadece yüklemeyi uzatıyordu. 9 Mbit/s buluta göre %50 pay
+        // bırakır (kaynak kayıpsız snapshot), kalite kaybı yok, dosya ~40 MB'a iner.
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
-                                   AVVideoWidthKey: boy.width, AVVideoHeightKey: boy.height]
+                                   AVVideoWidthKey: boy.width, AVVideoHeightKey: boy.height,
+                                   AVVideoCompressionPropertiesKey: [
+                                       AVVideoAverageBitRateKey: 9_000_000,
+                                       AVVideoExpectedSourceFrameRateKey: 60,
+                                       AVVideoMaxKeyFrameIntervalKey: 120,
+                                   ] as [String: Any]]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: vset)
         input.expectsMediaDataInRealTime = false
         let attrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
@@ -251,12 +282,19 @@ enum WebRouteVideo {
         }
     }
 
+    /// 🔴 FİKS 05.09 — VİDEONUN BAŞI VE SONU TAMAMEN SİYAHTI.
+    /// `UIGraphicsImageRendererContext.fill(_:)` TEK ARGÜMANLI hâli `CGBlendMode.copy` kullanır:
+    /// pikselleri harmanlamaz, DEĞİŞTİRİR. Yani "karart" fonksiyonu kareyi karartmak yerine
+    /// siyahla SİLİYORDU. ÖLÇÜLDÜ (2026-09-05_1788598167_1788613246.mp4): ilk 48 kare (0,8 sn)
+    /// ortalama parlaklık 0.00, sonra 48. karede birden 30.21'e sıçrıyor — rampa hiç yok.
+    /// Aynı rotanın BULUT çıktısında düzgün rampa var (0 → 22.5). Videonun sonu da aynı şekilde
+    /// tam siyahtı (t=35,3 → 0.00). Harman kipi açıkça `.normal` verilerek düzeltildi.
     private static func karart(_ img: UIImage, oran: CGFloat) -> UIImage {
         let r = UIGraphicsImageRenderer(size: img.size)
         return r.image { ctx in
             img.draw(at: .zero)
             UIColor.black.withAlphaComponent(oran).setFill()
-            ctx.fill(CGRect(origin: .zero, size: img.size))
+            ctx.fill(CGRect(origin: .zero, size: img.size), blendMode: .normal)
         }
     }
 
@@ -279,6 +317,12 @@ enum WebRouteVideo {
         ctx.draw(cg, in: CGRect(origin: .zero, size: size))
         return buf
     }
+}
+
+/// Güvenli alan payını TÜRETİLEN görünümlere hiç yaymayan kapsayıcı (05.09 beyaz şerit fiksi).
+/// WebKit'in kaydırma görünümü davranışından BAĞIMSIZ ikinci katman: `wv.safeAreaInsets` sıfır olur.
+final class GuvenliAlansizKap: UIView {
+    override var safeAreaInsets: UIEdgeInsets { .zero }
 }
 
 /// Uygulama arka plana düştü mü — cihazda video üretimi sırasında tek seferlik bayrak.
