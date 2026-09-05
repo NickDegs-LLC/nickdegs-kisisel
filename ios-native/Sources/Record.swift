@@ -35,6 +35,13 @@ struct GenerateSheet: View {
     @State private var done = false
     @State private var renderPct: Double = 0
     @State private var localErr = false
+    // TELEFONDA ÜRET (1.62, Barış 05.09): artık AYRI ve BİLEREK seçilen bir yol.
+    // Eskiden ana buton premium'da sessizce telefonda üretiyordu; kullanıcı nerede üretildiğini
+    // bilmiyordu ve uygulamadan çıkınca üretim beyaz kareler yazıyordu.
+    @State private var telefonAktif = false            // tam ekran üretim katmanı açık mı
+    @State private var telefonPct: Double = 0
+    @State private var telefonIs: Task<Void, Never>?   // ekrandan çıkılırsa iptal edilir
+    @State private var telefonHata = false
     @State private var showPaywall = false
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
     @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
@@ -404,28 +411,10 @@ struct GenerateSheet: View {
                         if !premium && videoHak <= 0 { showPaywall = true; return }
                         sending = true; localErr = false
                         Task {
-                            // Cihazda üretim yalnız PREMIUM'un düz/kuşbakışı videosunda.
-                            // Ücretsiz (hak satın almış) kullanıcının işi BULUTTA üretilir.
-                            // Cihazda üretim YALNIZ premium'un düz/kuşbakışı videosunda (aylardır öyle,
-                            // maliyeti sıfır). Diğer her şey bulutta: premium 3B + hak satın almış ücretsiz.
-                            if premium && (mode == "flat" || mode == "flyover") {
-                                let pts = await store.track(from: from, to: to)
-                                if pts.count >= 3 {
-                                    renderPct = 0.01
-                                    var lopt = LocalRouteVideo.Opts()
-                                    lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
-                                    lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
-                                    lopt.musicURL = await store.musicFile(music, session: from)
-                                    if let v = await LocalRouteVideo.render(points: pts, opts: lopt,
-                                                                            onProgress: { p in Task { @MainActor in renderPct = p } }),
-                                       await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
-                                                                    aspect: aspect, type: type, speed: speed) {
-                                        renderPct = 0; sending = false; done = true
-                                        store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.0)); dismiss(); return
-                                    }
-                                    renderPct = 0   // cihazda olmadı -> buluta düş (aşağıda)
-                                }
-                            }
+                            // 1.62 (Barış 05.09: "Varsayılan olarak telefondan üretilmeyecek"):
+                            // bu buton ARTIK HER ZAMAN BULUTTA üretir. Telefonda üretmek isteyen
+                            // aşağıdaki ayrı "Telefonda üret" düğmesini kullanır — orada ne olduğunu
+                            // gösteren tam ekran ilerleme ve "çıkarsan iptal olur" uyarısı var.
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
                             // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
                             let tacTh = mode == "tactical" ? tacTheme : ""
@@ -453,15 +442,22 @@ struct GenerateSheet: View {
                                                   : L("Yeniden oluştur","Regenerate")) }
                     }.buttonStyle(.glassyProminent()).disabled(sending)
 
-                    // TELEFONDA ÜRETİM UYARISI (Barış 2026-08-28: "kapatma şeklinde uyarı koymamız lazım").
-                    // Cihazda üretim uygulama ön plandayken sürer; kullanıcı kapatırsa iş yarıda kalır.
-                    // Bulutta üretilen (premium 3B) işlerde bu uyarı GÖSTERİLMEZ — orada kapatmak serbest.
-                    if sending && premium && (mode == "flat" || mode == "flyover") {
-                        Label(L("Video telefonunda üretiliyor — uygulamayı kapatma, ekranı açık tut.",
-                                "Rendering on your phone — keep the app open."),
-                              systemImage: "exclamationmark.triangle.fill")
-                            .font(.footnote).foregroundStyle(.orange)
-                            .padding(.top, 2)
+                    // ═══ TELEFONDA ÜRET (ayrı yol) ═══
+                    // Premium + düz/kuşbakışı/3B. Bedava (GPU parası yok) ama uygulama ön planda
+                    // kalmalı: WKWebView arka planda BOŞ kare döndürüyor. O yüzden ayrı düğme,
+                    // tam ekran ilerleme ve açık uyarı — kullanıcı ne yaptığını bilerek seçsin.
+                    if premium && !sending && !done && ["flat", "flyover", "3d"].contains(mode) {
+                        Button {
+                            telefonHata = false; telefonPct = 0.001; telefonAktif = true
+                            telefonIs = Task { await telefondaUret() }
+                        } label: {
+                            Label(L("Telefonda üret (bedava)", "Render on this phone (free)"),
+                                  systemImage: "iphone.gen3")
+                        }
+                        .buttonStyle(.glassy)
+                        Text(L("Telefonda üretim bedavadır ama ekranı açık tutman gerekir.",
+                               "On-device rendering is free but the screen must stay on."))
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
 
                     // Günlük limit dolunca / proaktif: bugünün limitini 2x yapan boost (consumable IAP)
@@ -504,6 +500,42 @@ struct GenerateSheet: View {
         .presentationDetents([.large])
         .interactiveDismissDisabled(sending)   // render sırasında sheet kapatılamaz
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
+        // ═══ TELEFONDA ÜRETİM EKRANI (Barış 05.09: "yükleniyor ekranı olsun, sayfadan çıkarsan
+        // iptal olur tarzında bir şey olsun") ═══
+        // fullScreenCover: kullanıcı kazara kaydırıp kapatamasın (interactiveDismissDisabled).
+        // Çıkış tek yoldan: "İptal" düğmesi. Kapanınca görev iptal edilir, yarım video yazılmaz.
+        .fullScreenCover(isPresented: $telefonAktif) {
+            ZStack {
+                Brand.gradient.opacity(0.25).ignoresSafeArea()
+                VStack(spacing: 18) {
+                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                        .font(.system(size: 44)).foregroundStyle(Brand.accent)
+                    Text(L("Telefonunda üretiliyor…", "Rendering on your phone…"))
+                        .font(.title3.weight(.semibold))
+                    ProgressView(value: max(0.001, telefonPct)).progressViewStyle(.linear)
+                        .frame(width: 240).tint(Brand.accent)
+                    Text("%\(Int(telefonPct * 100))").font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                    Label(L("Bu ekrandan çıkarsan üretim iptal olur.",
+                            "Leaving this screen cancels the render."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+                    Text(L("Uygulamayı arka plana alma — ekran kararırsa kareler boş çıkar.",
+                           "Don't background the app — frames come out blank if the screen sleeps."))
+                        .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                    if telefonHata {
+                        Text(L("Üretilemedi. Bulutta üretmeyi deneyebilirsin.",
+                               "Couldn't render. You can try the cloud instead."))
+                            .font(.footnote).foregroundStyle(.red)
+                    }
+                    Button(role: .cancel) { telefonIptal() } label: {
+                        Text(L("İptal", "Cancel")).frame(maxWidth: 200)
+                    }.buttonStyle(.glassy).padding(.top, 6)
+                }.padding(28)
+            }
+            .interactiveDismissDisabled(true)
+        }
+        .onDisappear { telefonIptal() }   // sayfa kapanırsa üretim de kapanır
         .task {
             await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
             // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
@@ -569,6 +601,50 @@ struct GenerateSheet: View {
             return music.replacingOccurrences(of: "_", with: " ")
         }
         return L("Yok","None")
+    }
+
+    /// Telefonda üretimi iptal eder — görev durur, katman kapanır, yarım video YAZILMAZ.
+    /// Görevin kendisi de `Task.isCancelled` ve WebRouteVideo'nun arka plan gözcüsüyle korunuyor.
+    func telefonIptal() {
+        telefonIs?.cancel(); telefonIs = nil
+        telefonAktif = false; telefonPct = 0
+    }
+
+    /// TELEFONDA ÜRET: düz/kuşbakışı LocalRouteVideo, 3B WebRouteVideo (bulutla aynı motor sayfası).
+    /// Başarılıysa video sunucuya yüklenir ve Videolarım'a geçilir; başarısızsa katmanda hata gösterilir
+    /// (kullanıcı buluta düşmeyi kendi seçer — sessizce para harcamayız).
+    func telefondaUret() async {
+        let pts = await store.track(from: from, to: to)
+        if pts.count < 3 { await MainActor.run { telefonHata = true; telefonPct = 0 }; return }
+        let mURL = await store.musicFile(music, session: from)
+        var video: URL?
+        if mode == "3d" {
+            video = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
+                                               aspect: aspect, camdist: camdist,
+                                               line: lineColor, dot: resolvedDot,
+                                               token: store.token, musicURL: mURL,
+                                               onProgress: { p in Task { @MainActor in telefonPct = p } })
+        } else {
+            var lopt = LocalRouteVideo.Opts()
+            lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
+            lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
+            lopt.musicURL = mURL
+            video = await LocalRouteVideo.render(points: pts, opts: lopt,
+                                                 onProgress: { p in Task { @MainActor in telefonPct = p } })
+        }
+        if Task.isCancelled { return }                       // iptal edildi -> hiçbir şey yükleme
+        guard let v = video,
+              await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
+                                           aspect: aspect, type: type, speed: speed) else {
+            await MainActor.run { telefonHata = true; telefonPct = 0 }
+            return
+        }
+        await MainActor.run {
+            telefonAktif = false; telefonPct = 0; telefonIs = nil
+            done = true; store.jumpToVideos = true
+        }
+        try? await Task.sleep(for: .seconds(0.8))
+        await MainActor.run { dismiss() }
     }
 
     func field(_ t: String) -> some View {
