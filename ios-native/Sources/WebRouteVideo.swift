@@ -10,16 +10,23 @@ import UIKit
 @MainActor
 enum WebRouteVideo {
 
+    /// SON HATA NEDENİ (1.62). Bu motor her başarısızlıkta sessizce `nil` dönüyordu; kullanıcı da
+    /// biz de "Üretilemedi"den başka bir şey görmüyorduk (Barış 05.09: "niye üretilemedi ki?").
+    /// Artık her çıkış noktası nedenini buraya yazar, UI onu gösterir.
+    static var sonHata = ""
+    private static func bitir(_ neden: String) -> URL? { sonHata = neden; return nil }
+
     struct Meta: Decodable { let html: String; let frames: Int; let fps: Int; let W: Int; let H: Int }
 
     static func render(from: Double, to: Double, type: String, speed: String,
                        aspect: String, camdist: String, line: String, dot: String,
                        token: String, musicURL: URL?, qaKareTavan: Int? = nil,
                        onProgress: @escaping (Double) -> Void) async -> URL? {
+        sonHata = ""
         // 1) motor sayfasını al (bulutla aynı spec; sunucu sadece CPU-saniyesi harcar)
         guard let meta = await sayfaAl(from: from, to: to, type: type, speed: speed,
                                        aspect: aspect, camdist: camdist, line: line, dot: dot, token: token)
-        else { return nil }
+        else { return bitir("motor sayfası alınamadı (sunucu /api/motor3d)") }
 
         // 2) görünmez WKWebView (ekran hiyerarşisinde olmalı — yoksa snapshot boş döner)
         let cfg = WKWebViewConfiguration()
@@ -27,7 +34,7 @@ enum WebRouteVideo {
         let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: meta.W, height: meta.H), configuration: cfg)
         wv.isUserInteractionEnabled = false
         guard let pencere = UIApplication.shared.connectedScenes
-                .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return nil }
+                .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return bitir("ekran penceresi bulunamadı") }
         let kap = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         kap.clipsToBounds = true                       // 1px kap: webview "ekranda" ama görünmez
         kap.alpha = 0.02
@@ -48,14 +55,14 @@ enum WebRouteVideo {
 
         // 3) sayfayı yükle + motor hazır olsun (karo ön-ısıtma dahil — bulutla aynı)
         wv.loadHTMLString(meta.html, baseURL: URL(string: "https://kisisel-api.nickdegs.com"))
-        guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return nil }
+        guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return bitir("motor 60 sn içinde hazırlanamadı (harita/karo yüklenmedi?)") }
         _ = try? await wv.callAsyncJavaScript("return await window.motorHazir();", contentWorld: .page)
 
         // 4) MP4 yazıcı
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("motor_\(Int(Date().timeIntervalSince1970)).mp4")
         try? FileManager.default.removeItem(at: outURL)
-        guard let writer = try? AVAssetWriter(outputURL: outURL, fileType: .mp4) else { return nil }
+        guard let writer = try? AVAssetWriter(outputURL: outURL, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
         let boy = CGSize(width: meta.W, height: meta.H)
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
                                    AVVideoWidthKey: boy.width, AVVideoHeightKey: boy.height]
@@ -65,9 +72,9 @@ enum WebRouteVideo {
                                     kCVPixelBufferWidthKey as String: meta.W,
                                     kCVPixelBufferHeightKey as String: meta.H]
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attrs)
-        guard writer.canAdd(input) else { return nil }
+        guard writer.canAdd(input) else { return bitir("video girişi eklenemedi") }
         writer.add(input)
-        guard writer.startWriting() else { return nil }
+        guard writer.startWriting() else { return bitir("video yazımı başlamadı") }
         writer.startSession(atSourceTime: .zero)
 
         let fps = Int32(meta.fps)
@@ -103,7 +110,7 @@ enum WebRouteVideo {
         for f in 0..<hedefKare {
             if arkaPlan.dustu {           // uygulama arka plana geçti -> beyaz kare üretmeden çık
                 input.markAsFinished(); writer.cancelWriting()
-                return nil
+                return bitir("uygulama arka plana alındı — üretim durduruldu")
             }
             _ = try? await wv.callAsyncJavaScript("return await window.kareCiz(\(f));", contentWorld: .page)
             if let img = await cek(wv, boy: boy) {
@@ -111,7 +118,7 @@ enum WebRouteVideo {
                 // 20 ardışık boş kare = üretim bozulmuş; yarım video yayınlamak yerine iptal.
                 if bosMu(img) {
                     bosKare += 1
-                    if bosKare >= 20 { input.markAsFinished(); writer.cancelWriting(); return nil }
+                    if bosKare >= 20 { input.markAsFinished(); writer.cancelWriting(); return bitir("ekran karardı/boş kare geldi — üretim durduruldu") }
                 } else { bosKare = 0 }
                 yaz(img)
             }
@@ -127,7 +134,7 @@ enum WebRouteVideo {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
         }
-        guard writer.status == .completed, kareNo > Int64(hedefKare / 2) else { return nil }
+        guard writer.status == .completed, kareNo > Int64(hedefKare / 2) else { return bitir("video tamamlanamadı (\(kareNo)/\(hedefKare) kare)") }
         // 8) müzik (cihazda miks — LocalRouteVideo ile ortak yol)
         if let m = musicURL, let muxed = await LocalRouteVideo.muxMusic(video: outURL, music: m) { return muxed }
         return outURL

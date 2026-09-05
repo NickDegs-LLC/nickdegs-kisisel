@@ -42,6 +42,7 @@ struct GenerateSheet: View {
     @State private var telefonPct: Double = 0
     @State private var telefonIs: Task<Void, Never>?   // ekrandan çıkılırsa iptal edilir
     @State private var telefonHata = false
+    @State private var telefonNeden = ""      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
     @State private var showPaywall = false
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
     @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
@@ -448,7 +449,7 @@ struct GenerateSheet: View {
                     // tam ekran ilerleme ve açık uyarı — kullanıcı ne yaptığını bilerek seçsin.
                     if premium && !sending && !done && ["flat", "flyover", "3d"].contains(mode) {
                         Button {
-                            telefonHata = false; telefonPct = 0.001; telefonAktif = true
+                            telefonHata = false; telefonNeden = ""; telefonPct = 0.001; telefonAktif = true
                             telefonIs = Task { await telefondaUret() }
                         } label: {
                             Label(L("Telefonda üret (bedava)", "Render on this phone (free)"),
@@ -524,9 +525,16 @@ struct GenerateSheet: View {
                         .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                     if telefonHata {
-                        Text(L("Üretilemedi. Bulutta üretmeyi deneyebilirsin.",
-                               "Couldn't render. You can try the cloud instead."))
-                            .font(.footnote).foregroundStyle(.red)
+                        VStack(spacing: 4) {
+                            Text(L("Üretilemedi. Bulutta üretmeyi deneyebilirsin.",
+                                   "Couldn't render. You can try the cloud instead."))
+                                .font(.footnote).foregroundStyle(.red)
+                            if !telefonNeden.isEmpty {
+                                Text(telefonNeden)          // NEDEN — teşhis için şart
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center).padding(.horizontal, 24)
+                            }
+                        }
                     }
                     Button(role: .cancel) { telefonIptal() } label: {
                         Text(L("İptal", "Cancel")).frame(maxWidth: 200)
@@ -615,7 +623,12 @@ struct GenerateSheet: View {
     /// (kullanıcı buluta düşmeyi kendi seçer — sessizce para harcamayız).
     func telefondaUret() async {
         let pts = await store.track(from: from, to: to)
-        if pts.count < 3 { await MainActor.run { telefonHata = true; telefonPct = 0 }; return }
+        if pts.count < 3 {
+            await MainActor.run { telefonNeden = L("bu sürüşte yeterli GPS noktası yok (\(pts.count))",
+                                                   "not enough GPS points in this ride (\(pts.count))")
+                                  telefonHata = true; telefonPct = 0 }
+            return
+        }
         let mURL = await store.musicFile(music, session: from)
         var video: URL?
         if mode == "3d" {
@@ -633,10 +646,15 @@ struct GenerateSheet: View {
                                                  onProgress: { p in Task { @MainActor in telefonPct = p } })
         }
         if Task.isCancelled { return }                       // iptal edildi -> hiçbir şey yükleme
-        guard let v = video,
-              await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
+        guard let v = video else {
+            let neden = mode == "3d" ? WebRouteVideo.sonHata : LocalRouteVideo.sonHata
+            await MainActor.run { telefonNeden = neden; telefonHata = true; telefonPct = 0 }
+            return
+        }
+        guard await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
                                            aspect: aspect, type: type, speed: speed) else {
-            await MainActor.run { telefonHata = true; telefonPct = 0 }
+            await MainActor.run { telefonNeden = L("video yüklenemedi (bağlantı?)", "upload failed (network?)")
+                                  telefonHata = true; telefonPct = 0 }
             return
         }
         await MainActor.run {

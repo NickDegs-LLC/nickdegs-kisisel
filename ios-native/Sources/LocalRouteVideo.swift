@@ -9,6 +9,11 @@ import CoreLocation
 // 3B mod da cihazda (Apple foto-gerçekçi flyover, pitch 66) + 1080p + rota renkleri + müzik miksi.
 // Buluta giden tek şey bitmiş MP4 -> sunucu GPU maliyeti SIFIR.
 enum LocalRouteVideo {
+
+    /// SON HATA NEDENİ (1.62) — bkz. WebRouteVideo.sonHata. Sessiz nil dönüşleri konuşturur.
+    static var sonHata = ""
+    private static func bitir(_ neden: String) -> URL? { sonHata = neden; return nil }
+
     struct Pt { let coord: CLLocationCoordinate2D; let spd: Double }
 
     // Render seçenekleri — bulut motoruyla aynı kullanıcı tercihlerini taşır.
@@ -24,7 +29,7 @@ enum LocalRouteVideo {
 
     static func render(points raw: [Pt], opts: Opts = Opts(),
                        onProgress: @escaping (Double) -> Void) async -> URL? {
-        guard raw.count >= 3 else { return nil }
+        guard raw.count >= 3 else { return bitir("bu sürüşte yeterli GPS noktası yok (\(raw.count))") }
         let vertical = (opts.aspect == "9:16")
         // 1080p: modern iPhone GPU'su kaldırıyor; 60 sn'lik video ~1-3 dk'da çıkıyor.
         let size: CGSize = opts.premium
@@ -73,7 +78,7 @@ enum LocalRouteVideo {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("route_\(Int(Date().timeIntervalSince1970)).mp4")
         try? FileManager.default.removeItem(at: url)
-        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return nil }
+        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
                                    AVVideoWidthKey: size.width, AVVideoHeightKey: size.height]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: vset)
@@ -82,9 +87,9 @@ enum LocalRouteVideo {
                                     kCVPixelBufferWidthKey as String: Int(size.width),
                                     kCVPixelBufferHeightKey as String: Int(size.height)]
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attrs)
-        guard writer.canAdd(input) else { return nil }
+        guard writer.canAdd(input) else { return bitir("video girişi eklenemedi") }
         writer.add(input)
-        guard writer.startWriting() else { return nil }
+        guard writer.startWriting() else { return bitir("video yazımı başlamadı") }
         writer.startSession(atSourceTime: .zero)
 
         let lineColor = color(opts.line, fallback: UIColor(red: 0, green: 0.9, blue: 1, alpha: 1))
@@ -177,7 +182,7 @@ enum LocalRouteVideo {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             writer.finishWriting { c.resume() }
         }
-        guard writer.status == .completed else { return nil }
+        guard writer.status == .completed else { return bitir("video tamamlanamadı") }
         // Müzik seçildiyse cihazda mikse — bulut stitcher'ın yaptığı işin yereli.
         if let m = opts.musicURL, let muxed = await muxMusic(video: url, music: m) { return muxed }
         return url
