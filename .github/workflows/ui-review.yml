@@ -29,7 +29,10 @@ jobs:
             -project MoveLog.xcodeproj -scheme MoveLog \
             -sdk iphonesimulator -configuration Debug -derivedDataPath dd \
             -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO \
-            2>&1 | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+            2>&1 | tee /tmp/build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+          # 05.09: `|| true` derleme hatasını GİZLİYORDU; sonraki adım boş bir .app'e
+          # "Missing bundle ID" deyip alakasız bir hata veriyordu. Artık gerçek hata görünür.
+          grep -q "BUILD SUCCEEDED" /tmp/build.log || { echo "::error::simülatör derlemesi BAŞARISIZ"; tail -40 /tmp/build.log; exit 1; }
           test -d "$(pwd)/dd/Build/Products/Debug-iphonesimulator/MoveLog.app"
           echo "APP=$(pwd)/dd/Build/Products/Debug-iphonesimulator/MoveLog.app" >> $GITHUB_ENV
       - name: Capture review screens
