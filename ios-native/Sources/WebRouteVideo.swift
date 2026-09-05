@@ -88,7 +88,7 @@ enum WebRouteVideo {
         let introN = Int(Double(meta.fps) * 1.6)
         let outroN = Int(Double(meta.fps) * 6.0)       // satStyle outro (motor sayfası aynı sayıyı üretir)
         let toplam = introN + meta.frames + outroN
-        func yaz(_ img: UIImage) {
+        func yaz(_ img: UIImage) async {
             let t = Double(kareNo)
             var son = img
             // fade in/out: bulut çıktısıyla aynı his (ilk/son 0.8sn siyaha karışır)
@@ -107,7 +107,7 @@ enum WebRouteVideo {
         // 5) intro kartı (tek çekim, introN kez)
         if let ok = try? await wv.callAsyncJavaScript("return await window.introCiz();", contentWorld: .page),
            (ok as? Bool) == true, let img = await cek(wv, boy: boy) {
-            for _ in 0..<introN { yaz(img) }
+            for _ in 0..<introN { await yaz(img) }
         }
         // 6) rota kareleri — kamera matematiği sayfada, bulutla birebir
         let hedefKare = qaKareTavan.map { min($0, meta.frames) } ?? meta.frames
@@ -134,7 +134,7 @@ enum WebRouteVideo {
                     bosKare += 1
                     if bosKare >= 20 { input.markAsFinished(); writer.cancelWriting(); return bitir("ekran karardı/boş kare geldi — üretim durduruldu") }
                 } else { bosKare = 0 }
-                yaz(img)
+                await yaz(img)
             }
             if f % 5 == 0 { onProgress(Double(f) / toplamIs) }
         }
@@ -145,7 +145,7 @@ enum WebRouteVideo {
             if Task.isCancelled { input.markAsFinished(); writer.cancelWriting(); return bitir("iptal edildi") }
             if arkaPlan.dustu { input.markAsFinished(); writer.cancelWriting(); return bitir("uygulama arka plana alındı — üretim durduruldu") }
             _ = try? await wv.callAsyncJavaScript("return await window.finalCiz(\(k));", contentWorld: .page)
-            if let img = await cek(wv, boy: boy) { yaz(img) }
+            if let img = await cek(wv, boy: boy) { await yaz(img) }
             if k % 5 == 0 { onProgress(Double(hedefKare + k) / toplamIs) }
         }
         onAsama("video kapatılıyor")
@@ -268,14 +268,18 @@ enum WebRouteVideo {
 /// ⚠️ YALNIZ `didEnterBackground` dinlenir. `willResignActive` Control Center, Bildirim Merkezi,
 /// gelen arama, Siri ve uygulama değiştiricide de gelir — bunların hiçbirinde kare bozulmaz;
 /// o bildirimi dinlemek kullanıcı Control Center'a dokununca üretimi öldürüyordu (denetim bulgusu).
-@MainActor
-final class ArkaPlanGozcu {
-    private(set) var dustu = false
+final class ArkaPlanGozcu: @unchecked Sendable {
+    private let kilit = NSLock()
+    private var _dustu = false
     private var gozlem: NSObjectProtocol?
+    /// Herhangi bir aktörden okunabilir: bayrak ana kuyrukta yazılır, NSLock ile korunur.
+    /// (LocalRouteVideo @MainActor DEĞİL — bu yüzden sınıf aktöre bağlanamaz.)
+    var dustu: Bool { kilit.lock(); defer { kilit.unlock() }; return _dustu }
     init() {
         gozlem = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.dustu = true
+                guard let self else { return }
+                self.kilit.lock(); self._dustu = true; self.kilit.unlock()
             }
     }
     deinit { if let g = gozlem { NotificationCenter.default.removeObserver(g) } }
