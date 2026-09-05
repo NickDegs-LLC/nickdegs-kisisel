@@ -1,5 +1,7 @@
-• Daily summary: pull down to refresh — summaries now appear right away
-• Walkie-talkie: incoming voice clips play automatically
-• Videos: fixed the white screen issue, smoother map motion
-• Video creation no longer gets stuck; pending videos now finish
-• Fixed videos that came out without music
+• On-device video: progress no longer goes backwards, and upload shows real progress
+• Screen no longer locks mid-render — flat/flyover videos stop failing halfway
+• Notifications now say which ride they're for; tapping opens the video
+• No more duplicate notifications for the same video
+• When a video can't be created, you see the real reason
+• Fixed the live friends map; removed duplicate route cards
+• Sessions no longer expire every 30 days

@@ -345,6 +345,20 @@ struct GenerateSheet: View {
                                 ForEach(userTracks, id: \.self) { tr in
                                     Button("🎵 " + (tr["name"] ?? "Müzik")) { music = "lib:" + (tr["id"] ?? "") }
                                 }
+                                // 🔴 FİKS 05.09: DELETE /api/music/library/{mid} sunucuda vardı ama
+                                // hiçbir istemciden çağrılmıyordu — kullanıcı müzik ekleyip SİLEMİYORDU.
+                                Divider()
+                                ForEach(userTracks, id: \.self) { tr in
+                                    Button(role: .destructive) {
+                                        Task {
+                                            let mid = tr["id"] ?? ""
+                                            if await store.musicLibraryDelete(mid) {
+                                                if music == "lib:" + mid { music = "" }
+                                                userTracks = await store.musicLibrary()
+                                            }
+                                        }
+                                    } label: { Text("🗑️ " + (tr["name"] ?? "Müzik")) }
+                                }
                             }
                             Divider()
                             ForEach(TACTICAL_TRACKS, id: \.self) { t in

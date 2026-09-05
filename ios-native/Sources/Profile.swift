@@ -59,6 +59,13 @@ struct ProfileView: View {
     @State private var showSharedRoutes = false
     @State private var liveFriend: Friend? = nil
     @State private var pairTalkFriend: Friend? = nil                  // 📻 davet gönderen taraf
+    // 05.09 — arkadaşlıktan çıkarma + davet akışı (ikisi de sunucuda vardı, istemcide yoktu)
+    @State private var silinecekArkadas: Friend? = nil
+    @State private var davetKod = ""
+    @State private var davetPaylas = false
+    @State private var davetGirisAcik = false
+    @State private var davetGirisi = ""
+    @State private var davetSonuc = ""
     @State private var vcIncoming: (from: String, name: String)? = nil // gelen canlı-telsiz daveti
     @State private var vcJoinPeer: Friend? = nil                       // kabul sonrası katılım
     @State private var pttBusyFriends: Set<String> = []                // şu an bana konuşan arkadaşlar
@@ -166,6 +173,24 @@ struct ProfileView: View {
                             }
                         }
 
+                        // 🔴 FİKS 05.09: /api/invite ve /api/invite/accept uçları sunucuda VARDI ama
+                        // istemcide HİÇ kullanılmıyordu (ne link üretimi ne kabul) → davet akışı ölüydü.
+                        section(L("Davet","Invite"))
+                        HStack(spacing: 10) {
+                            Button {
+                                Task {
+                                    davetKod = await store.invite()
+                                    if !davetKod.isEmpty { davetPaylas = true }
+                                }
+                            } label: {
+                                Label(L("Davet linki oluştur","Create invite link"), systemImage: "link")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }.buttonStyle(.borderless)
+                            Spacer()
+                            Button(L("Kodum var","I have a code")) { davetGirisAcik = true }
+                                .font(.system(size: 14, weight: .semibold))
+                        }.padding(12).glassPanel(18)
+
                         section(L("Arkadaşlar","Friends"))
                         ForEach(friends) { f in
                             HStack(spacing: 12) {
@@ -212,6 +237,13 @@ struct ProfileView: View {
                                         .frame(width: 38, height: 38).glassPanel(19)
                                 }.buttonStyle(.borderless)
                             }.padding(12).glassPanel(18).smoothAppear()
+                            // 🔴 FİKS 05.09: sunucudaki DELETE /api/friends/{uname} hiçbir yerden
+                            // çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU.
+                            .contextMenu {
+                                Button(role: .destructive) { silinecekArkadas = f } label: {
+                                    Label(L("Arkadaşlıktan çıkar","Remove friend"), systemImage: "person.badge.minus")
+                                }
+                            }
                         }
                         ForEach(outgoing) { f in
                             HStack(spacing: 12) {
@@ -594,6 +626,46 @@ struct ProfileView: View {
         // kabul eden taraf (direkt katılır)
         .sheet(item: $vcJoinPeer) { f in
             PairTalkView(peer: f.username, peerLabel: f.name ?? f.username, inviting: false)
+        }
+        .confirmationDialog(
+            L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
+            isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button(L("Arkadaşlıktan çıkar","Remove friend"), role: .destructive) {
+                if let f = silinecekArkadas {
+                    Task { await store.removeFriend(f.username); await reloadFriends() }
+                }
+                silinecekArkadas = nil
+            }
+            Button(L("Vazgeç","Cancel"), role: .cancel) { silinecekArkadas = nil }
+        } message: {
+            Text(silinecekArkadas.map { $0.name ?? $0.username } ?? "")
+        }
+        .sheet(isPresented: $davetPaylas) {
+            if #available(iOS 16.0, *) {
+                ShareLink(item: davetKod) { Text(L("Davet linkini paylaş","Share invite link")) }
+                    .presentationDetents([.medium])
+            }
+        }
+        .alert(L("Davet kodu","Invite code"), isPresented: $davetGirisAcik) {
+            TextField(L("Kodu yapıştır","Paste the code"), text: $davetGirisi)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button(L("Kabul et","Accept")) {
+                let kod = davetGirisi.trimmingCharacters(in: .whitespaces)
+                    .components(separatedBy: "invite=").last ?? davetGirisi
+                davetGirisi = ""
+                Task {
+                    let ok = await store.acceptInvite(kod.trimmingCharacters(in: .whitespaces))
+                    davetSonuc = ok ? L("Arkadaş eklendi 🤝","Friend added 🤝")
+                                    : L("Kod geçersiz veya süresi dolmuş.","Invalid or expired code.")
+                    if ok { await reloadFriends() }
+                }
+            }
+            Button(L("Vazgeç","Cancel"), role: .cancel) { davetGirisi = "" }
+        }
+        .alert(davetSonuc, isPresented: Binding(get: { !davetSonuc.isEmpty }, set: { if !$0 { davetSonuc = "" } })) {
+            Button("OK", role: .cancel) { davetSonuc = "" }
         }
         .alert(L("Canlı telsiz daveti 📻", "Live radio invite 📻"), isPresented: Binding(
             get: { vcIncoming != nil }, set: { if !$0 { vcIncoming = nil } })) {

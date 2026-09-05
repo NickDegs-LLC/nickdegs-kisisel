@@ -395,6 +395,36 @@ enum AuthGate { case checking, valid, needLogin, offline }
             UserDefaults.standard.set(true, forKey: "nd_ultra")
         }
     }
+    /// 🔴 FİKS 05.09: sunucudaki `DELETE /api/friends/{uname}` (grup3) HİÇBİR istemciden
+    /// çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU (uçtan uca tarama bulgusu).
+    @discardableResult
+    func removeFriend(_ username: String) async -> Bool {
+        let u = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
+        guard let d = try? await req("/api/friends/\(u)", method: "DELETE"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+        return (o["ok"] as? Bool) ?? false
+    }
+
+    /// 🔴 FİKS 05.09: `DELETE /api/music/library/{mid}` (grup4:370) da bağlı değildi — kullanıcı
+    /// müzik ekleyebiliyor ama SİLEMİYORDU.
+    @discardableResult
+    func musicLibraryDelete(_ mid: String) async -> Bool {
+        let m = mid.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? mid
+        guard let d = try? await req("/api/music/library/\(m)", method: "DELETE"),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+        return (o["ok"] as? Bool) ?? false
+    }
+
+    /// 🔴 FİKS 05.09: `/api/invite` linki üretiliyordu ama `?invite=` derin-linkini yakalayan
+    /// hiçbir kod yoktu ve `/api/invite/accept` HİÇ çağrılmıyordu → davet akışı tümüyle ölüydü.
+    @discardableResult
+    func acceptInvite(_ token: String) async -> Bool {
+        guard !token.isEmpty else { return false }
+        guard let d = try? await req("/api/invite/accept", method: "POST", body: ["token": token]),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+        return (o["ok"] as? Bool) ?? false
+    }
+
     func friends() async -> [Friend] {
         if AppEnv.demo { return DemoData.friends }
         return (try? dec().decode([String:[Friend]].self, from: await req("/api/friends"))["friends"]) ?? []
