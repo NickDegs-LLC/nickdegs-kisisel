@@ -113,8 +113,8 @@ import UIKit
             if let (d, resp) = try? await URLSession.shared.data(for: r),
                let http = resp as? HTTPURLResponse {
                 if http.statusCode == 200 {
-                    let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-                    if ((o??["ok"]) as? Bool) ?? true { return true }
+                    let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+                    if (o?["ok"] as? Bool) ?? true { return true }   // alan yoksa 200 = başarı
                 }
                 // 4xx = kalıcı ret (ör. jws geçersiz); tekrar denemek işe yaramaz
                 if (400..<500).contains(http.statusCode) { return false }

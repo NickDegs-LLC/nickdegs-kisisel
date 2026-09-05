@@ -653,6 +653,8 @@ struct GenerateSheet: View {
         // `didEnterBackground` düşüyor ve LocalRouteVideo üretimi iptal ediyordu. Yani telefonda
         // düz/kuşbakışı üretimi neredeyse HER ZAMAN ölüyordu. Koruma artık iki motoru da kapsıyor.
         await MainActor.run { UIApplication.shared.isIdleTimerDisabled = true }
+        // defer GUARD'DAN ÖNCE: kilit alınamayıp erken dönsek bile ekran kilidi geri açılmalı
+        defer { Task { @MainActor in UIApplication.shared.isIdleTimerDisabled = false } }
         // 🔴 FİKS 05.09 — PAYLAŞILAN KİLİT: elle üretim kuyruk render'ıyla AYNI kilidi alır.
         // Öncesi: tek koruma `guard telefonIs == nil` idi (yalnız kendi çift dokunuşuna karşı);
         // otomatik kuyruk aynı anda ikinci bir render başlatabiliyor, ikisi de ana aktörü
@@ -669,7 +671,6 @@ struct GenerateSheet: View {
         await MainActor.run { store.telefondaUretiliyor = true }
         defer {
             Task { @MainActor in
-                UIApplication.shared.isIdleTimerDisabled = false
                 store.telefondaUretiliyor = false
                 Store.telefonKilidiBirak()
             }

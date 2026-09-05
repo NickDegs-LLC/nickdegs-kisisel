@@ -593,13 +593,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
     }
 
     func processLocalRenderQueue() async {
-        guard await MainActor.run(body: { Self.telefonKilidiAl() }) else { return }
-        await MainActor.run { self.telefondaUretiliyor = true }
+        guard Self.telefonKilidiAl() else { return }
+        self.telefondaUretiliyor = true
         defer {
-            Task { @MainActor in
-                Self.telefonKilidiBirak()
-                self.telefondaUretiliyor = false
-            }
+            Self.telefonKilidiBirak()
+            self.telefondaUretiliyor = false
         }
         // Cihazda üretim PREMIUM'a özel (Barış 2026-08-28 nihai: ücretsiz katmanda video YOK;
         // kullanıcı ya Premium olur ya video paketi alır — paketle üretim BULUTTA yapılır).
