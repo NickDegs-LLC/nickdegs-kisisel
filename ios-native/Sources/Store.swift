@@ -638,7 +638,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
             let asp = (j["aspect"] as? String) ?? "9:16"
             let tip = (j["type"] as? String) ?? "moto"
             let hiz = (j["speed"] as? String) ?? "medium"
-            let mURL = await musicFile((j["music"] as? String) ?? "active", session: frm)
+            // 🔴 FİKS 05.09: kuyruk yolu, iş kaydında `music` YOKSA bağımsız olarak "active"
+            // varsayıyordu — yani kullanıcı hiç müzik seçmese bile son yüklediği parça videoya
+            // giriyordu (Record.swift'teki otomatik seçimden AYRI ikinci kaynak). Varsayılan
+            // artık SESSİZ; müzik yalnız iş kaydında açıkça belirtilmişse eklenir.
+            let mURL = await musicFile((j["music"] as? String) ?? "", session: frm)
             var video: URL?
             if mode == "3d" {
                 // GERÇEK MOTOR (bulutla aynı sayfa) — 2026-08-26 Barış "aynı video"
