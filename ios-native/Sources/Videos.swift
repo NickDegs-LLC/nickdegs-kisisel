@@ -133,8 +133,18 @@ struct VideosView: View {
                                         Brand.gradient.opacity(0.18)
                                         VStack(spacing: 8) {
                                             ProgressView().tint(.white)
-                                            Text(L("Hazırlanıyor…","Rendering…")).font(.system(size: 14, weight: .semibold))
+                                            // 1.63 (Barış 05.09): telefonda üretiliyorsa DÜRÜST metin.
+                                            // Kullanıcı uygulamayı kapatırsa/arka plana alırsa üretim
+                                            // iptal oluyor (WebRouteVideo arka plan koruması) — bunu bilmeli.
+                                            Text(store.telefondaUretiliyor
+                                                 ? L("Telefonunda üretiliyor…","Rendering on your phone…")
+                                                 : L("Hazırlanıyor…","Rendering…"))
+                                                .font(.system(size: 14, weight: .semibold))
                                                 .foregroundStyle(.white.opacity(0.9))
+                                            if store.telefondaUretiliyor {
+                                                Text(L("Uygulamayı açık tut","Keep the app open"))
+                                                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
+                                            }
                                         }
                                     }
                                     .frame(height: 150).frame(maxWidth: .infinity).clipped()

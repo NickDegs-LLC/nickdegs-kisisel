@@ -35,6 +35,17 @@ enum WebRouteVideo {
         pencere.addSubview(kap)
         defer { kap.removeFromSuperview() }
 
+        // 🔴 ARKA PLAN KORUMASI (1.63, Barış 05.09: "telefonda üretiliyorsa ve arka planı alıyorsa
+        // beyaz ekran sorunu olabilir" — DOĞRU çıktı). Yukarıdaki yorumun dediği gibi WKWebView'ın
+        // ekran hiyerarşisinde olması ŞART; uygulama arka plana düşünce takeSnapshot BOŞ/BEYAZ kare
+        // döndürür ve aşağıdaki döngü onu videoya YAZAR. Sonuç: kullanıcıya beyaz video.
+        // Artık: (a) ekranın kendiliğinden kilitlenmesi engellenir, (b) arka plana düşerse üretim
+        // İPTAL edilir (yarım/beyaz video ÜRETİLMEZ) — sunucudaki yerelq-bekçisi 6 saat sonra işi
+        // buluta devreder, yani iş kaybolmaz.
+        let arkaPlan = ArkaPlanGozcu()
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+
         // 3) sayfayı yükle + motor hazır olsun (karo ön-ısıtma dahil — bulutla aynı)
         wv.loadHTMLString(meta.html, baseURL: URL(string: "https://kisisel-api.nickdegs.com"))
         guard await bekle(wv, js: "window._ready===true", saniye: 60) else { return nil }
@@ -88,9 +99,22 @@ enum WebRouteVideo {
         }
         // 6) rota kareleri — kamera matematiği sayfada, bulutla birebir
         let hedefKare = qaKareTavan.map { min($0, meta.frames) } ?? meta.frames
+        var bosKare = 0
         for f in 0..<hedefKare {
+            if arkaPlan.dustu {           // uygulama arka plana geçti -> beyaz kare üretmeden çık
+                input.markAsFinished(); writer.cancelWriting()
+                return nil
+            }
             _ = try? await wv.callAsyncJavaScript("return await window.kareCiz(\(f));", contentWorld: .page)
-            if let img = await cek(wv, boy: boy) { yaz(img) }
+            if let img = await cek(wv, boy: boy) {
+                // Emniyet ağı: arka plana düşmese bile GPU/WebView boş kare döndürebilir.
+                // 20 ardışık boş kare = üretim bozulmuş; yarım video yayınlamak yerine iptal.
+                if bosMu(img) {
+                    bosKare += 1
+                    if bosKare >= 20 { input.markAsFinished(); writer.cancelWriting(); return nil }
+                } else { bosKare = 0 }
+                yaz(img)
+            }
             if f % 5 == 0 { onProgress(Double(f) / Double(max(1, meta.frames))) }
         }
         // 7) outro / dünya finali
@@ -110,6 +134,43 @@ enum WebRouteVideo {
     }
 
     // MARK: - yardımcılar
+
+    /// Uygulama arka plana düştü mü — üretim sırasında tek seferlik bayrak.
+    /// (Ana aktöre bağlı; bildirimler main queue'da gelir.)
+    @MainActor
+    final class ArkaPlanGozcu {
+        private(set) var dustu = false
+        private var gozlemler: [NSObjectProtocol] = []
+        init() {
+            let nc = NotificationCenter.default
+            for ad in [UIApplication.didEnterBackgroundNotification,
+                       UIApplication.willResignActiveNotification] {
+                gozlemler.append(nc.addObserver(forName: ad, object: nil, queue: .main) { [weak self] _ in
+                    self?.dustu = true
+                })
+            }
+        }
+        deinit { gozlemler.forEach { NotificationCenter.default.removeObserver($0) } }
+    }
+
+    /// Kare pratikte boş mu (beyaz/şeffaf)? 5x5 örnekle ortalama parlaklık + değişim ölçülür.
+    /// Gerçek harita karesinde renk değişimi her zaman vardır; boş snapshot'ta yoktur.
+    private static func bosMu(_ img: UIImage) -> Bool {
+        guard let cg = img.cgImage else { return false }
+        let n = 5
+        var piksel = [UInt8](repeating: 0, count: n * n * 4)
+        guard let ctx = CGContext(data: &piksel, width: n, height: n, bitsPerComponent: 8,
+                                  bytesPerRow: n * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
+        var toplam = 0, enAz = 255, enCok = 0
+        for i in stride(from: 0, to: piksel.count, by: 4) {
+            let l = (Int(piksel[i]) * 299 + Int(piksel[i+1]) * 587 + Int(piksel[i+2]) * 114) / 1000
+            toplam += l; enAz = min(enAz, l); enCok = max(enCok, l)
+        }
+        let ort = toplam / (n * n)
+        return ort > 240 && (enCok - enAz) < 8        // hem çok parlak hem düz => boş kare
+    }
     private static func sayfaAl(from: Double, to: Double, type: String, speed: String, aspect: String,
                                 camdist: String, line: String, dot: String, token: String) async -> Meta? {
         var rq = URLRequest(url: URL(string: API + "/api/motor3d")!)

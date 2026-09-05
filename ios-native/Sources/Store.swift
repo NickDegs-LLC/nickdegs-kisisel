@@ -90,6 +90,7 @@ enum AuthGate { case checking, valid, needLogin, offline }
     @Published var me: String = ""
     @Published var loginError = false
     @Published var jumpToVideos = false   // "Video oluştur" sonrası Videolarım sekmesine geç ("Hazırlanıyor" görünür)
+    @Published var telefondaUretiliyor = false   // 1.63: cihazda üretim sürerken UI dürüst metin gösterir
     @Published var gate: AuthGate = .checking   // açılış doğrulama durumu
     var loggedIn: Bool { !token.isEmpty || (AppEnv.demo && AppEnv.screen != "hero") }
     init() {
@@ -484,6 +485,10 @@ enum AuthGate { case checking, valid, needLogin, offline }
     // Uygulama öne gelince bekleyen oto-videoları TELEFONDA üret + yükle (sessiz; push atmayız — darlama yok).
     // Battarya nezaketi: açılış başına en çok 2 video.
     private static var localQueueBusy = false
+    /// TELEFONDA üretim sürüyor mu (1.63). UI "Hazırlanıyor…" yerine "Telefonunda üretiliyor…"
+    /// yazsın diye: Barış 05.09 — "üret tuşuna basınca direkt 'üretiliyor' yazıyor, telefondan
+    /// üretiliyorsa telefonunda üretiliyor diye yazacak." Kullanıcı uygulamayı kapatırsa üretimin
+    /// duracağını bilmeli (arka planda snapshot boş döner; WebRouteVideo bunu iptal ediyor).
     /// Telefonda üretilen videoyu doğrudan galeriye kaydet (ücretsiz katman yolu).
     /// Sunucuya yükleme yapılmaz: video zaten cihazda, gidip geri gelmesinin anlamı yok.
     static func galeriyeKaydet(_ url: URL) async -> Bool {
@@ -501,7 +506,11 @@ enum AuthGate { case checking, valid, needLogin, offline }
     func processLocalRenderQueue() async {
         guard !Self.localQueueBusy else { return }
         Self.localQueueBusy = true
-        defer { Self.localQueueBusy = false }
+        await MainActor.run { self.telefondaUretiliyor = true }
+        defer {
+            Self.localQueueBusy = false
+            Task { @MainActor in self.telefondaUretiliyor = false }
+        }
         // Cihazda üretim PREMIUM'a özel (Barış 2026-08-28 nihai: ücretsiz katmanda video YOK;
         // kullanıcı ya Premium olur ya video paketi alır — paketle üretim BULUTTA yapılır).
         guard let prof = await profile(), prof.premium else { return }
