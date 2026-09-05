@@ -407,9 +407,13 @@ enum AuthGate { case checking, valid, needLogin, offline }
             // (sunucu bildirimi gecikmiş olabilir). IAP.refresh() açılışta `owned || gift`
             // hesabını yeniden yapar; gift artık false olduğu için sonuç DOĞRU olur ve
             // gerçekten aboneliği bitmiş kullanıcıda premium kapanır.
+            // Bildirim YALNIZ gerçekten değişince: `syncPremium` sık çağrılıyor ve ücretsiz
+            // kullanıcıda her seferinde StoreKit taraması tetiklemek boşuna iş olurdu.
+            let onceGift = UserDefaults.standard.bool(forKey: "nd_gift")
+                || UserDefaults.standard.bool(forKey: "nd_gift_ultra")
             UserDefaults.standard.set(false, forKey: "nd_gift")
             UserDefaults.standard.set(false, forKey: "nd_gift_ultra")
-            NotificationCenter.default.post(name: .ndPremiumDegisti, object: nil)
+            if onceGift { NotificationCenter.default.post(name: .ndPremiumDegisti, object: nil) }
         }
         if !p.ultra { UserDefaults.standard.set(false, forKey: "nd_gift_ultra") }
     }
