@@ -108,6 +108,14 @@ enum WebRouteVideo {
         try? FileManager.default.removeItem(at: outURL)
         kismiCikti = outURL
         guard let writer = try? AVAssetWriter(outputURL: outURL, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
+        // 🔴 FİKS 06.09 — FASTSTART. AVAssetWriter varsayılan olarak `moov` atomunu dosyanın SONUNA
+        // yazar; böyle bir MP4 akışta hemen açılmaz, oynatıcı önce dosyanın tamamını (veya sondaki
+        // indeksi ayrı istekle) çekmek zorunda kalır. ÖLÇÜLDÜ (video-kontrol bekçisi yakaladı):
+        // telefon çıktısı `ftyp -> mdat -> moov`, bulut çıktısı `ftyp -> moov -> free -> mdat`.
+        // 05.09'da müzik varsayılanı sessize çekildiği için ARTIK ÇOĞU VİDEO müziksiz yoldan
+        // gidiyor (muxMusic'e uğramıyor), yani bu kusur her videoyu etkiliyordu.
+        // Bu özellik indeksi başa yazdırır; ek geçiş/maliyet YOK.
+        writer.shouldOptimizeForNetworkUse = true
         let boy = CGSize(width: meta.W, height: meta.H)
         // 🔴 FİKS 05.09 — BİT HIZI TAVANI. Ayar verilmediği için AVAssetWriter varsayılanı
         // kullanıyordu: ÖLÇÜLDÜ 14,0 Mbit/s → 62,5 MB. AYNI rotanın bulut çıktısı 6,1 Mbit/s →

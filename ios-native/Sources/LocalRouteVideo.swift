@@ -80,6 +80,7 @@ enum LocalRouteVideo {
             .appendingPathComponent("route_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(6)).mp4")
         try? FileManager.default.removeItem(at: url)
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return bitir("video yazıcı açılamadı") }
+        writer.shouldOptimizeForNetworkUse = true   // 06.09: moov başa (akışta hemen açılsın)
         // 05.09: bit hızı tavanı (WebRouteVideo ile aynı gerekçe) — ayar verilmezse AVAssetWriter
         // varsayılanı gereğinden yüksek dosya üretiyor ve yükleme uzuyor.
         let vset: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264,
@@ -239,6 +240,7 @@ enum LocalRouteVideo {
         try? FileManager.default.removeItem(at: out)
         guard let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetPassthrough) else { return nil }
         ex.outputURL = out; ex.outputFileType = .mp4
+        ex.shouldOptimizeForNetworkUse = true       // 06.09: müzik miksinden sonra da moov başta kalsın
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             ex.exportAsynchronously { c.resume() }
         }
