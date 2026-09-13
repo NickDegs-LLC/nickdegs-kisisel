@@ -1,0 +1,829 @@
+[
+ {
+  "method": "GET",
+  "path": "/health",
+  "fn": "health",
+  "line": 532,
+  "auth": "yok",
+  "params": [],
+  "body": [],
+  "response": {
+   "ok": "bool (hep true)",
+   "rides": "int — list_rides(BARIS_UID) uzunlugu (satir 534)"
+  },
+  "errors": [],
+  "reads": [
+   "social.json: ride_types, deleted_rides, cloud_videos, detected_rides, pending_videos, failed_videos (list_rides, satir 259-263, 332, 364)",
+   "dosya sistemi: ROUTES_DIR/rota_*.mp4 glob (satir 277) — user==BARIS_UID oldugu icin yerel dosyalar da sayilir"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "ROUTES_DIR: kod varsayilani /opt/matrix/routes (satir 22) ama CANLI calisan Docker imajinda ENV ROUTES_DIR=/opt/movelog/routes (Dockerfile) + docker-compose ro mount — yerel mp4 sayimi buradan",
+   "DATA_DIR=/opt/movelog/data (docker-compose environment; kod varsayilani /opt/matrix/kisisel-app/backend/data, satir 27)",
+   "_STORE=DATA_DIR/social.json dogrudan json.load (satir 259)"
+  ],
+  "cf_mapping": "Worker'da sabit hafif yanit: D1 `SELECT count(*)` (rides/videos tablosu) veya sadece {ok:true}. Yerel mp4 sayimi tasinmaz (eski Traccar render'lari Baris'a ozel, R2/D1'e aktarilmis sayimla degistirilir).",
+  "notes": "Auth YOK — halka acik canlilik ucu. rides sayisi Baris'in verisine gore; izleme scriptleri bu sayiyi kullaniyor olabilir, golge modda birebir esitlik BEKLENMEZ (yerel dosya + ornek icerik mantigi). list_rides icinde ornek-icerik (ORNEK_UID=appreview, satir 232, 269-270) devreye girmez cunku user=BARIS_UID.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/track",
+  "fn": "track_points",
+  "line": 859,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [
+   {
+    "ad": "frm",
+    "yer": "query",
+    "tip": "float (epoch sn)",
+    "zorunlu": true,
+    "varsayilan": null
+   },
+   {
+    "ad": "to",
+    "yer": "query",
+    "tip": "float (epoch sn)",
+    "zorunlu": true,
+    "varsayilan": null
+   },
+   {
+    "ad": "detay",
+    "yer": "query",
+    "tip": "int (0/1)",
+    "zorunlu": false,
+    "varsayilan": 0
+   }
+  ],
+  "body": [],
+  "response": {
+   "points": "list — detay=0: [{lat:float, lon:float, spd:float}] (yol-eslemeli; eslemede spd en yakin ham noktadan tasinir, satir 958-963); detay=1: [{lat, lon, spd, t:epoch float, alt:float|null, hr:int|null}] HAM iz (satir 890-895). Yuklenen GPX/TCX rotasinda: [{lat,lon,spd}] (satir 872, detay yok sayilir)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 404,
+    "msg": "iz bulunamadi",
+    "neden": "uploaded_tracks[frm] var ama sahibi baska kullanici (IDOR korumasi, satir 864-871)"
+   },
+   {
+    "code": 503,
+    "msg": "cihaz Traccar'da yok",
+    "neden": "profiles[user].trackerId yok veya Traccar'da cihaz bulunamadi (satir 873-876)"
+   },
+   {
+    "code": 502,
+    "msg": "traccar erişilemedi",
+    "neden": "Traccar /api/positions !=200 (satir 882-883)"
+   },
+   {
+    "code": 422,
+    "msg": "(FastAPI validation)",
+    "neden": "frm/to eksik veya float degil"
+   }
+  ],
+  "reads": [
+   "social.json: uploaded_tracks[str(int(frm))] (satir 863) — yuklenen GPX/TCX izi",
+   "social.json: detected_rides (uploaded kaydin sahibini bulmak icin; ts==frm ve uploaded=true, satir 866-868)",
+   "social.json: profiles[user].trackerId (satir 873)",
+   "config: HARITA_UC_ONEK (CONF, satir 906 — bos ise esleme atlanir)"
+  ],
+  "writes": [],
+  "external": [
+   "Traccar GET {TRACCAR_URL}/api/positions?deviceId&from&to (basic auth, satir 879-881)",
+   "Traccar GET /api/devices?uniqueId (_traccar_id_for, satir 2622-2633)",
+   "harita GET https://harita.nickdegs.com/{HARITA_UC_ONEK}/matching/v5/mapbox/{prof}/{coords} (_yol_esle, satir 932; 80'lik dilimler, 79 adim bindirme)"
+  ],
+  "server_deps": [
+   "TRACCAR_URL=http://127.0.0.1:8084 varsayilani (satir 48) + TRACCAR_USER/PASS",
+   "harita.nickdegs.com sabit URL kodda (satir 932) — HARITA_UC ailesine parametrize edilecek (plan bolum 2/3)"
+  ],
+  "cf_mapping": "movelog-api Worker: uploaded_tracks -> R2 (plan bolum 4: 649KB D1'e DEGIL R2'ye); ham konumlar -> D1 positions (movelog-gps ingest, Traccar yerine); _yol_esle map-matching -> ortak harita katmanina fetch (plan 3: '/api/track + _yol_esle -> movelog-api'). Matching URL'i K0/A4 kararina gore ortak katmanin public URL'i olur.",
+  "notes": "TUZAKLAR: (1) uploaded track anahtari str(int(frm)) — frm ayni zamanda rota ts'i. (2) KANITLANDI (harita-proxy.py okundu): matching fiilen COGU ZAMAN calismiyor. a) Proxy'nin matching handler'i SADECE 'driving' profilini yakalar (harita-proxy.py satir 675 regex '/matching/v5/mapbox/driving/'); _yol_esle yavas izde cycling/walking gonderir (main.py satir 922) -> handler hic devreye girmez. b) Mapbox kapali/olu ise OSRM fallback yaniti {'matchings':[...]} doner ama 'code' ALANI YOK (harita-proxy.py satir 795 ve 800) -> main.py satir 936 'code==Ok' kosulu FALSE -> dilim ham noktalarla doldurulur. Yalniz Mapbox passthrough (mapbox_passthrough=true + token + FORCE_ESRI degil) 'code':'Ok' icerir; Mapbox bagimsizligi ilanina gore canli yolda kapali. SONUC: detay=0 yaniti ham iz DEGIL, 25m-SEYRELTILMIS iz olur (esli dilim fallback'te seyreltilmis seg noktalarini alir, satir 941; sonra kopru+spd aktarimi calisir) — golge diffte nokta sayisi ham izden AZ cikar, birebir esitlik ikisiyle de beklenmez. (3) >120m eslesme boslugunda ham iz koprusu (satir 947-957) ve 25m seyreltme (satir 909-918) motor davranisiyla birebir tasinmali. (4) 8 noktadan az iz eslenmez, ham doner (satir 907, 919, 945). (5) detay=1 spec ureten telefon motoru icin — t/alt/hr alanlari sart (2026-08-26 notu).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: _yol_esle fetch 30sn timeout eklendi (httpx timeout=30 eşleniği)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/videos/upload",
+  "fn": "upload_local_video",
+  "line": 1211,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [
+   {
+    "ad": "ts",
+    "yer": "query",
+    "tip": "int (float kabul, epoch)",
+    "zorunlu": true,
+    "varsayilan": 0
+   },
+   {
+    "ad": "to",
+    "yer": "query",
+    "tip": "int (float kabul, epoch)",
+    "zorunlu": false,
+    "varsayilan": 0
+   },
+   {
+    "ad": "mode",
+    "yer": "query",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "flyover"
+   },
+   {
+    "ad": "speed",
+    "yer": "query",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "medium"
+   },
+   {
+    "ad": "aspect",
+    "yer": "query",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "9:16"
+   },
+   {
+    "ad": "type",
+    "yer": "query",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "moto"
+   }
+  ],
+  "body": [
+   {
+    "ad": "(ham govde)",
+    "tip": "bytes — video/mp4, 50KB..200MB, offset 4-8 == b'ftyp' (satir 1219-1223)",
+    "zorunlu": true,
+    "varsayilan": null
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "vid": "str — '{YYYY-MM-DD}_{ts}_{now}' UC parcali id (satir 1224-1225)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 400,
+    "msg": "ts eksik",
+    "neden": "ts=0/yok (satir 1217-1218)"
+   },
+   {
+    "code": 400,
+    "msg": "geçersiz video boyutu",
+    "neden": "<50.000 bayt veya >200MB (satir 1220-1221)"
+   },
+   {
+    "code": 400,
+    "msg": "mp4 değil",
+    "neden": "data[4:8] != b'ftyp' (satir 1222-1223)"
+   },
+   {
+    "code": 503,
+    "msg": "depolama hazır değil",
+    "neden": "R2 istemcisi kurulamadi (satir 1226-1228)"
+   }
+  ],
+  "reads": [
+   "social.json: deleted_rides (satir 1236)"
+  ],
+  "writes": [
+   "R2: videos/{rid}.mp4 put_object (satir 1229)",
+   "social.json: cloud_videos[rid] = {key,user,date,mode,speed,aspect,type,ts,to,size,done,local:true} (satir 1231-1235)",
+   "social.json: deleted_rides listesinden rid cikarilir (satir 1236-1238)"
+  ],
+  "external": [
+   "R2 S3 API put_object (boto3, R2_ENDPOINT)"
+  ],
+  "server_deps": [
+   "boto3 S3 istemcisi (satir 94-103) -> Worker'da R2 binding"
+  ],
+  "cf_mapping": "movelog-api Worker: R2 binding env.MOVELOG.put('videos/'+rid+'.mp4', body) + D1 videos tablosuna satir (local=1). DIKKAT: Workers istek govdesi limiti (plana gore dogrulanacak; 200MB'lik cihaz videolari icin R2 presigned PUT veya multipart dusunulmeli — buradaki 200MB tavani Worker'in tek-istek limitini asabilir).",
+  "notes": "rid UC parcali ({gun}_{ts}_{uretimzamani}) — list_rides yorumu (satir 314): 'rid'i PARSE ETME, cv alanlarini kullan'. deleted_rides'tan cikarma: kullanici silinmis geziyi cihazda yeniden uretirse tekrar gorunur. mode/aspect/type/speed dogrulanmiyor (serbest metin).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/activities",
+  "fn": "activities",
+  "line": 1271,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "activities": "list — [{date:'YYYY-MM-DD' | 'DD-MM-YYYY_HHMM_-_HHMM', summary:str ('(özet metni yok)' fallback), video_id:str|null, from:int|null, to:int|null}] (list_activities, satir 463-528; dosya mtime'a gore yeniden-eskiye)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [
+   "dosya sistemi: ACT_DIR=ROUTES_DIR/sent_act/*_ozet.txt (satir 479-480) — icerik + mtime",
+   "social.json: profiles anahtar listesi (_KULLANICILAR 60sn onbellek, satir 449-460) — dosya adindaki sahip ekini dogrulamak icin",
+   "list_rides(user) uzerinden: ride_types, deleted_rides, cloud_videos, detected_rides, pending_videos, failed_videos + ROUTES_DIR mp4'leri (yalniz Baris)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "ACT_DIR=ROUTES_DIR/sent_act ozet dosyalari ({gun}[_{uid}]_ozet.txt) — movelog-cloud.py / movelog-rangereq uretir; RUNTIME ROUTES_DIR=/opt/movelog/routes (Dockerfile ENV; kod varsayilani /opt/matrix/routes satir 22)",
+   "dosya mtime siralamasi"
+  ],
+  "cf_mapping": "Ozetler D1 tablosuna (activities: user, date/range, summary, created_at) tasinir; ureten taraf movelog-cron/dispatch worker'i olur. mtime yerine created_at kolonu. video_id eslesmesi ayni pencere sorgusuyla (ts +-90sn, satir 522-523) D1 uzerinden.",
+  "notes": "GIZLILIK FIKSI 2026-08-13 (satir 486-502): sahip eki GERCEK kullanici listesine karsi dogrulanir (uzun adlar once — 'u123' / 'u123_ek' karismasin); tanimsiz sahipli ESKI dosyalar KIMSEYE gosterilmez (_SAHIPSIZ_GIZLE=True, satir 445). Eski bugda google_/apple_ kullanicilari ve aralik ozetleri herkese siziyordu — D1 semasinda user kolonu NOT NULL yapilarak sinif olarak cozulur. Gunluk kartta video yoksa tum-gun araligi verilir (satir 513-517, TR saat dilimi UTC+3). ORNEK ICERIK etkisi: yeni (kaydi olmayan) kullanicida list_rides ornek (appreview) rotalari dondurur (satir 269-270) ama ozet dosyalari sahip-suffix dogrulamasiyla filtrelendigi icin ('_appreview' eki sadece appreview kullanicisina gorunur) pratikte karta yansimaz — Worker portunda ayni davranis korunmali.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/gps/live",
+  "fn": "gps_live",
+  "line": 1276,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "positions": "list — [{device:str (profil adi|Traccar adi|'?'), avatar:{type,value}|null, lat:float, lon:float, speed_kmh:float (knot*1.852 yuvarlak 1), time:str (deviceTime ISO), online:bool (Traccar status=='online')}] (satir 1304-1311)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 503,
+    "msg": "traccar yapılandırılmadı",
+    "neden": "TRACCAR_USER bos (satir 1278-1279)"
+   },
+   {
+    "code": 502,
+    "msg": "traccar erişilemedi",
+    "neden": "devices veya positions !=200 (satir 1284-1285)"
+   }
+  ],
+  "reads": [
+   "social.json: profiles (trackerId, name, avatar — tum kullanicilar taranir, satir 1291-1294)",
+   "social.json: friends[user] (gorunurluk kumesi, satir 1297)"
+  ],
+  "writes": [],
+  "external": [
+   "Traccar GET /api/devices (satir 1282)",
+   "Traccar GET /api/positions (satir 1283) — TUM cihazlarin son konumu"
+  ],
+  "server_deps": [
+   "TRACCAR_URL 127.0.0.1:8084 + basic auth"
+  ],
+  "cf_mapping": "movelog-gps Worker'i konumlari D1 positions'a yazar; bu uc D1'den 'cihaz basina en son konum' sorgusu olur (SELECT ... GROUP BY device). online = son konum yasi esigi (Traccar status alani gider). users tablosundan name/avatar JOIN.",
+  "notes": "GIZLILIK (2026-07-09, satir 1295-1303): kullanici YALNIZ kendini + friends listesindekileri gorur; profili olmayan/eslesmeyen cihazlar atlanir (eski bug: Baris haritada 'Review Tester' gormustu). speed knot->km/h çevrimi (x1.852) D1 tarafinda da korunmali (Traccar knot yazar; movelog-gps ingest'te birim karari netlesmeli).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/stats",
+  "fn": "stats",
+  "line": 1315,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "total_rides": "int",
+   "by_type": "obj {tip:int} — bos tip 'diğer' anahtarina sayilir (satir 1318-1320)",
+   "latest": "obj|null — list_rides'in ilk elemani (ts'e gore en yeni ride ogesi; id,date,ts,to,type,emoji,mode,speed,aspect,size,video_url,... alanlari)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [
+   "list_rides(user) uzerinden social.json (ride_types, deleted_rides, cloud_videos, detected_rides, pending_videos, failed_videos) + ROUTES_DIR (yalniz Baris)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "ROUTES_DIR yerel mp4 (yalniz BARIS_UID icin)"
+  ],
+  "cf_mapping": "D1: SELECT count/type GROUP BY uzerinden; latest icin en yeni ride satiri. Ornek-icerik kurali (kendi kaydi olmayan kullanici appreview verisini gorur, satir 267-270) Worker'a AYNEN tasinmali — yoksa yeni kullanicinin stats'i degisir.",
+  "notes": "by_type icinde 'diğer' anahtari UTF-8 Turkce karakter icerir — istemci bu anahtari gosteriyorsa birebir korunmali. Ornek icerik: yeni kullanici (hic kaydi yok) appreview rotalarini sayar — golge diffte bilinmeli.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/feedback",
+  "fn": "send_feedback",
+  "line": 1430,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [
+   {
+    "ad": "text",
+    "tip": "str (strip + ilk 1000 karakter)",
+    "zorunlu": true,
+    "varsayilan": ""
+   }
+  ],
+  "response": {
+   "ok": "bool"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 400,
+    "msg": "boş fikir",
+    "neden": "strip sonrasi <3 karakter (satir 1434-1436)"
+   },
+   {
+    "code": 429,
+    "msg": "bugünlük bu kadar fikir yeter :)",
+    "neden": "kisi basi 5/24saat (in-memory _rate_ok, satir 1437-1438)"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user] (name, handle, lang — satir 1440-1442)"
+  ],
+  "writes": [
+   "social.json: feedbacks[] append {user,name,handle,lang,text,ts} (satir 1443)"
+  ],
+  "external": [
+   "_adminq: DATA_DIR/adminq/{ms}.json dosyasi yazar (satir 2957-2964) -> sunucu worker'i notify-admin.sh ile Telegram/WhatsApp'a iletir"
+  ],
+  "server_deps": [
+   "in-memory rate limiter _rl (satir 171-180) — surec yeniden basinca sifirlanir",
+   "adminq dizini (dosya kuyrugu)"
+  ],
+  "cf_mapping": "D1 feedbacks tablosu. Rate limit: Workers'ta in-memory YOK -> KV sayaci (TTL 86400) veya Durable Object. adminq -> dogrudan Telegram Bot API fetch (TG_TOKEN secret) veya movelog-render disi ayri Queue.",
+  "notes": "lang once profilden, yoksa Accept-Language'dan (_req_lang, satir 2500-2509, _SV_MSG dil listesi, fallback 'en'). Rate limit izole Worker izolatlarinda calismaz — KV/DO sart, yoksa spam freni fiilen kalkar.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/redeem",
+  "fn": "redeem",
+  "line": 1450,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [
+   {
+    "ad": "code",
+    "tip": "str — buyuk harfe cevrilir, [^A-Z0-9] silinir (tire vs. temizlenir, satir 1452)",
+    "zorunlu": true,
+    "varsayilan": ""
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "premium": "bool (hep true)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 400,
+    "msg": "geçersiz kod",
+    "neden": "temizlenmis kod <6 karakter (satir 1453-1454)"
+   },
+   {
+    "code": 404,
+    "msg": "kod bulunamadı",
+    "neden": "giftcodes'ta yok (satir 1458-1459)"
+   },
+   {
+    "code": 409,
+    "msg": "kod zaten kullanılmış",
+    "neden": "used_by dolu ve BASKA kullanici (satir 1460-1461) — ayni kullanici tekrar kullanirsa 200 (idempotent)"
+   }
+  ],
+  "reads": [
+   "social.json: giftcodes[code] (satir 1456-1457)"
+  ],
+  "writes": [
+   "social.json: giftcodes[code].used_by=user, used_at=ts (satir 1462-1463)",
+   "social.json: profiles[user].premium=true (satir 1464)"
+  ],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "D1 giftcodes tablosu (code PK, used_by, used_at, created) + users.premium update — TEK D1 transaction/batch (yaris kosulu: iki kullanici ayni kodu ayni anda; D1'de UPDATE ... WHERE used_by IS NULL deseniyle atomik yapilmali; dosya+flock'taki serilestirme D1'de kendiliginden yok).",
+  "notes": "Kod /api/admin/gencodes ile uretilir (10 harf, 'ABCDE-FGHIJ' formatinda gosterilir ama _CODE_RE tireyi sildigi icin kullanici tireli/tiresiz girebilir). premium suresiz (premium_until yazilmaz).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/auth/signout-all",
+  "fn": "signout_all",
+  "line": 1860,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "ok": "bool"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user].tv (satir 1864-1865)"
+  ],
+  "writes": [
+   "social.json: profiles[user].tv += 1 (token version bump — kullanicinin TUM JWT'leri gecersizlesir); _tv_cache sifirlanir (satir 1867)"
+  ],
+  "external": [],
+  "server_deps": [
+   "_tv_cache 10sn TTL in-memory onbellek (satir 131-142) — tek surecte anlamli"
+  ],
+  "cf_mapping": "D1 users.tv kolonu; JWT dogrulamada her istekte tv D1'den okunur (veya KV'ye yazilir, bump'ta KV guncellenir). Worker izolatlari arasi cache tutarsizligi: KV eventual consistency ~60sn gecikme yaratabilir — cikis guvenligi icin D1 okumasi tercih (plan Faz 2).",
+  "notes": "JWT 'tv' claim'i make_jwt'de gomulur (satir 147-148), verify_jwt'de karsilastirilir (satir 163-164). Cagridan SONRAKI ilk istekte mevcut token 401 dondurur — istemci yeniden giris yapar. Golge modda tv degeri iki tarafta esit tutulmali yoksa diff'te 401 farklari cikar.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/mapconfig",
+  "fn": "get_mapconfig",
+  "line": 1878,
+  "auth": "yok",
+  "params": [],
+  "body": [],
+  "response": {
+   "(dosya icerigi)": "map-config.json ne iceriyorsa AYNEN doner (satir 1880-1881); okunamazsa {tiles:'', attribution:''} (satir 1882-1883)"
+  },
+  "errors": [],
+  "reads": [
+   "dosya sistemi: DATA_DIR/map-config.json (/opt/movelog/data/map-config.json — elle duzenlenir, anında gecis)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "map-config.json dosyasi — sunucuda elle duzenlenen canli ayar"
+  ],
+  "cf_mapping": "KV anahtari (movelog-kv: 'mapconfig') — wrangler kv put ile elle guncellenebilir, 'surum gerekmesin' amaci korunur. Plan Faz H 2b: ortak harita katmanina gecince bu yanittaki tiles URL'i guncellenecek.",
+  "notes": "Auth YOK — app her acilista okur. Dosya yoksa/bozuksa sessiz varsayilan doner (hata kodu yok). Yanit semasi sabit degil: dosyada ne varsa o (bugunku beklenen alanlar en az tiles + attribution).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/announcement",
+  "fn": "get_announcement",
+  "line": 1886,
+  "auth": "yok",
+  "params": [],
+  "body": [],
+  "response": {
+   "announcement": "null (aktif duyuru yoksa) | {title:str, body:str, url:str, ts:int} (satir 1888-1891; active alani DISARI verilmez)"
+  },
+  "errors": [],
+  "reads": [
+   "social.json: announcement {title,body,url,active,ts} (satir 1888)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "KV anahtari ('announcement') veya D1 tek satir; /api/admin/announce (satir 1894, ayri grup) yazar. KV okumasi ucuz — app her acilista cagiriyor.",
+  "notes": "Auth YOK. active=false ise {announcement:null} — kayit silinmez, sadece gizlenir.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/pushtoken",
+  "fn": "push_token",
+  "line": 1980,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [
+   {
+    "ad": "token",
+    "tip": "str (strip)",
+    "zorunlu": true,
+    "varsayilan": ""
+   },
+   {
+    "ad": "platform",
+    "tip": "str — 'android'|'fcm' -> fcm listesi; diger her sey -> apns (satir 1988)",
+    "zorunlu": false,
+    "varsayilan": "(apns)"
+   }
+  ],
+  "response": {
+   "ok": "bool"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 400,
+    "msg": "token yok",
+    "neden": "token bos (satir 1983-1984)"
+   }
+  ],
+  "reads": [
+   "social.json: TUM profiles (capraz temizlik taramasi), profiles[user].welcomed, profiles[user].lang"
+  ],
+  "writes": [
+   "social.json: DIGER tum kullanicilarin apns/fcm listelerinden bu token cikarilir (capraz-bildirim gizlilik fiksi 2026-07-26, satir 1992-1998)",
+   "social.json: profiles[user].{apns|fcm} listesine eklenir; >5 olursa en eski atilir (satir 1999-2003)",
+   "social.json: profiles[user].welcomed=ts (ilk kayitta, satir 2006-2007)",
+   "dosya: DATA_DIR/pushq/welcome_{user}_{ts}.json — 12 dilde hos geldin push istegi (satir 2009-2028; hata yutulur)"
+  ],
+  "external": [
+   "dolayli: pushq dosyasini sunucu push worker'i (push.py) okuyup APNs/FCM'e gonderir"
+  ],
+  "server_deps": [
+   "pushq dosya kuyrugu dizini",
+   "in-memory yok; her cagri tam profiles taramasi (O(n) kullanici)"
+  ],
+  "cf_mapping": "D1 push_tokens tablosu (token UNIQUE -> capraz temizlik tek UPDATE/DELETE ile; kullanici basi son 5 kaydi tut). Hos geldin push'u: Queue mesaji -> movelog-api/cron APNs-FCM WebCrypto gonderimi (plan Faz 3). welcomed bayragi users tablosunda.",
+  "notes": "TUZAK: ayni cihazda hesap degisimi — token SON giren hesaba gecer, eski hesabin listelerinden APNs+FCM ikisinden birden sokulur. D1'de token'a UNIQUE kisit koymak bu davranisi sematik olarak garantiler (dosyada dogrusal taramayla yapiliyor). Hos geldin metni 12 dil sabiti kodda (satir 2011-2024) — Worker'a tasinir. platform alani dogrulanmaz.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: welcome push tam-bir-kez fiksi (koşullu UPDATE kazananı KV yazar)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/trackdebug",
+  "fn": "track_debug",
+  "line": 2035,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [
+   {
+    "ad": "auth",
+    "tip": "any (izin durumu)",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "precise",
+    "tip": "any (tam konum)",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "recv",
+    "tip": "any (alinan konum sayaci)",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "sent",
+    "tip": "any (gonderilen sayaci)",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "acc",
+    "tip": "any (dogruluk)",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "err",
+    "tip": "str (ilk 200 karakter)",
+    "zorunlu": false,
+    "varsayilan": ""
+   },
+   {
+    "ad": "active",
+    "tip": "any",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "recording",
+    "tip": "any",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "idle",
+    "tip": "any",
+    "zorunlu": false,
+    "varsayilan": null
+   }
+  ],
+  "response": {
+   "ok": "bool"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "social.json: profiles[user].trackdbg = {auth,precise,recv,sent,acc,err,active,recording,idle,ts} (tek obje, ustune yazilir — gecmis tutulmaz, satir 2041-2045)"
+  ],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "D1 users.trackdbg JSON kolonu (veya KV 'trackdbg:{user}' TTL'li) — app ~60sn'de bir yollar; her yazim tum social.json'i kilitleyip yeniden yazmak yerine tek kolon UPDATE. Yuksek frekansli kucuk yazim: KV daha uygun olabilir (teshis verisi, kayip tolere edilir).",
+  "notes": "Salt teshis telemetrisi ('telefon neden GPS basmiyor'). Alanlar dogrulanmaz, oldugu gibi saklanir. ~60sn periyot x kullanici sayisi = social.json'a en sik yazan uclardan biri — D1 gecisinde kilit yukunu dusurur.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "GET",
+  "path": "/api/tracker",
+  "fn": "tracker",
+  "line": 2724,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "deviceId": "str — 8 haneli deterministik: sha256(user) % 90000000 + 10000000 (satir 2732)",
+   "url": "str — sabit 'https://gpsdata.nickdegs.com' (satir 2745)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user].trackerId (satir 2730)"
+  ],
+  "writes": [
+   "social.json: profiles[user].trackerId (ilk cagrida uretilip yazilir, satir 2731-2734)"
+  ],
+  "external": [
+   "Traccar GET /api/devices?uniqueId={devid} (satir 2739)",
+   "Traccar POST /api/devices {name, uniqueId} — cihaz yoksa OLUSTURUR (satir 2741-2742); tum hatalar yutulur (satir 2743-2744)"
+  ],
+  "server_deps": [
+   "TRACCAR_URL 127.0.0.1:8084",
+   "gpsdata.nickdegs.com sabit string kodda (satir 2745)"
+  ],
+  "cf_mapping": "movelog-api: trackerId D1 users kolonuna (ayni deterministik formul korunur — mevcut cihazlar ayni id ile gondermeye devam eder). Traccar cihaz-olusturma ADIMI KALKAR: movelog-gps Worker'i gelen uniqueId'yi D1 users.trackerId ile eslestirir, on-kayit gerekmez. url alani movelog-gps Worker'inin adresine doner (DNS: gpsdata.nickdegs.com -> Worker; plan Faz 1/4 — Traccar 2 hafta paralel).",
+  "notes": "TUZAK: url'i degistirmek = sahadaki TUM istemcilerin gonderim hedefini degistirmek; app bu yaniti onbelleklemis olabilir. duckdns->nickdegs gecis notu (satir 2745): VPN on-demand kurali duckdns'i bozuyordu. Traccar olusturma best-effort — Traccar kapaliyken bile 200 doner (golge diffte fark yaratmaz). EK (dogrulama 08-30): Traccar sorgu+olusturma blogu tamamen 'if TRACCAR_USER:' kapisinin arkasinda (satir 2735) — TRACCAR_USER bos ise dis cagri HIC yapilmaz, yine 200 doner.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/invite",
+  "fn": "make_invite",
+  "line": 4005,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [],
+  "response": {
+   "token": "str — secrets.token_urlsafe(8) (11 karakter url-safe)",
+   "link": "str — 'https://app.nickdegs.com/?invite={token}' (satir 4011)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "social.json: invites[token] = {by:user, ts} (satir 4009)"
+  ],
+  "external": [],
+  "server_deps": [
+   "app.nickdegs.com sabit link tabani kodda"
+  ],
+  "cf_mapping": "D1 invites tablosu (token PK, by, ts). Link tabani env/config'e alinabilir ama YANIT birebir ayni kalmali (golge diff).",
+  "notes": "Davet SURESIZ ve COK KULLANIMLIK (accept tuketmiyor). Kullanici basi limit yok — her cagri yeni token ekler (invites sinirsiz buyuyebilir; D1'de eski davetlere TTL/temizlik cron'u dusunulebilir ama davranis degisikligi sayilir, Baris'a sorulur). delete_account kullanicinin davetlerini siler (satir 2763-2765).",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ },
+ {
+  "method": "POST",
+  "path": "/api/invite/accept",
+  "fn": "accept_invite",
+  "line": 4014,
+  "auth": "auth_user (Bearer JWT HS256; tv token-versiyon iptal kontrolu satir 163-164, _token_versions 10sn cache satir 131-142; alias cozumu profiles[sub].alias -> kanonik hesap satir 189-197 — her istekte social.json okunur; main.py:183-198)",
+  "params": [],
+  "body": [
+   {
+    "ad": "token",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": ""
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "friend": "obj — _profile_of(davet sahibi) (satir 1389-1407): {username, name, handle, avatar:{type,...}, premium:bool, ultra:bool, sv_off:bool, sokak_hak:int, video_hak:int, sokak_hediye:false (sabit), free_tactical:bool, admin:bool}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok",
+    "neden": "Authorization header yok / Bearer degil (auth_user, satir 184-185)"
+   },
+   {
+    "code": 401,
+    "msg": "token geçersiz/süresi dolmuş",
+    "neden": "imza/exp/tv (token-version) uymuyor (satir 186-188)"
+   },
+   {
+    "code": 404,
+    "msg": "geçersiz davet",
+    "neden": "invites[token] yok (satir 4019-4020)"
+   }
+  ],
+  "reads": [
+   "social.json: invites[token] (satir 4018)",
+   "social.json: profiles[davet_sahibi] (_profile_of icin) + free_tactical_enabled, free_tactical_devices (satir 1406)",
+   "dosya sistemi: /opt/movelog/data/sv-kapali varlik kontrolu (_profile_of sv_off, satir 1398)"
+  ],
+  "writes": [
+   "social.json: friends[user] ve friends[davet_sahibi] listelerine karsilikli ekleme (yoksa; satir 4022-4027) — kendi davetini kabul ederse YAZIM YOK ama yine 200"
+  ],
+  "external": [],
+  "server_deps": [
+   "sv-kapali bayrak dosyasi (_profile_of) -> KV bayragi olur"
+  ],
+  "cf_mapping": "D1: invites SELECT + friends tablosuna iki yonlu INSERT (OR IGNORE — idempotent). _profile_of Worker'da ortak yardimci; sv_off dosya bayragi -> KV 'sv_off'; free_tactical alanlari D1 users + free_tactical_devices tablosu.",
+  "notes": "Token TUKETILMEZ — ayni davet linkiyle sinirsiz arkadaslik kurulabilir (viral tasarim, bug degil). Self-accept (other==user): friends yazilmaz, friend alaninda KENDI profili doner. IDOR yok: token bilen herkes kabul edebilir (tasarim geregi). free_tactical hesabi karmasik (kill-switch + hesap-1 + cihaz-dedup) — birebir port edilmeli, satir 1406.",
+  "port_durumu": "TAMAM 2026-08-30 — grup7.ts (Hono portu; 501 yok) · DENETİM 2026-08-30: geçti"
+ }
+]

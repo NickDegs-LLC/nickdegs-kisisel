@@ -1,0 +1,11 @@
+# v149 (2026-09-05) — render-done callback'i SESSİZCE YUTULMUYOR (uçtan uca tarama bulgusu).
+#  Öncesi: tek deneme + `except Exception: print(...)` ve ardından iş BAŞARILI dönüyordu.
+#  Sonuç: callback düşmezse D1'e hiçbir kayıt girmiyor, kullanıcı videoyu göremiyor ama GPU
+#  parası harcanmış oluyordu. ÖLÇÜLDÜ (05.09): 6 otomatik videonun hiçbiri gpu_costs'u
+#  artırmamış — hepsi cron'un LAND yolundan kurtarılmış; LAND yolu olmayan `_ozet_` videoları
+#  ise tamamen kaybolmuştu (2/2, ~36 MB + ~50 dk GPU).
+#  Artık: 3 deneme (2/5/10 sn) ve kalıcı başarısızlıkta iş HATA ile biter → RunPod'da görünür
+#  olur, pending-reconcile/yetim süpürgesi devreye girebilir.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v148
+FROM ${BASE}
+COPY rp_handler.v148.py /app/rp_handler.py

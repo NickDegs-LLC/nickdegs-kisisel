@@ -1,0 +1,949 @@
+[
+ {
+  "method": "POST",
+  "path": "/api/admin/announce",
+  "fn": "set_announcement",
+  "line": 1894,
+  "auth": "secret (body.secret == GIFT_ADMIN_SECRET; _admin_ok satır 1871-1872; Bearer token YOK)",
+  "params": [],
+  "body": [
+   {
+    "ad": "secret",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": null,
+    "not": "GIFT_ADMIN_SECRET (config, satır 1426)"
+   },
+   {
+    "ad": "title",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "80 karaktere kırpılır (satır 1900)"
+   },
+   {
+    "ad": "body",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "500 karaktere kırpılır (satır 1901)"
+   },
+   {
+    "ad": "url",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "300 karaktere kırpılır (satır 1902)"
+   },
+   {
+    "ad": "active",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": true
+   }
+  ],
+  "response": {
+   "ok": "bool (hep true)"
+  },
+  "errors": [
+   {
+    "code": 403,
+    "detail": "yetkisiz",
+    "kosul": "secret yanlış VEYA GIFT_ADMIN_SECRET config'te boş (satır 1872: boşsa hep 403)"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil / eksik (Body(...))"
+   }
+  ],
+  "reads": [
+   "(tüm social.json _load ile okunur)"
+  ],
+  "writes": [
+   "announcement.{title,body,url,active,ts} (üst-düzey anahtar; ts=int(time.time()), satır 1899-1905)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json dosyası (_STORE=/opt/movelog/data/social.json, flock+_save)"
+  ],
+  "cf_mapping": "KV: announcement anahtarı (tek küçük nesne, sık okunur GET /api/announcement tarafından) — D1'e gerek yok. Admin secret wrangler secret.",
+  "notes": "Okuyan uç GET /api/announcement (satır 1886, grup dışı): active değilse {announcement:null} döner. Kırpma limitleri (80/500/300) CF portunda birebir korunmalı.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts) — cf_mapping SAPMASI: KV yerine D1 config tablosu (0001_init.sql/SEMA-NOTLARI karari; okuyucu GET /api/announcement ayni depoyu kullanmali)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/admin/broadcast",
+  "fn": "broadcast",
+  "line": 1911,
+  "auth": "secret (body.secret == GIFT_ADMIN_SECRET; _admin_ok; Bearer token YOK)",
+  "params": [],
+  "body": [
+   {
+    "ad": "secret",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": null
+   },
+   {
+    "ad": "title",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "80 karaktere kırpılır (satır 1922)"
+   },
+   {
+    "ad": "body",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "300 karaktere kırpılır (satır 1923)"
+   },
+   {
+    "ad": "titles",
+    "tip": "dict{lang:str}",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "YORUMDA var (satır 1913-1914) ama koda YAZILMIYOR — bkz notes"
+   },
+   {
+    "ad": "bodies",
+    "tip": "dict{lang:str}",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "YORUMDA var ama koda YAZILMIYOR — bkz notes"
+   }
+  ],
+  "response": {
+   "ok": "bool (hep true)",
+   "sent": "int — apns token'ı olan profil sayısı (satır 1918; FCM'li Android kullanıcıları SAYILMAZ, sadece sayaç kozmetiği)"
+  },
+  "errors": [
+   {
+    "code": 403,
+    "detail": "yetkisiz",
+    "kosul": "secret yanlış veya GIFT_ADMIN_SECRET boş"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "profiles.*.apns (yalnız sayım için, satır 1918)"
+  ],
+  "writes": [
+   "(social.json'a yazmaz)"
+  ],
+  "external": [
+   "dosya sistemi: DATA_DIR/broadcast/bc_<ts>.json kuyruk dosyası (satır 1919-1924) — ana sunucudaki ayrı broadcast worker'ı dakikada bir APNs/FCM push atar"
+  ],
+  "server_deps": [
+   "DATA_DIR/broadcast/ kuyruk dizini",
+   "harici broadcast worker süreci (push gönderimi bu endpoint'te DEĞİL)"
+  ],
+  "cf_mapping": "Queue (movelog-render değil; broadcast/push kuyruğu) veya D1 görev tablosu → movelog-cron/dispatch worker APNs/FCM'i WebCrypto ile gönderir (Plan Faz 3). sent sayacı D1 count(users where apns not null).",
+  "notes": "TUZAK (satır 1913-1914 yorum vs 1922-1924 kod): lokalize titles/bodies alanları kuyruk dosyasına HİÇ yazılmıyor — req yalnız {title,body,ts}. Yorumun vaat ettiği dil-bazlı seçim bu uçtan çalışamaz; CF portunda ya alanlar kuyruğa eklenmeli ya da davranış bilinçli aynen (düz title/body) taşınmalı. Ayrıca ts dosya adı bc_<ts>.json — aynı saniyede 2 broadcast birbirini EZER.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/admin/costs",
+  "fn": "admin_costs",
+  "line": 1928,
+  "auth": "secret (body.secret == GIFT_ADMIN_SECRET; satır 1932 inline kontrol; Bearer token YOK)",
+  "params": [],
+  "body": [
+   {
+    "ad": "secret",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": null
+   },
+   {
+    "ad": "usd_per_sec",
+    "tip": "float",
+    "zorunlu": false,
+    "varsayilan": 0.0003,
+    "not": "RunPod 4090 serverless yaklaşık birim fiyat (satır 1931,1934)"
+   },
+   {
+    "ad": "month",
+    "tip": "str YYYY-MM",
+    "zorunlu": false,
+    "varsayilan": "içinde bulunulan UTC ayı (satır 1935)"
+   }
+  ],
+  "response": {
+   "month": "str YYYY-MM",
+   "usd_per_sec": "float",
+   "users": "list[{user:str, name:str, premium:bool, ultra:bool, videos:int, gpu_secs:number, g3d_secs:number, est_usd:float}] — gpu_secs'e göre azalan sıralı (satır 1947)",
+   "total_secs": "number",
+   "total_usd": "float (2 hane yuvarlı)"
+  },
+  "errors": [
+   {
+    "code": 403,
+    "detail": "yetkisiz",
+    "kosul": "secret yanlış veya GIFT_ADMIN_SECRET boş"
+   },
+   {
+    "code": 500,
+    "detail": "KeyError olasılığı",
+    "kosul": "gpucost kaydında 'videos' veya 'secs' alanı yoksa m['videos']/m['secs'] patlar (satır 1945-1946, .get değil köşeli parantez)"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "gpucost.<user>.<YYYY-MM>.{videos,secs,g3d_secs} (satır 1938-1940; render-done defteri)",
+   "profiles.<user>.{name,premium,ultra} (satır 1942-1944)"
+  ],
+  "writes": [
+   "(salt okur)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1: gpucost ayrı tablo (user, month, videos, secs, g3d_secs) — /api/internal/render-done (grup 3) yazar, burası SELECT + ORDER BY secs DESC. usd_per_sec float parse aynı kalır.",
+  "notes": "float((body).get('usd_per_sec', ...)) geçersiz string gelirse ValueError→500; null gelirse float(None) TypeError→500 (satır 1934). month formatı doğrulanmaz — 'saçma' ay istenirse boş users listesi döner (hata değil).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/admin/gencodes",
+  "fn": "gencodes",
+  "line": 1953,
+  "auth": "secret (body.secret == GIFT_ADMIN_SECRET; satır 1956; Bearer token YOK)",
+  "params": [],
+  "body": [
+   {
+    "ad": "secret",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": null
+   },
+   {
+    "ad": "count",
+    "tip": "int",
+    "zorunlu": false,
+    "varsayilan": 5,
+    "not": "1..100 aralığına kıstırılır (satır 1958)"
+   }
+  ],
+  "response": {
+   "codes": "list[str] — 'ABCDE-FGHIJ' biçimli (satır 1968); depoda tiresiz 10 karakter saklanır"
+  },
+  "errors": [
+   {
+    "code": 403,
+    "detail": "yetkisiz",
+    "kosul": "secret yanlış veya GIFT_ADMIN_SECRET boş"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   },
+   {
+    "code": 500,
+    "detail": "ValueError/TypeError",
+    "kosul": "count int'e çevrilemezse int() patlar (str→ValueError, null/list→TypeError; satır 1958)"
+   }
+  ],
+  "reads": [
+   "giftcodes (çakışma kontrolü, satır 1960,1965)"
+  ],
+  "writes": [
+   "giftcodes.<RAWCODE> = {used_by:null, created:int} (satır 1967)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1: giftcodes tablosu (code PK, used_by, created). Üretimde crypto.getRandomValues; alfabe 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' (I,O,0,1 yok — satır 1961) birebir korunmalı, mevcut basılı kodlar geçerli kalmalı.",
+  "notes": "Kod deposu TİRESİZ (raw), kullanıcıya TİRELİ gösterilir; kod kullanma ucu (grup dışı, _CODE_RE satır 1427) tire/boşluk temizleyerek arar. Çakışan kod üretilirse döngü yeniden dener (satır 1963-1966).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/summary/settings",
+  "fn": "get_summary_settings",
+  "line": 2809,
+  "auth": "auth_user (Bearer JWT; alias çözümü satır 189-197)",
+  "params": [],
+  "body": [],
+  "response": {
+   "enabled": "bool (profiles.summary_enabled, varsayılan true)",
+   "hour": "int (profiles.summary_hour, varsayılan 21)",
+   "video": "{mode:str, speed:str, aspect:str, cam:str, music:str, line:str} — _summary_settings satır 2795-2806; mode varsayılanı profiles.summary_vid_mode → yoksa profiles.video_mode → yoksa 'flyover'; line varsayılanı '#00E5FF'"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok",
+    "kosul": "Authorization başlığı yok/Bearer değil"
+   },
+   {
+    "code": 401,
+    "detail": "token geçersiz/süresi dolmuş",
+    "kosul": "imza/exp/tv (token version) tutmuyor"
+   }
+  ],
+  "reads": [
+   "profiles.<user>.{summary_enabled,summary_hour,summary_vid_mode,video_mode,summary_vid_speed,summary_vid_aspect,summary_vid_cam,summary_vid_music,video_line}"
+  ],
+  "writes": [
+   "(salt okur)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1 users tablosu sütunları (veya JSON profil kolonu). Saf okuma; Worker'da tek SELECT.",
+  "notes": "video.mode zinciri: summary_vid_mode yoksa rota videosu ayarı video_mode devralınır (satır 2800) — port sırasında bu fallback unutulmamalı. video.line profildeki ORTAK video_line alanıdır (rota videolarıyla paylaşılır).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "PUT",
+  "path": "/api/summary/settings",
+  "fn": "put_summary_settings",
+  "line": 2814,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "enabled",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "varsa bool()'a çevrilip yazılır"
+   },
+   {
+    "ad": "hour",
+    "tip": "int 0-23",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "aralık dışı/parse edilemeyen SESSİZCE yok sayılır (satır 2820-2826)"
+   },
+   {
+    "ad": "video.mode",
+    "tip": "str enum flat|flyover|3d|tactical",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "enum dışı sessizce yok sayılır (satır 2829)"
+   },
+   {
+    "ad": "video.speed",
+    "tip": "str enum fast|medium|slow|auto",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "video.aspect",
+    "tip": "str enum 16:9|9:16",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "video.cam",
+    "tip": "str enum yakin|orta|uzak",
+    "zorunlu": false,
+    "varsayilan": null
+   },
+   {
+    "ad": "video.music",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "40 karaktere kırpılır"
+   },
+   {
+    "ad": "video.line",
+    "tip": "str '#RRGGBB(AA)'",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "'#' ile başlamalı, 9 karaktere kırpılır; profiles.video_line'a yazılır (ROTA videolarını da etkiler, satır 2839-2840)"
+   }
+  ],
+  "response": {
+   "enabled": "bool",
+   "hour": "int",
+   "video": "dict (GET ile aynı şekil — güncel değerler)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [
+   "profiles.<user> (setdefault)"
+  ],
+  "writes": [
+   "profiles.<user>.{summary_enabled,summary_hour,summary_vid_mode,summary_vid_speed,summary_vid_aspect,summary_vid_cam,summary_vid_music,video_line}"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json (_save flock)"
+  ],
+  "cf_mapping": "D1 UPDATE users SET ... — enum/aralık doğrulamaları Worker'da birebir (geçersiz değer 400 DEĞİL, sessiz yok sayma: gölge-mod diff için önemli).",
+  "notes": "TUZAK: geçersiz değerler hata üretmez, alan atlanır ve yanıt eski değeri döner — istemci farkı yanıttan anlar. video.line ORTAK video_line alanına yazar (yan etki: rota videosu çizgi rengi de değişir).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/summary/now",
+  "fn": "summary_now",
+  "line": 2845,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "premium",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": false,
+    "not": "body tamamen opsiyonel (Body(default={}))"
+   }
+  ],
+  "response": {
+   "ok": "bool (hep true)",
+   "queued": "str — kuyruk dosya adı '<user>_<ts>.json' (satır 2854)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   }
+  ],
+  "reads": [
+   "(social.json okumaz — sadece auth_user alias çözümü dolaylı _load yapar)"
+  ],
+  "writes": [
+   "(social.json'a yazmaz)"
+  ],
+  "external": [
+   "dosya sistemi: DATA_DIR/summaryreq/<user>_<ts>.json = {user,ts,to,premium,detail:true} (satır 2848-2853) — özet worker'ı (movelog-cloud) tüketir"
+  ],
+  "server_deps": [
+   "DATA_DIR/summaryreq/ kuyruk dizini",
+   "harici özet worker'ı (Traccar verisinden gün özeti üretir)"
+  ],
+  "cf_mapping": "Queue mesajı veya D1 görev tablosu satırı (type='summary', payload aynı) → movelog-cron/dispatch işler. Özet üretimi Traccar yerine D1 positions'tan okuyacak (Plan bölüm 3-4).",
+  "notes": "detail:true sabit. Aynı kullanıcı aynı SANİYEDE iki istek atarsa dosya adı çakışır ve ikincisi ilkini ezer (fiilen dedup). İstek anında doğrulama yok — cihazsız kullanıcı da kuyruğa yazabilir (range'in aksine trackerId kontrolü YOK).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/summary/range",
+  "fn": "summary_range",
+  "line": 2857,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "from",
+    "tip": "float epoch saniye",
+    "zorunlu": false,
+    "varsayilan": 0,
+    "not": "float() parse (satır 2860); verilmezse 0 alınır ve istek BAŞARIR (to=now>0, 400'e takılmaz) — fiilen opsiyonel ama 0='tüm geçmiş' anlamına gelir, istemci hep göndermeli"
+   },
+   {
+    "ad": "to",
+    "tip": "float epoch saniye",
+    "zorunlu": false,
+    "varsayilan": "time.time() (şimdi)"
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "queued": "bool (hep true; now'daki gibi dosya adı DÖNMEZ)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 400,
+    "detail": "geçersiz aralık",
+    "kosul": "to <= from (satır 2862-2863)"
+   },
+   {
+    "code": 400,
+    "detail": "cihaz yok",
+    "kosul": "profiles.<user>.trackerId yok (satır 2864-2866)"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   },
+   {
+    "code": 500,
+    "detail": "ValueError/TypeError",
+    "kosul": "from/to sayıya çevrilemezse float() patlar (str→ValueError, null→float(None) TypeError; satır 2860-2861)"
+   }
+  ],
+  "reads": [
+   "profiles.<user>.trackerId (satır 2864)"
+  ],
+  "writes": [
+   "(social.json'a yazmaz)"
+  ],
+  "external": [
+   "dosya sistemi: DATA_DIR/rangereq/<user>_<ts>.json = {user, device:str(trackerId), from, to, ts} (satır 2867-2871) — worker Traccar'dan aralığı çekip özet/video üretir"
+  ],
+  "server_deps": [
+   "DATA_DIR/rangereq/ kuyruk dizini",
+   "trackerId = Traccar cihaz id bağımlılığı"
+  ],
+  "cf_mapping": "Queue/D1 görev satırı (type='range'); veri kaynağı Traccar yerine D1 positions (device kolonu korunur). from/to EPOCH saniye — route-video from/to tuzağıyla aynı aile (bkz MEMORY reference_routevideo_fromto).",
+  "notes": "from/to saniye cinsinden float epoch; ms gönderilirse mantık bozulur (istemci sözleşmesi net olmalı). Aynı saniyede ikinci istek dosyayı ezer.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/voicecall/invite",
+  "fn": "voicecall_invite",
+  "line": 3498,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "user",
+    "tip": "str — internal id (u<hash>) VEYA @handle",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "_resolve_user ile çözülür (satır 2947-2954)"
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "room": "str 'vc_'+sha1(sorted(a,b))[:12] (deterministik çift odası, satır 3479-3481)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 404,
+    "detail": "kullanıcı yok",
+    "kosul": "hedef çözülemedi veya kendini davet (satır 3502-3503)"
+   },
+   {
+    "code": 403,
+    "detail": "sadece arkadaşına",
+    "kosul": "target friends[user] listesinde değil (satır 3504-3505) — IDOR koruması"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "profiles (resolve+isim+lang)",
+   "friends.<user> (arkadaş kontrolü)"
+  ],
+  "writes": [
+   "profiles.<target>.vc_invite = {from,name,ts} (satır 3507-3508)"
+  ],
+  "external": [
+   "push kuyruğu: _pushq (satır 2986) → DATA_DIR/pushq/*.json; route='vcall:<user>:<isim>'; başlık=davet edenin adı, gövde hedefin diline göre _VC_INV 12 dil (satır 3484-3489,3510-3511) — ana sunucu worker'ı APNs/FCM gönderir. _pushq try/except ile SESSİZ (satır 2989-2997): kuyruk yazımı başarısız olsa da istek başarır"
+  ],
+  "server_deps": [
+   "DATA_DIR/pushq/ kuyruk dizini",
+   "harici push worker"
+  ],
+  "cf_mapping": "D1: users.vc_invite JSON kolonu (veya KV kısa-TTL — 90sn bayatlama var, KV TTL=120sn ideal). Push: Queue → APNs/FCM WebCrypto. 12 dilli _VC_INV sözlüğü Worker'a taşınır.",
+  "notes": "Davet tek yönlü arkadaşlık kontrolü yapar (target in friends[user]); friends çift yönlü tutulduğundan pratikte simetrik. Önceki davet varsa ÜZERİNE yazılır. Oda adı iki taraf için de aynı (sorted).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/voicecall/respond",
+  "fn": "voicecall_respond",
+  "line": 3515,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "user",
+    "tip": "str — davet EDENİN id/handle'ı",
+    "zorunlu": true,
+    "varsayilan": ""
+   },
+   {
+    "ad": "accept",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": false
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "room": "str|null — accept=true ise oda adı, değilse null (satır 3533)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 404,
+    "detail": "davet yok",
+    "kosul": "frm çözülemedi veya profiles[user].vc_invite.from != frm (satır 3522-3523) — sahte kabul engeli"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "profiles.<user>.vc_invite",
+   "profiles (isim+lang)"
+  ],
+  "writes": [
+   "profiles.<user>.vc_invite SİLİNİR (pop, satır 3524 — red de kabul de tüketir)",
+   "accept ise profiles.<frm>.vc_go = {peer,name,ts} (satır 3528-3529)"
+  ],
+  "external": [
+   "accept ise push kuyruğu: _pushq route='vcallok:<user>:<isim>', gövde _VC_OK 12 dil (satır 3490-3495,3530-3531); _pushq sessiz/best-effort (satır 2989-2997)"
+  ],
+  "server_deps": [
+   "DATA_DIR/pushq/",
+   "harici push worker"
+  ],
+  "cf_mapping": "D1/KV: vc_invite oku-sil + vc_go yaz (tek transaction; D1 batch). Push Queue→APNs/FCM.",
+  "notes": "Davetin süresi burada KONTROL EDİLMEZ (90sn bayatlama sadece status'ta gizler) — saatler sonra bile respond çalışır, vc_invite hâlâ profilde durduğu için. Reddetme karşı tarafa bildirim GÖNDERMEZ (sessiz).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/voicecall/status",
+  "fn": "voicecall_status",
+  "line": 3536,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "invite_from": "str|null — bana davet gönderen id (90sn'den bayatsa null, satır 3543)",
+   "invite_name": "str|null",
+   "go_peer": "str|null — davetim kabul edildi, karşı taraf id (90sn bayatlama, satır 3544)",
+   "go_name": "str|null"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   }
+  ],
+  "reads": [
+   "profiles.<user>.{vc_invite,vc_go}"
+  ],
+  "writes": [
+   "(salt okur — bayat kayıtlar SİLİNMEZ, sadece yanıtta gizlenir)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1 SELECT (veya KV get). App bu ucu POLL eder (davet eden 'kabul edildi mi' diye) — yüksek istek hacmi: KV/cache uygun, ama tutarlılık için tek kaynak D1 ise satır okuma ucuz.",
+  "notes": "Bayat (>90sn) davet/go temizlenmiyor, sadece gösterilmiyor — çöp kayıt profilde kalır (token ucu vc_go'yu tüketene kadar). CF portunda TTL'li KV bu çöpü kendiliğinden temizler.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/voicecall/token",
+  "fn": "voicecall_token",
+  "line": 3549,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   {
+    "ad": "peer",
+    "tip": "str query — karşı tarafın id/handle'ı",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "boşsa 404"
+   }
+  ],
+  "body": [],
+  "response": {
+   "url": "str — LIVEKIT_URL (varsayılan wss://livekit.nickdegs.com, satır 3365)",
+   "token": "str — LiveKit HS256 JWT: iss=LIVEKIT_KEY, sub=user, nbf=now, exp=now+7200, name, video:{room,roomJoin,canPublish,canSubscribe,canPublishData} (satır 3567-3571)",
+   "room": "str vc_<hash12>",
+   "peer_name": "str — karşı profil name→handle→id sırasıyla (satır 3572-3574)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 503,
+    "detail": "canlı telsiz kapalı",
+    "kosul": "LIVEKIT_KEY config'te boş (satır 3551-3552)"
+   },
+   {
+    "code": 404,
+    "detail": "kullanıcı yok",
+    "kosul": "peer çözülemedi veya kendisi (satır 3555-3556)"
+   },
+   {
+    "code": 403,
+    "detail": "sadece arkadaşınla",
+    "kosul": "peer friends[user] içinde değil (satır 3557-3558) — token'ı yalnız 2 arkadaş alabilir, oda fiilen max 2 kişi"
+   }
+  ],
+  "reads": [
+   "profiles (resolve+isimler)",
+   "friends.<user>",
+   "profiles.<user>.vc_go"
+  ],
+  "writes": [
+   "profiles.<user>.vc_go SİLİNİR (yalnız vc_go.peer==p ise; davet eden token alırken kabul işaretini tüketir, satır 3560-3562)"
+  ],
+  "external": [
+   "LiveKit JWT üretimi PyJWT ile YEREL (ağ çağrısı yok); LIVEKIT_URL istemciye verilir, sunucu LiveKit'e bağlanmaz"
+  ],
+  "server_deps": [
+   "config: LIVEKIT_KEY/LIVEKIT_SECRET/LIVEKIT_URL (satır 3364-3365)",
+   "python jwt kütüphanesi"
+  ],
+  "cf_mapping": "Worker'da WebCrypto HMAC-SHA256 ile aynı claim'li JWT (PyJWT yerine ~20 satır); LIVEKIT_KEY/SECRET wrangler secret. LiveKit sunucusu (livekit.nickdegs.com) SUNUCUDA KALIYOR — plan kapsamında taşınmıyor, Worker sadece token basar.",
+  "notes": "Oda adı deterministik olduğundan token kontrolü tek güvenlik sınırı — arkadaşlık kontrolü atlanırsa herkes her odaya girebilir (IDOR kritik). exp 2 saat. vc_go tüketimi yalnız eşleşen peer'da olur; farklı peer için token istenirse vc_go durur.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/list",
+  "fn": "chat_list",
+  "line": 4044,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "conversations": "list — ts'e göre azalan; her öğe: {username,name,handle,avatar,premium,ultra,sv_off,sokak_hak,video_hak,sokak_hediye,free_tactical,admin (_profile_of satır 1389-1407), last:{id,frm,text,ts,type,media?}|null, unread:int, online:bool} — mesajı olmayan arkadaşlar da last:null ile listelenir (satır 4057-4059)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 500,
+    "detail": "ValueError olasılığı",
+    "kosul": "dm anahtarı 'a|b' formatında değilse key.split('|') 2'ye açılamaz (satır 4050) — pratikte _pair (satır 4032) hep 2 parça üretir; ayrıca mesaj kaydında frm/ts alanı eksikse m['frm']/m['ts'] KeyError (satır 4055, .get değil)"
+   }
+  ],
+  "reads": [
+   "dm.* (tüm konuşmalar taranır, satır 4049)",
+   "read.<user>",
+   "friends.<user>",
+   "profiles.* (_profile_of + _online)",
+   "seen.*"
+  ],
+  "writes": [
+   "seen.<user> = now (_touch satır 4036-4037; her listelemede TÜM social.json diske yazılır satır 4064)"
+  ],
+  "external": [
+   "dosya sistemi: _profile_of.sv_off için /opt/movelog/data/sv-kapali bayrak dosyası os.path.exists (satır 1398)"
+  ],
+  "server_deps": [
+   "social.json (754KB dosya her istekte tam yazılıyor — performans tuzağı)",
+   "sv-kapali bayrak dosyası"
+  ],
+  "cf_mapping": "D1: messages tablosu (pair_key, frm, ts, type, media) + read/seen tabloları. seen güncellemesi KV (TTL'li presence) — her chat isteğinde D1'e yazmaktan kaçın. sv_off bayrağı → KV config anahtarı. unread = SELECT count per convo.",
+  "notes": "TUZAK: salt-okuma gibi görünen uç her çağrıda _save ile 754KB dosyayı yazar (presence). online eşiği 70sn (satır 4041). unread hesabı read[user][other] zaman damgasına göre (satır 4055). last mesajın media alanı 2MB'a kadar inline base64 olabilir — liste yanıtını ŞİŞİRİR.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/with/{other}",
+  "fn": "chat_with",
+  "line": 4068,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   {
+    "ad": "other",
+    "tip": "str path — karşı tarafın INTERNAL id'si (handle ÇÖZÜLMEZ; _resolve_user çağrılmıyor)",
+    "zorunlu": true,
+    "varsayilan": null
+   }
+  ],
+  "body": [],
+  "response": {
+   "messages": "list[{id:str, frm:str, text:str, ts:int, type:str, media?:str}] — tüm geçmiş, sayfalama YOK",
+   "peer": "{..._profile_of alanları, online:bool}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   }
+  ],
+  "reads": [
+   "dm.<pair(user,other)>",
+   "profiles.<other>",
+   "seen"
+  ],
+  "writes": [
+   "read.<user>.<other> = now (okundu işareti, satır 4072)",
+   "seen.<user> = now (_touch)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json (her açılışta tam dosya yazımı)"
+  ],
+  "cf_mapping": "D1: SELECT messages WHERE pair_key=? ORDER BY ts + UPDATE read işareti. Sayfalama eklenmese bile LIMIT düşünülmeli (sözleşme: şimdilik tümü). Presence KV.",
+  "notes": "IDOR YOK ama dikkat: arkadaşlık kontrolü YAPILMAZ — pair anahtarı user'ı içerdiğinden yabancı konuşma okunamaz; olmayan other için boş messages + iskelet peer döner (404 yok). other handle DEĞİL internal id olmalı (send ile asimetrik — send resolve eder, with etmez).",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/chat/send",
+  "fn": "chat_send",
+  "line": 4077,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "to",
+    "tip": "str — id veya @handle (resolve edilir, satır 4086)",
+    "zorunlu": true,
+    "varsayilan": ""
+   },
+   {
+    "ad": "text",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "4000 karaktere kırpılır (satır 4080); text VEYA media'dan biri şart"
+   },
+   {
+    "ad": "type",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "text",
+    "not": "serbest string; 'voice' ptt akışında kullanılır (satır 3470)"
+   },
+   {
+    "ad": "media",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "2.000.000 karaktere kırpılır (satır 4091) — inline base64 veya ptt pid"
+   }
+  ],
+  "response": {
+   "ok": "bool",
+   "message": "{id:str hex12, frm:str, text:str, ts:int, type:str, media?:str}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 400,
+    "detail": "boş mesaj",
+    "kosul": "to boş VEYA (text boş VE media boş) (satır 4083-4084)"
+   },
+   {
+    "code": 403,
+    "detail": "sadece arkadasina mesaj gonderebilirsin",
+    "kosul": "other != user ve other friends[user]'da değil (satır 4087-4088) — kendine mesaj (not defteri) SERBEST"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "profiles (resolve)",
+   "friends.<user>"
+  ],
+  "writes": [
+   "dm.<pair(user,other)> append {id,frm,text,ts,type[,media]} (satır 4089-4092)",
+   "seen.<user> (_touch)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json — 2MB'lık media inline JSON'da saklanıyor (dosya şişmesinin ana kaynağı)"
+  ],
+  "cf_mapping": "D1 INSERT messages; media inline TAŞINMAMALI → R2 nesnesi + mesajda anahtar (Plan: uploaded_tracks gibi büyük bloblar R2'ye). Karşı tarafa push YOK (poll tabanlı) — CF'de de aynı bırak, push eklemek sözleşme değişikliği.",
+  "notes": "TUZAK: resolve başarısızsa `other` RAW string kalır (or other, satır 4086) ve friend kontrolüne o haliyle girer → pratikte 403; ama to == user (raw) ise kendine yazar. Alıcıya push bildirimi GÖNDERİLMEZ (yalnız sesli mesaj akışı ptt_send_user push atar). id = secrets.token_hex(6). media str()'e ÇEVRİLMEZ (satır 4081): string olmayan media (örn. dict) gelirse [:2_000_000] dilimlemesi TypeError→500.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/chat/poll",
+  "fn": "chat_poll",
+  "line": 4097,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   {
+    "ad": "since",
+    "tip": "int query epoch saniye",
+    "zorunlu": false,
+    "varsayilan": 0,
+    "not": "kesin büyüklük: ts > since (satır 4108)"
+   }
+  ],
+  "body": [],
+  "response": {
+   "new": "list[{id,frm,text,ts,type,media?, with:str}] — since'ten YENİ ve BAŞKASINDAN gelen tüm mesajlar (kendi gönderdiklerim hariç, satır 4108)",
+   "now": "int — istemci bir sonraki poll'da since=now göndersin"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "since int'e çevrilemezse"
+   }
+  ],
+  "reads": [
+   "dm.* (kullanıcının TÜM konuşmaları her poll'da taranır)"
+  ],
+  "writes": [
+   "seen.<user> = now (_touch + _save satır 4099,4110 — her poll'da 754KB yazım!)"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json — poll sıklığı × tam dosya yazımı = ana G/Ç yükü"
+  ],
+  "cf_mapping": "D1: SELECT ... WHERE pair_key LIKE %user% AND ts > ? AND frm != user (veya messages tablosuna alıcı kolonu eklenip indexli sorgu). seen → KV TTL presence (D1 yazımı poll'dan çıkarılmalı). since/now saniye sözleşmesi birebir.",
+  "notes": "since=0 ilk çağrıda TÜM geçmiş karşı-taraf mesajlarını döndürür (media dahil — dev yanıt olabilir). ts saniye çözünürlüklü: aynı saniyede gelen mesaj, istemci now'ı since yaptıysa bir sonraki poll'da KAÇABİLİR (ts > since kesin) — CF portunda ts'i ms yapmak sözleşmeyi bozar, aynen koru + gölge diff'te bu ucu zamana duyarlı işaretle.",
+  "durum": "portlandi 2026-08-30 (api/src/routes/grup5.ts)"
+ }
+]

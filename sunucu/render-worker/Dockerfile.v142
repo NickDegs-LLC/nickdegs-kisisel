@@ -1,0 +1,7 @@
+# v142 — SIDECAR PASSTHROUGH (2026-08-31): harita_yan.py bilinmeyen yolları (matching/geocoding/
+# xyz/mvt/yukseklik) UZAK'a iletir. Sebep ölçüldü: route-video.py bu üçü için de HARITA_UC'yi
+# kullanıyor; sidecar yalnız /styles biliyordu -> map-match 404 -> rota SESSİZCE ham GPS izine
+# düşüyordu (video çıkıyor ama yola oturmuyor). Mühürlü dosyalara dokunulmadı.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v141
+FROM ${BASE}
+COPY harita_yan.py /app/harita_yan.py

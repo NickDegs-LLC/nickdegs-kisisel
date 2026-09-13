@@ -1,0 +1,948 @@
+#!/usr/bin/env python3
+# Rota videosu: Traccar GPS + Garmin nabiz -> Mapbox uydu + ilerleyen rota + hiz/nabiz/mesafe
+# bindirme -> ffmpeg mp4 -> Element. (Relive tarzi, sunucu tarafi, tarayicisiz.)
+# Kullanim:
+#   route-video.py DATE [free|paid] [fast|medium|slow] [flat|flyover] [music=/yol.mp3] \
+#                  [from=EPOCH to=EPOCH] [dry]
+#   Varsayilan: paid (1080p, logosuz), medium, flat.
+import sys, os, json, math, time, base64, urllib.request, urllib.parse, subprocess, tempfile, shutil, bisect
+from datetime import datetime, timedelta, timezone
+sys.path.insert(0, "/opt/matrix/garmin-lib")
+from PIL import Image, ImageDraw, ImageFont
+
+TR=timezone(timedelta(hours=3))
+TRACCAR="http://10.99.0.2:8084"; TUSER="daclen10@gmail.com"; TPASS="SIR_KALDIRILDI_bkz_etc_nickdegs_traccar_conf"; DEVICE=1
+HS="http://127.0.0.1:8008"; BOT="SIR_KALDIRILDI_bkz_secrets_MATRIX_BOT_TOKEN"
+ROOM="!lfZPZWOoikEtwCjcnV:nickdegs.duckdns.org"
+OUT=os.environ.get("ROUTE_OUT","/opt/matrix/routes"); GTOK="/opt/matrix/garmin-tokens"  # CLOUD: ROUTE_OUT env
+FONT="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+LOGO="/opt/matrix/assets/logo.png"
+
+MB=os.environ.get("MAPBOX_TOKEN")   # CLOUD: token env'den (dosya yoksa)
+if not MB:
+    try:
+        for ln in open("/opt/matrix/secrets/mapbox.conf"):
+            if ln.startswith("MAPBOX_PUBLIC_TOKEN="): MB=ln.strip().split("=",1)[1]
+    except FileNotFoundError: pass
+# 2026-08-10 MAPBOX'TAN TAM KOPUŞ (Barış kararı): token artık ZORUNLU DEĞİL.
+# Tüm harita çağrıları kendi sunucumuza gider (harita-proxy); URL biçimi Mapbox ile BİREBİR aynı,
+# yalnız host değişti. Proxy access_token'ı zaten söküp atıyor. Token yoksa boş string yeterli.
+MB = MB or "yok"
+# 2026-08-11: motor uçları da CF ARKASINDA (harita.nickdegs.com). Sebep: doğrudan origin'e giden
+# istekler RunPod IP'si CrowdSec'te DROP ise SESSİZCE yutulur (log yok, timeout, matching çalışmaz).
+# CF üzerinden gelen istek CF IP'sinden gelir (whitelist) -> worker hangi IP'de olursa olsun çalışır.
+HARITA_UC = os.environ.get("HARITA_UC") or "https://harita.nickdegs.com/24579d9db6c7c001"
+# Google Maps API key (Photorealistic 3D Tiles — gerçek foto-gerçekçi 3B)
+GKEY=os.environ.get("GOOGLE_MAPS_KEY")
+if not GKEY:
+    try:
+        for ln in open("/opt/matrix/secrets/gmaps.conf"):
+            if ln.startswith("GOOGLE_MAPS_KEY="): GKEY=ln.strip().split("=",1)[1]
+    except FileNotFoundError: pass
+
+A=sys.argv[1:]
+DRY="dry" in A; FREE="free" in A
+SPEED=next((x for x in A if x in("fast","medium","slow","auto")),"medium")
+MODE=next((x for x in A if x in("flat","flyover","3d")),"flat")
+MUSIC=next((x.split("=",1)[1] for x in A if x.startswith("music=")),None)
+KABARTMA=any(x=="kabartma=1" for x in A)   # 2026-08-11: KABARTMALI sekmesi (3B binalar; Premium+Ultra)
+FROM=next((float(x.split("=",1)[1]) for x in A if x.startswith("from=")),None)
+TO=next((float(x.split("=",1)[1]) for x in A if x.startswith("to=")),None)
+NAME=next((x.split("=",1)[1] for x in A if x.startswith("name=")),"")
+ACTTYPE=next((x.split("=",1)[1] for x in A if x.startswith("acttype=")),"")
+PHOTOS=next((x.split("=",1)[1] for x in A if x.startswith("photos=")),None)
+NOTIFY=next((x.split("=",1)[1] for x in A if x.startswith("notify=")),None)
+TRACKF=next((x.split("=",1)[1] for x in A if x.startswith("track=")),None)  # CLOUD: GPS izi dosyadan (iç Traccar'a erişmeden)
+# GRUP SÜRÜŞ (2026-07-12): ikinci sürücünün izi — iki çizgi + iki nokta, tek video ("birlikte sürüş")
+TRACK2F=next((x.split("=",1)[1] for x in A if x.startswith("track2=")),None)
+MATESF=next((x.split("=",1)[1] for x in A if x.startswith("mates=")),None)   # GRUP: N sürücü [{points,name,line,dot}...]
+# EŞ SÜRÜCÜLER (grup sürüş): mates dosyası VEYA legacy track2 tekil eşi -> ortak liste
+_MATE_PALETTE=[("#FF9F0A","#FFD60A"),("#BF5AF2","#DA8FFF"),("#30D158","#66E27F"),
+               ("#FF375F","#FF6482"),("#64D2FF","#9BE2FF"),("#FFD60A","#FFE566")]
+def load_mates():
+    out=[]
+    if MATESF and os.path.exists(MATESF):
+        try:
+            for m in json.load(open(MATESF)) or []:
+                if len(m.get("points") or [])>=2: out.append(m)
+        except Exception as _em: print("mates okunamadı:",_em)
+    elif TRACK2F and os.path.exists(TRACK2F):
+        try:
+            _p2=json.load(open(TRACK2F)).get("points",[])
+            if len(_p2)>=2:
+                out.append({"points":_p2,
+                    "name":next((x.split("=",1)[1] for x in A if x.startswith("name2=")),""),
+                    "line":next((x.split("=",1)[1] for x in A if x.startswith("line2=")),""),
+                    "dot":next((x.split("=",1)[1] for x in A if x.startswith("dot2=")),"")})
+        except Exception as _e2: print("track2 okunamadı:",_e2)
+    for i,m in enumerate(out):
+        pl=_MATE_PALETTE[i%len(_MATE_PALETTE)]
+        if not m.get("line"): m["line"]=pl[0]
+        if not m.get("dot"): m["dot"]=pl[1]
+    return out
+MATES_RAW=load_mates()
+_mn=[m.get("name","").strip() for m in MATES_RAW if m.get("name","").strip()]
+if _mn and NAME:
+    NAME=(f"{NAME} & {_mn[0]}" if len(_mn)==1 else f"{NAME}, "+", ".join(_mn[:-1])+f" & {_mn[-1]}")
+def compute_mates(Pn, FIDXn, FRn):
+    """GRUP SÜRÜŞ: her eş sürücü için HER KARE pos önhesabı (kare -> track1 zamanı -> eş konumu).
+    Renderer'lara saf [lon,lat] listeleri gider — motorlarda sıfır matematik, dilimler arası determinizm."""
+    import bisect as _bi2
+    outm=[]; Nn=len(Pn)
+    for m in MATES_RAW:
+        P2x=sorted([{"t":float(q["t"]),"lat":float(q["lat"]),"lon":float(q["lon"])} for q in m["points"]],key=lambda x:x["t"])
+        _t2s=[q["t"] for q in P2x]
+        def _pos2_at(tt):
+            i=_bi2.bisect_left(_t2s,tt)
+            if i<=0: a=b=P2x[0]; fr=0.0
+            elif i>=len(P2x): a=b=P2x[-1]; fr=0.0
+            else:
+                a,b=P2x[i-1],P2x[i]; dt=b["t"]-a["t"]; fr=((tt-a["t"])/dt) if dt>0 else 0.0
+            return [round(a["lon"]+(b["lon"]-a["lon"])*fr,6), round(a["lat"]+(b["lat"]-a["lat"])*fr,6)]
+        def _fi2_at(tt):
+            # v115: eş noktanın çizgi-üstü KESİRLİ İNDEKSİ doğrudan ZAMANDAN (lider FIDX mantığıyla aynı) —
+            # geometrik izdüşüm firkete virajında segment atlayıp IŞINLIYORDU (Barış 2026-07-13 yakaladı)
+            i=_bi2.bisect_left(_t2s,tt)
+            if i<=0: return 0.0
+            if i>=len(P2x): return float(len(P2x)-1)
+            a,b=P2x[i-1],P2x[i]; dt=b["t"]-a["t"]
+            return (i-1)+(((tt-a["t"])/dt) if dt>0 else 0.0)
+        POS2x=[]; FI2x=[]
+        for _f in range(FRn):
+            _fi=FIDXn[_f]; _j=int(_fi); _jn=min(_j+1,Nn-1); _fr=_fi-_j
+            _ft=Pn[_j]["t"]+(Pn[_jn]["t"]-Pn[_j]["t"])*_fr
+            POS2x.append(_pos2_at(_ft)); FI2x.append(round(_fi2_at(_ft),4))
+        outm.append({"pts2":[[q["lon"],q["lat"]] for q in P2x],"pos2":POS2x,"fi2":FI2x,
+                     "line":m["line"],"dot":m["dot"]})
+    if outm: print(f"GRUP SÜRÜŞ: {len(outm)} eş sürücü, kare-hizalı konumlar hazır")
+    return outm
+AVATARF=next((x.split("=",1)[1] for x in A if x.startswith("avatar=")),None)  # profil resmi (intro/outro Relive girişi)
+def valid_mp4(path):
+    # Render tam bitti mi? (moov atom = sonlandırılmış mp4). Yarım/bozuk dosya sunulmasın.
+    try:
+        if os.path.getsize(path) < 20000: return False
+        with open(path,"rb") as fh: return b"moov" in fh.read()
+    except Exception: return False
+def sync_to_app():
+    # videoyu hemen NickDegs2'ye (app'in okuduğu yere) senkronla
+    try: subprocess.run(["systemctl","start","movelog-routes-sync.service"],timeout=120)
+    except Exception as e: print("sync hata:",e)
+def push_done():
+    if NOTIFY:
+        try: subprocess.run(["/usr/bin/python3","/opt/matrix/scripts/push.py",NOTIFY,"Videon hazır 🎬","Rota videon oluşturuldu, Rotalar'da."],timeout=30)
+        except Exception as e: print("push hata:",e)
+ACTLBL={"moto":"Motosiklet","car":"Araba","bike":"Bisiklet","run":"Koşu","walk":"Yürüyüş"}.get(ACTTYPE,"Sürüş")
+# kullanici renkleri: dot=#hex (takip noktasi), line=#hex (rota cizgisi)
+DOTC=next((x.split("=",1)[1] for x in A if x.startswith("dot=")),"#ff3b30")
+LINEC=next((x.split("=",1)[1] for x in A if x.startswith("line=")),"#00e5ff")
+CAMMODE=next((x.split("=",1)[1] for x in A if x.startswith("cam=")),"")   # 3d kamera: ""=eski yandan, "chase"=tam arkadan (google 3d'ye özel)
+ULTRA=next((x.split("=",1)[1] for x in A if x.startswith("ultra=")),"")=="1"  # Ultra=Google foto-gerçekçi 3D; Premium=Mapbox 3D
+SEG=next((x.split("=",1)[1] for x in A if x.startswith("seg=")),"")   # PARALEL SEGMENT: "k/n" -> bu worker k'inci kare dilimini render eder
+LINE_ON = LINEC.lower() != "none"    # çizgisiz mod (sadece nokta)
+def hex2rgb(h):
+    h=h.lstrip("#")
+    if len(h)<6: return (0,229,255)   # "none"/geçersiz -> güvenli varsayılan (çizim LINE_ON ile atlanır)
+    return (int(h[0:2],16),int(h[2:4],16),int(h[4:6],16))
+GLASS = LINEC.lower()=="glass"       # liquid glass: şeffaf frosted çizgi (yol hafif görünür, göze batmaz ama çık durur)
+CLEAR = LINEC.lower()=="clear"       # renksiz tam şeffaf: en minimal cam (basit görünüm)
+DOT=hex2rgb(DOTC); LINE=(245,248,252) if (GLASS or CLEAR) else hex2rgb(LINEC)
+DEV=next((int(x.split("=",1)[1]) for x in A if x.startswith("dev=")),DEVICE)  # cihaz seç (1=sahip, 2=SEMRA, 3=ADEM)
+ZOOMO=next((float(x.split("=",1)[1]) for x in A if x.startswith("zoom=")),None)  # 3B zoom override (uzun rota için geniş)
+# KAMERA MESAFESİ (premium, her video): yakın/orta/uzak -> zoom kaydırması (yakın=daha yakın çekim).
+CAMD=next((x.split("=",1)[1] for x in A if x.startswith("camdist=")),"orta")
+# KİLİTLİ KAMERA KADEMELERİ (Barış 2026-08-28: "bütün zoomlar için kilitle").
+# Tam kat farkı: her kademe bir öncekinin 2 katı yakın/uzak -> fark GÖZLE görülür.
+# (Önceden 0.85 idi ve ayrıca 0.7 ile çarpılıyordu -> etkin fark 0.6 zoom, ayırt edilemiyordu;
+#  üstüne ölçek 2 kat hatalı olduğu için hepsi zaten çok uzaktan çekiliyordu.)
+_CAM_KADEME={"yakin":1.0,"orta":0.0,"uzak":-1.0}
+CAMZ=_CAM_KADEME.get(CAMD,0.0)
+REEL=("reel=1" in A) or ("reel" in A)   # HIGHLIGHT REEL (Faz 3c): ~15sn paylaşılabilir dikey teaser
+PORT=("9:16" in A) or ("portrait" in A) or ("dikey" in A) or REEL   # dikey video (reels/story); reel her zaman dikey
+pos_args=[x for x in A if "=" not in x and x not in("dry","free","paid","fast","medium","slow","flat","flyover","3d","16:9","9:16","portrait","dikey","landscape","yatay")]
+if not pos_args: print("kullanim: route-video.py DATE [free] [fast|medium|slow] [flat|flyover|3d] [16:9|9:16] [music=..] [from= to=] [dry]"); sys.exit(1)
+day=datetime.strptime(pos_args[0],"%Y-%m-%d").date()
+
+if PORT: VW,VH=(720,1280) if FREE else (1080,1920)   # 9:16 dikey
+else:    VW,VH=(1280,720) if FREE else (1920,1080)   # 16:9 yatay
+ASP="9x16" if PORT else "16x9"
+FPS=int(os.environ.get("RVID_FPS") or 60)   # TELEFON SPEC modu 30 ister (env yalnız host spec çağrısında); bulutta env YOK -> 60 birebir
+# SÜRE = rota_km × (km-başına-saniye), TABAN ile TAVAN arası sıkıştırılır -> rota uzunluğuna göre ölçeklenir.
+#  Kısa(fast):  min 15sn (kısa rotada 15, uzadıkça biraz büyür, max 30).
+#  Orta(medium): ~30sn civarı (taban 28, uzun rotada 45'e kadar).
+#  Uzun(slow):  TAMAMEN kat edilen yola göre, MAX 60sn (= 1 dakika).
+#  Otonom(auto, PREMIUM/günde1): tamamen rotaya göre, MAX 180sn (3dk) — şehir yolculukları için ideal.
+SECS={"fast":15,"medium":28,"slow":30,"auto":35}[SPEED]        # taban
+SPK={"fast":0.6,"medium":0.9,"slow":1.3,"auto":3.0}[SPEED]     # km başına saniye (auto ~60km'de 180sn tavanına ulaşır)
+SMAX={"fast":30,"medium":45,"slow":60,"auto":180}[SPEED]       # tavan (uzun=60sn; otonom=180sn=3dk)
+if REEL:   # REEL: rota ne olursa olsun ~14sn dikey teaser (hızlı flythrough + zirve pini + gain'li özet kartı)
+    SECS=13; SPK=0.30; SMAX=16
+def dur_secs(km): return min(SMAX, max(SECS, km*SPK))
+
+def hav(a,b):
+    R=6371000; la1,lo1,la2,lo2=map(math.radians,[a[0],a[1],b[0],b[1]])
+    h=math.sin((la2-la1)/2)**2+math.cos(la1)*math.cos(la2)*math.sin((lo2-lo1)/2)**2
+    return 2*R*math.asin(math.sqrt(h))
+def ep(s):
+    try: return datetime.fromisoformat(s.replace("Z","+00:00")).timestamp()
+    except Exception: return 0.0
+def hhmm(e): return datetime.fromtimestamp(e,TR).strftime("%H:%M")
+_AYLAR=["","Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"]
+def daylabel(): return f"{day.day} {_AYLAR[day.month]} {day.year}"   # 11 Haz 2026 (TR)
+auth=base64.b64encode(f"{TUSER}:{TPASS}".encode()).decode()
+def traccar(p): return json.load(urllib.request.urlopen(urllib.request.Request(TRACCAR+p,headers={"Authorization":"Basic "+auth}),timeout=30))
+
+if TRACKF and os.path.exists(TRACKF):
+    # CLOUD self-contained: GPS izi job dosyasından (Traccar sorgusu yok -> bulut worker'da çalışır)
+    _raw=json.load(open(TRACKF))
+    _raw=_raw.get("points",_raw) if isinstance(_raw,dict) else _raw
+    P=[{"t":float(p.get("t",0)),"lat":p["lat"],"lon":p["lon"],"alt":p.get("alt"),"spd":p.get("spd"),"hr":p.get("hr")} for p in _raw]   # hr: NABIZ (2026-07-06: yükleyici düşürüyordu -> ❤️ videoya hiç ulaşmıyordu)
+    if P and not P[0].get("t"):   # zaman yoksa from..to arasına eşit dağıt
+        _f=FROM or 0; _t=TO or (_f+len(P)); n=max(1,len(P)-1)
+        for i,p in enumerate(P): p["t"]=_f+(_t-_f)*i/n
+else:
+    start=datetime(day.year,day.month,day.day,tzinfo=TR); end=start+timedelta(days=1)
+    fu=start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"); tu=end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pos=traccar(f"/api/positions?deviceId={DEV}&from={urllib.parse.quote(fu)}&to={urllib.parse.quote(tu)}")
+    P=[{"t":ep(p.get("fixTime") or p.get("deviceTime")),"lat":p["latitude"],"lon":p["longitude"],"alt":p.get("altitude")} for p in pos]
+P.sort(key=lambda x:x["t"])
+if FROM is not None: P=[p for p in P if p["t"]>=FROM-1]
+if TO   is not None: P=[p for p in P if p["t"]<=TO+1]
+# GPS ışınlanma (outlier) temizliği: uç + komşuya göre ani sıçrayan tek noktayı at
+def _hh(a,b): return hav((a["lat"],a["lon"]),(b["lat"],b["lon"]))
+for _ in range(4):                              # birkaç geçiş (ardışık outlier)
+    if len(P)<3: break
+    ch=False
+    if _hh(P[0],P[1])>200 and _hh(P[1],P[2])<160: P=P[1:]; ch=True
+    if len(P)>=3 and _hh(P[-1],P[-2])>200 and _hh(P[-2],P[-3])<160: P=P[:-1]; ch=True
+    cl=[P[0]]
+    for i in range(1,len(P)-1):
+        if _hh(P[i-1],P[i])>160 and _hh(P[i],P[i+1])>160 and _hh(P[i-1],P[i+1])<_hh(P[i-1],P[i])*0.6:
+            ch=True; continue                   # tek nokta spike = ışınlanma, at
+        cl.append(P[i])
+    cl.append(P[-1]); P=cl
+    if not ch: break
+Q=[]
+for p in P:
+    if Q:
+        d=hav((Q[-1]["lat"],Q[-1]["lon"]),(p["lat"],p["lon"]))
+        dt=p["t"]-Q[-1]["t"]
+        if d<3: continue                       # çok yakın = dedup
+        if dt<=0 and d>40: continue            # aynı/geri zaman + uzak = GPS glitch, at
+        if dt>0 and d/dt>70: continue          # >252 km/h imkânsız = GPS ışınlaması, at
+    Q.append(p)
+P=Q
+if len(P)<5: print(f"{day}: yeterli nokta yok ({len(P)})"); sys.exit(0)
+P[0]["cum"]=0.0
+if not isinstance(P[0].get("spd"),(int,float)): P[0]["spd"]=0.0
+for i in range(1,len(P)):
+    dt=P[i]["t"]-P[i-1]["t"]; d=hav((P[i-1]["lat"],P[i-1]["lon"]),(P[i]["lat"],P[i]["lon"]))
+    _ps=P[i].get("spd")   # iz gerçek hızı veriyorsa onu kullan (eşit-zaman dağıtımı spike yapmasın)
+    P[i]["spd"]=float(_ps) if isinstance(_ps,(int,float)) else ((d/dt*3.6) if 0<dt<600 else P[i-1]["spd"])
+    P[i]["cum"]=P[i-1]["cum"]+d
+TOTKM=P[-1]["cum"]/1000.0
+
+# --- GPS izini YOLA OTURT (Mapbox Map Matching) ---
+# Seyrek GPS noktaları arasını DÜZ çizgiyle bağlamak bina/stadyum içinden geçen "dandik" çizgi yapar.
+# Map Matching izi gerçek sokak ağına oturtur; çizgi + marker + kamera hep yolu takip eder (flat/flyover/3D).
+def _match_profile():
+    return {"bike":"cycling","run":"walking","walk":"walking"}.get(ACTTYPE,"driving")
+def map_match(src):
+    """TÜM rotayı yola oturt: 100'lük parçalara böl (API limiti), her parçada TÜM matchings'i birleştir.
+    gaps=ignore ŞART: Garmin auto-pause/ışık duraklaması zaman boşluğu yaratır; Mapbox varsayılanı boşlukta
+    rotayı BÖLÜP sadece ilk parçayı verdirtiyordu -> video ışıkta bitiyordu. Başarısız parçada ham noktalar."""
+    if not MB or len(src)<2: return None
+    out=[]; used_match=False; i=0
+    while i < len(src)-1:
+        seg=src[i:i+100]
+        if len(seg)<2: break
+        coords=";".join(f"{p['lon']:.6f},{p['lat']:.6f}" for p in seg)
+        rad=";".join("32" for _ in seg)             # seyrek nokta -> geniş yarıçapla yakala
+        # timestamps GÖNDERİLMEZ: Garmin auto-pause boşlukları Mapbox'ın rotayı bölmesini tetikliyordu
+        # (gaps=ignore Mapbox'ta yok, 422). Saf geometri matching + tüm matchings birleştirme = tam rota.
+        url=(f"{HARITA_UC}/matching/v5/mapbox/{_match_profile()}/{coords}"
+             f"?geometries=geojson&overview=full&tidy=true&radiuses={rad}&access_token={MB}")
+        got=False
+        for _try in range(3):                        # geçici API hatasında retry: worker'lar arası TUTARLILIK şart
+            try:                                     # (paralel segment worker'ları aynı matched geometriyi üretmeli)
+                d=json.load(urllib.request.urlopen(url,timeout=30))
+                if d.get("code")=="Ok" and d.get("matchings"):
+                    for m in d["matchings"]:        # boşlukta bölünse bile TÜM parçalar sırayla eklenir
+                        for c in m["geometry"]["coordinates"]:
+                            if not out or abs(out[-1]["lat"]-c[1])>1e-7 or abs(out[-1]["lon"]-c[0])>1e-7:
+                                out.append({"lat":c[1],"lon":c[0]})
+                    got=True; used_match=True
+                break                                # Ok veya kalıcı kod (NoMatch vs) -> retry etme
+            except Exception as e:
+                print(f"map-match parça hata (deneme {_try+1}):",e)
+                time.sleep(0.6*(_try+1))
+        if not got:                                  # bu parça oturtulamadı -> ham noktalarla süreklilik korunur
+            for p in seg:
+                if not out or abs(out[-1]["lat"]-p["lat"])>1e-7 or abs(out[-1]["lon"]-p["lon"])>1e-7:
+                    out.append({"lat":p["lat"],"lon":p["lon"]})
+        i+=99                                        # 1 nokta örtüşme (parça sınırında kopukluk olmasın)
+    if not used_match: print(f"{day}: map-match hiç oturmadı (ham iz kullanılacak)")
+    return out if len(out)>=2 else None
+# matched=1: iz fanout'ta ZATEN yola oturtulmuş (movelog-cloud _premap_match) -> burada tekrarlama
+# (dilim başına 1-2dk + N× Mapbox çağrısı tasarrufu; tüm dilimler birebir aynı geometriyi kullanır)
+_PREMATCHED = any(x=="matched=1" for x in A)
+if _PREMATCHED: print(f"{day}: iz önceden yola oturtulmuş (matched=1), map-match atlandı")
+_matched=None if _PREMATCHED else map_match(P)
+if _matched and len(_matched)>=2:
+    import bisect
+    srcN=len(P); srctot=P[-1]["cum"] or 1.0; srccum=[p["cum"] for p in P]
+    M=_matched
+    mcum=[0.0]
+    for i in range(1,len(M)): mcum.append(mcum[-1]+hav((M[i-1]["lat"],M[i-1]["lon"]),(M[i]["lat"],M[i]["lon"])))
+    mtot=mcum[-1] or 1.0
+    for i,m in enumerate(M):                          # orijinal t/spd/alt/cum'u mesafe-oranıyla taşı
+        d_along=(mcum[i]/mtot)*srctot
+        j=max(1,min(bisect.bisect_left(srccum,d_along),srcN-1))
+        a,b=P[j-1],P[j]; seg=(srccum[j]-srccum[j-1]) or 1.0; fr=(d_along-srccum[j-1])/seg
+        m["t"]=a["t"]+(b["t"]-a["t"])*fr
+        m["spd"]=a["spd"]+(b["spd"]-a["spd"])*fr
+        aa,ba=a.get("alt"),b.get("alt")
+        m["alt"]=(aa+(ba-aa)*fr) if isinstance(aa,(int,float)) and isinstance(ba,(int,float)) else (aa if isinstance(aa,(int,float)) else ba)
+        ah,bh=a.get("hr"),b.get("hr")   # NABIZ da taşınır (2026-07-06: map-match ❤️'yi düşürüyordu)
+        m["hr"]=int(ah+(bh-ah)*fr) if isinstance(ah,(int,float)) and isinstance(bh,(int,float)) else (int(ah) if isinstance(ah,(int,float)) else None)
+        m["cum"]=d_along
+    M[0]["t"]=P[0]["t"]; M[-1]["t"]=P[-1]["t"]; M[0]["cum"]=0.0; M[-1]["cum"]=srctot
+    M[0]["spd"]=P[0]["spd"]; M[-1]["spd"]=P[-1]["spd"]
+    P=M; print(f"{day}: yola oturtuldu (map-match) {srcN} -> {len(P)} nokta")
+    # KİLİTLENME KORUMASI: map-match overview=full çıktısı nokta sayısını patlatabiliyor (2997->12045 görüldü).
+    # 5000+ nokta 3D'de clampToHeight/tile-ensure'ı asıyor (30dk timeout->requeue döngüsü) -> kanıtlı 3000 tavanına seyrelt.
+    _MMAX=3000
+    if len(P)>_MMAX:
+        _st=(len(P)-1)/(_MMAX-1); P=[P[round(i*_st)] for i in range(_MMAX)]
+        P[-1]["cum"]=srctot
+        print(f"{day}: map-match seyreltildi -> {len(P)} nokta (3D kilitlenme koruması)")
+# Yan dosya: app "Düzenle" için gezi penceresini sakla (rota_<gün>_<ts>.json).
+try:
+    _rid_ts=int(P[0]["t"])
+    json.dump({"from": (FROM if FROM is not None else P[0]["t"]),
+               "to":   (TO   if TO   is not None else P[-1]["t"]),
+               "type": ACTTYPE},
+              open(os.path.join(OUT,f"rota_{day}_{_rid_ts}.json"),"w"))
+except Exception as _e:
+    print("meta yazılamadı:",_e)
+
+hr_t=[]; hr_v=[]
+if DEV==1:   # Garmin nabzı sadece sahibe (cihaz 1) ait; başka cihazlarda nabız yok
+    try:
+        from garminconnect import Garmin
+        g=Garmin(); g.login(tokenstore=GTOK)
+        for ts,bpm in (g.get_heart_rates(day.isoformat()).get("heartRateValues") or []):
+            if bpm: hr_t.append(ts/1000.0); hr_v.append(int(bpm))
+    except Exception as e: print("nabiz alinamadi:",e)
+def hr_at(e):
+    if not hr_t: return None
+    i=bisect.bisect_left(hr_t,e); best=None
+    for j in (i-1,i):
+        if 0<=j<len(hr_t) and abs(hr_t[j]-e)<=180:
+            if best is None or abs(hr_t[j]-e)<abs(hr_t[best]-e): best=j
+    return hr_v[best] if best is not None else None
+for p in P: p["hr"]=hr_at(p["t"])
+
+def frame_indices(P,FR):
+    # MESAFE-tabanlı + HIZ-modülasyonlu pacing (FRACTIONAL idx -> yumuşak interpolasyon).
+    # Her segmente ayrılan video-zamanı = mesafe / v_eff (v_eff = hız, taban/tavan ile sınırlı).
+    #  -> çizgi GERÇEK hıza göre HIZLANIR/YAVAŞLAR (hızlanınca daha hızlı akar),
+    #  -> AMA duruşlarda mesafe~0 olduğu için zaman HARCANMAZ => NOKTA ASLA DURMAZ, ışık/trafik
+    #     duruşları algılanmaz, sona "uçma" (telafi sıçraması) YOK.
+    # Uzun GERÇEK duruşlarda (p.dwell, ≥70sn) sabit kısa bir "bekleme atımı" eklenir -> kamera
+    # yumuşak yaklaşır, harekete geçince yumuşak uzaklaşır (eski Traccar hissi); kısa duruşlar atımsız geçer.
+    V_MIN=7.0; V_MAX=95.0     # km/h taban (asla durmaz) / tavan (aşırı hızda fırlamaz)
+    DWELL_BEAT=2.0            # uzun duruşta eklenen video-saniyesi (kamera zoom-in/out beat'i)
+    # HIZ YUMUŞATMA (2026-07-23, Barış: "ivmeye çok hızlı tepki, bir anda sıçrıyor -> yumuşat"):
+    # anlık GPS hızı SERT ivme spike'ları yaratıyordu -> yumuşatılmış hız kullan. İvme KORUNUR (hızlı yol
+    # hâlâ hızlı akar) ama kademeli olur -> çizgi bir anda sıçramaz. Çift geçiş = daha yumuşak.
+    _sp0=[max(V_MIN,min(V_MAX,(P[i].get("spd") or 0.0))) for i in range(len(P))]
+    def _smsp(a,k):
+        o=[]
+        for i in range(len(a)):
+            _lo=max(0,i-k); _hi=min(len(a),i+k+1); o.append(sum(a[_lo:_hi])/(_hi-_lo))
+        return o
+    _kw=max(4,len(P)//28)
+    _sps=_smsp(_smsp(_sp0,_kw),_kw)                                       # iki geçiş -> yumuşak ivme
+    w=[0.0]
+    for i in range(1,len(P)):
+        d=hav((P[i-1]["lat"],P[i-1]["lon"]),(P[i]["lat"],P[i]["lon"]))   # metre
+        sp=_sps[i]; v=sp/3.6                                              # YUMUŞATILMIŞ hız (ani sıçrama yok)
+        add=d/v
+        if P[i].get("dwell") and not P[i-1].get("dwell"):                # uzun duruş kümesinin BAŞI
+            add+=DWELL_BEAT
+        w.append(w[-1]+add)
+    total=w[-1]
+    if total<=0 or FR<2: return [f*(len(P)-1)/max(1,FR-1) for f in range(FR)]
+    out=[]; j=0
+    for f in range(FR):
+        tt=(f/(FR-1))*total
+        while j<len(P)-1 and w[j+1]<tt: j+=1
+        seg=(w[j+1]-w[j]) if j<len(P)-1 else 0.0
+        fr=0.0 if seg<=0 else max(0.0,min(1.0,(tt-w[j])/seg))
+        out.append(j+fr)                                                 # FRACTIONAL: yumuşak ara konum
+    return out
+
+def send_video(mp4,sz,dur,extra=""):
+    def mx(method,u,data=None,ct=None):
+        h={"Authorization":"Bearer "+BOT}
+        if ct: h["Content-Type"]=ct
+        return json.load(urllib.request.urlopen(urllib.request.Request(HS+u,data=data,method=method,headers=h),timeout=180))
+    fn=os.path.basename(mp4)
+    mxc=mx("POST",f"/_matrix/media/v3/upload?filename={urllib.parse.quote(fn)}",open(mp4,"rb").read(),"video/mp4")["content_uri"]
+    mx("PUT",f"/_matrix/client/v3/rooms/{urllib.parse.quote(ROOM)}/send/m.room.message/{int(time.time()*1000)}",
+       json.dumps({"msgtype":"m.video","body":fn,"url":mxc,"info":{"mimetype":"video/mp4","size":sz,"w":VW,"h":VH,"duration":dur}}).encode(),"application/json")
+    mx("PUT",f"/_matrix/client/v3/rooms/{urllib.parse.quote(ROOM)}/send/m.room.message/{int(time.time()*1000)}",
+       json.dumps({"msgtype":"m.text","body":f"🎬 {day} rota videosu — {TOTKM:.1f} km ({MODE}, {SPEED}){extra}."}).encode(),"application/json")
+    caption=f"🎬 {day} rota videosu — {TOTKM:.1f} km ({MODE}, {SPEED}){extra}"
+    subprocess.run(["/opt/claude-bridge/tg-send.sh","matrix",mp4,caption],timeout=120)
+
+# --- 3B mod: Mapbox GL + terrain headless (node render3d.js) ---
+if MODE=="3d":
+    proj=os.environ.get("RENDER3D_DIR") or ("/mnt/storagebox/matrix-video" if os.path.isdir("/mnt/storagebox/matrix-video") else "/mnt/HC_Volume_105825100/matrix-video")
+    mp4=os.path.join(OUT,f"rota_{day}_{int(P[0]['t'])}_3d_{SPEED}_{ASP}{'_free' if FREE else ''}.mp4")
+    mp4tmp=mp4+".part.mp4"   # önce .part'a render, bitince nihai ada -> yarım dosya sync/serve olmaz
+    # 3B kare tavanı: Otonom=10200 (170sn sürüş; intro+outro+küre finaliyle TOPLAM ≤179sn —
+    # Instagram Reels 3dk sınırı, Barış 2026-07-06: "3 dakikayı ASLA geçmesin"). Diğer hızlar ≤60sn.
+    _FRMAX=10200 if SPEED=="auto" else 3600
+    FR=max(120,min(int(dur_secs(TOTKM)*FPS),_FRMAX))
+    _cap=int(os.environ.get("RENDER3D_MAXFRAMES","0") or 0)   # teşhis/hız knob'u: >0 ise kare sayısını kıs (testte ~60 -> saniyeler)
+    if _cap>0: FR=min(FR,_cap)
+    # MEKAN/UZUN-DURUŞ tespiti: ~40m içinde ≥70sn kalış = gerçek duruş (kamera yumuşak yaklaşır).
+    # Eşik 40->70sn: trafik ışığı/kısa duraklamalar TETIKLEMEZ (çizgi akıp geçer), sadece harbi duruşlar.
+    for p in P: p["dwell"]=False
+    _s=0
+    for i in range(1,len(P)+1):
+        if i==len(P) or hav((P[_s]["lat"],P[_s]["lon"]),(P[i]["lat"],P[i]["lon"]))>40:
+            if i-1>_s and P[i-1]["t"]-P[_s]["t"]>=70:
+                for k in range(_s,i): P[k]["dwell"]=True
+            _s=i
+    # POI: dwell kümelerinin merkezini Mapbox reverse-geocode -> mekan adı
+    for p in P: p["poi"]=""
+    def _poi(lat,lon):
+        try:
+            u=f"{HARITA_UC}/geocoding/v5/mapbox.places/{lon},{lat}.json?access_token={MB}&types=poi,neighborhood,locality,place&limit=1&language=tr"
+            d=json.load(urllib.request.urlopen(u,timeout=15)); fs=d.get("features",[])
+            return fs[0]["text"] if fs else ""
+        except Exception: return ""
+    _i=0
+    while _i<len(P):
+        if P[_i]["dwell"]:
+            _j=_i
+            while _j<len(P) and P[_j]["dwell"]: _j+=1
+            cl=P[_i:_j]; cla=sum(x["lat"] for x in cl)/len(cl); clo=sum(x["lon"] for x in cl)/len(cl)
+            nm=_poi(cla,clo)
+            for k in range(_i,_j): P[k]["poi"]=nm
+            _i=_j
+        else: _i+=1
+    pts=[{"lon":round(p["lon"],6),"lat":round(p["lat"],6),"tm":hhmm(p["t"]),
+          "spd":round(p["spd"],1),"cum":round(p["cum"],1),"hr":p["hr"],"dwell":p["dwell"],"poi":p["poi"],
+          "alt":(round(p["alt"],1) if isinstance(p.get("alt"),(int,float)) else None)} for p in P]
+    wm=""
+    if FREE and os.path.exists(LOGO):
+        wm="data:image/png;base64,"+base64.b64encode(open(LOGO,"rb").read()).decode()
+    # 3B intro/outro kartı: isim + avatar + özet istatistik (flat/flyover ile BİREBİR)
+    _dsec=max(1,P[-1]["t"]-P[0]["t"]); _dm=int(_dsec/60); _h3=_dm//60; _m3=_dm%60
+    _sure3=f"{_h3} sa {_m3} dk" if _h3 else f"{_m3} dk"
+    _hrs3=[p["hr"] for p in P if p.get("hr")]; _ahr3=int(sum(_hrs3)/len(_hrs3)) if _hrs3 else None
+    _MET3={"walk":3.8,"run":9.8,"bike":8.0}
+    _kcal3=int(_MET3[ACTTYPE]*75*(_dsec/3600.0)) if ACTTYPE in _MET3 else None
+    _alts3=[p.get("alt") for p in P if isinstance(p.get("alt"),(int,float))]   # rakım kazancı (2m deadband, flat/flyover ile birebir)
+    _gain3=None
+    if len(_alts3)>=5:
+        _g3=0.0; _r3=_alts3[0]
+        for _av in _alts3[1:]:
+            if _av-_r3>2: _g3+=_av-_r3; _r3=_av
+            elif _av<_r3: _r3=_av
+        _gain3=int(_g3)
+    _stats3=[f"▸ {TOTKM:.1f} km     •     {_sure3}", f"◷ {hhmm(P[0]['t'])} - {hhmm(P[-1]['t'])}"]
+    _l33=[]
+    if _gain3 and _gain3>=15: _l33.append(f"▲ {_gain3} m")
+    if _ahr3: _l33.append(f"❤ {_ahr3}")
+    if _kcal3: _l33.append(f"★ {_kcal3} kcal")
+    if _l33: _stats3.append("     •     ".join(_l33))
+    # avatar foto (varsa) -> data URL; yoksa JS baş-harf dairesi çizer
+    _av3=""
+    if AVATARF and os.path.exists(AVATARF):
+        try: _av3="data:image/png;base64,"+base64.b64encode(open(AVATARF,"rb").read()).decode()
+        except Exception: _av3=""
+    # UZUN ROTA OTOMATİK KADRAJ (Barış 2026-07-05, tam yetki): km'ye göre kamera otomatik YUKARI —
+    # nokta asla taşmaz, zıplama görünmez, "1000 km/h" hız hissi sakinleşir. Kullanıcı seçmez.
+    _zL=None; _pL=None
+    if TOTKM>600: _zL,_pL=10.3,45      # çok uzun (900km sınıfı): yüksek kuş bakışı
+    elif TOTKM>350: _zL,_pL=11.2,48
+    elif TOTKM>150: _zL,_pL=12.2,52    # uzun: orta-yüksek
+    if _zL is not None:
+        # Kullanıcının kamera mesafesi km-tabanını KADEMELENDİRİR (Barış 2026-07-05 rev2):
+        # Uzak = yüksek kuş bakışı (taban), Orta/Yakın = normal videolara YAKIN seviye
+        # (zıplama önleyiciler yerinde: dingin kamera + dwell kapalı + akıllı karo — güvenle yakın).
+        _zL+={"yakin":3.9,"orta":3.0,"uzak":0.0}.get(CAMD,3.0)   # rev3 (Barış): orta/yakın bir tık daha yakın
+        _pL=min(58,_pL+{"yakin":10,"orta":7,"uzak":0}.get(CAMD,7))
+    _NOHUD=any(x=="nohud=1" for x in A)   # PROMO modu: video içi yazı/intro/outro YOK (tertemiz harita)
+    _FIDX3=frame_indices(P,FR)
+    MATES=compute_mates(P,_FIDX3,FR)
+    inp={"token":MB,"W":VW,"H":VH,"fps":FPS,"outMp4":mp4tmp,"ffmpeg":"ffmpeg","frames":FR,"noHud":_NOHUD,
+         "rscale":float(os.environ.get("RENDER3D_SCALE","0.7")),   # GPU worker=1.0 (tam çöz, hızlı); CPU/swiftshader=0.7 (bellek/hız)
+         "pitch":(_pL if _pL else 60),"zoom":(_zL if _zL else (ZOOMO if ZOOMO else 16.4)+CAMZ),"dwellZoom":1.4,"wm":wm,"lineColor":LINEC,"dotColor":DOTC,
+         "frameIdx":_FIDX3,"name":NAME,"activity":ACTLBL,"stats":_stats3,"avatarImg":_av3,
+         "gkey":GKEY,"camdist":CAMD,"tilt":23,"camMode":CAMMODE,
+         # ULTRA AYRIMI (2026-08-10, Barış: "Premium'la Ultra aynı görüntüyü alıyorsa fark koyalım"):
+         # Google foto-gerçekçi 3B öldüğü için Ultra'nın görsel üstünlüğü kalmamıştı. Yeni fark:
+         #   ① karo katmanı "ultra" -> proxy en yüksek zoom/kaliteli kaynağı servis eder (yere yakın net)
+         #   ② çıkıntılı 3B binalar (fill-extrusion, kendi vektör arşivimizden) — Premium'da YOK
+         "ultra":bool(ULTRA),
+         "kabartma":bool(KABARTMA),   # 3B binalar bu bayrağa bağlı (normal mod = düz uydu, kusursuz)
+         "satStyle":(TOTKM>150) or (not ULTRA) or (os.environ.get("GOOGLE_3D_OLU")=="1"),   # Google ölüyken ultra kısa rota da UYDU (satStyle=false şehir yolu çirkin — V123 dersi)   # uzun rota VEYA Premium(3d): TAM UYDU + arazi (Standard binaları BEMBEYAZ; Ultra kısa rota=Google foto-gerçekçi)
+         "title":{"date":f"{daylabel()} {hhmm(P[0]['t'])}","totkm":f"{TOTKM:.1f}"},"pts":pts}
+    if MATES:
+        inp["mates"]=MATES
+    if SEG and "/" in SEG:   # PARALEL SEGMENT: kare dilimi [FR*k/n, FR*(k+1)/n) — FR/FIDX aynı girdiden deterministik, tüm worker'larda birebir
+        _k,_n=(int(x) for x in SEG.split("/"))
+        inp["segFrom"]=FR*_k//_n; inp["segTo"]=FR*(_k+1)//_n
+        print(f"SEGMENT {_k}/{_n}: kare {inp['segFrom']}..{inp['segTo']} (toplam {FR})", flush=True)
+    # ═══ TELEFON SPEC MODU (2026-08-26 Barış: "telefon üretecek ama AYNI video"): inp'i dök, render ETME.
+    # Bulutta SPEC_OUT env'i YOK -> bu blok ölü; davranış birebir aynı kalır.
+    _SPEC=os.environ.get("SPEC_OUT")
+    if _SPEC:
+        json.dump(inp,open(_SPEC,"w")); print("SPEC_OK "+_SPEC,flush=True); sys.exit(0)
+    jf=tempfile.NamedTemporaryFile("w",suffix=".json",delete=False); json.dump(inp,jf); jf.close()
+    # Chrome storagebox'tan (exec yok) çalışamıyor → yerel exec-edilebilir kopyadan çalıştır.
+    env=dict(os.environ)
+    if not env.get("PUPPETEER_CACHE_DIR"):   # bulutta env'den gelir; yerelde exec-edilebilir kopya
+        _lch="/opt/matrix/chrome-cache"
+        env["PUPPETEER_CACHE_DIR"]=_lch if os.path.isdir(_lch+"/chrome") else proj+"/.cache"
+    _erf=os.path.join(os.environ.get("ROUTE_OUT","/tmp"),"g3d.err")   # google3d hata çıktısı (rp_handler output'a taşır)
+    def _node(script):
+        try:
+            with open(_erf,"w") as _ef:
+                return subprocess.run(["node",script,jf.name],cwd=proj,env=env,stderr=_ef).returncode
+        except Exception:
+            return 99
+    def _ok(rc): return rc==0 and os.path.exists(mp4tmp) and valid_mp4(mp4tmp)
+    def _bright(p):
+        # Google 3D SİYAH render tespiti: tile'lar render olmazsa video geçerli ama kapkara (sadece çizgi/HUD).
+        # Ortadaki karenin ortalama parlaklığı çok düşükse = bozuk -> başarısız say (retry/re-dispatch).
+        try:
+            import tempfile as _tf
+            from PIL import Image as _Im, ImageStat as _St
+            _fp=_tf.mktemp(suffix=".png")
+            _sk=15 if not SEG else 5   # segment videoları kısa (~8sn+); ilk segmentte 5sn = intro(2.7) sonrası rota karesi
+            subprocess.run(f"ffmpeg -v error -y -ss {_sk} -i {p} -frames:v 1 {_fp}",shell=True,timeout=60)
+            if not os.path.exists(_fp): return True
+            _m=_St.Stat(_Im.open(_fp).convert("L")).mean[0]; os.remove(_fp)
+            print(f"g3d parlaklık: {_m:.1f}", flush=True)
+            return _m > 22.0    # <22 = neredeyse siyah (gerçek şehir karesi ~80-140)
+        except Exception:
+            return True   # kontrol edilemezse geçir (video kaybetme)
+    def _okg(rc): return _ok(rc) and _bright(mp4tmp)   # Google 3D: hem geçerli hem SİYAH DEĞİL
+    _G_OLU = os.environ.get("GOOGLE_3D_OLU") == "1"   # 2026-08-11: GCP askıda -> Google 3D Tiles 404.
+    # Ölü sağlayıcıyı 3 kez deneyip çakılmak HER Ultra videosunda dakikalarca GPU israfıydı (grup
+    # sürüş taramasında yakalandı). Env anahtarı template'te; GCP dirilirse anahtarı sil, dönüş bedava.
+    if CAMMODE=="pacman" and GKEY and ULTRA and not _G_OLU:
+        # PACMAN = STREET VIEW sürüşü (Ultra'ya özel) — GPU'suz saf Python
+        print(f"{day}: STREET VIEW sürüşü ({len(P)} nokta, {FR} kare)...")
+        _sv=os.path.join(os.path.dirname(os.path.abspath(__file__)),"streetview.py")
+        rc=subprocess.run(["python3",_sv,jf.name],env=env).returncode
+    elif GKEY and ULTRA and TOTKM>150 and not _G_OLU:
+        # UZUN ROTA (>150km): Google foto-gerçekçi tile'lar kırsal/otoyolda ÇOK düşük çözünürlüklü
+        # ("çamur" görünüm, 2026-07-05 900km vakası) -> geniş ölçekte NET olan Mapbox 3D uyduya geç.
+        print(f"{day}: 3B render ({len(P)} nokta, {FR} kare) — UZUN rota ({TOTKM:.0f}km): Mapbox 3D uydu (Google kırsalda bulanık)...")
+        rc=_node("render3d.js"); _t=1
+        while not _ok(rc) and _t<3:   # geçici stil/karo hatasında yeniden dene (dilim 2D'ye düşmesin)
+            _t+=1; print(f"Mapbox 3D uydu deneme {_t}")
+            try: os.remove(mp4tmp)
+            except Exception: pass
+            rc=_node("render3d.js")
+    elif GKEY and ULTRA and not _G_OLU:
+        # ULTRA MÜŞTERİSİ: HER ZAMAN Google (Mapbox ASLA — para verdi, mağdur olmasın). 3 deneme;
+        # yine olmazsa (80GB GPU'da ~imkansız) exit(9) -> rp_handler FRESH worker'a re-dispatch eder.
+        print(f"{day}: 3B render ({len(P)} nokta, {FR} kare) — Google Photorealistic 3D (Ultra)...")
+        rc=_node("render-google3d.js"); _t=1
+        while not _okg(rc) and _t<3:
+            _t+=1
+            print(f"Google 3D deneme {_t} (çökme/siyah render geçici olabilir)")
+            try: os.remove(mp4tmp)
+            except Exception: pass
+            rc=_node("render-google3d.js")
+        if not _okg(rc):
+            # 2026-08-10 — ÜRETİM HATASI DÜZELTİLDİ: GCP faturası askıya alınınca Google 3D Tiles
+            # API 404 vermeye başladı (ölçüldü) -> bu dal HER ULTRA işinde 3 kez deneyip exit(9)
+            # yapıyordu => Ultra kullanıcısı VİDEO ALAMIYORDU (fresh worker'da da aynı sonuç).
+            # Eski gerekçe "Mapbox ASLA, para verdi mağdur olmasın" idi; ama artık seçim
+            # "Mapbox mı Google mı" değil, "video mu HİÇ video mu". Kendi MapLibre motorumuza düş.
+            # 2026-08-10 ÖLÇÜLDÜ: Ultra kısa rotada satStyle=false (vektör zemin + fill-extrusion bina)
+            # ÇİRKİN çıkıyor — soluk beyaz harita, bina hacmi görünmüyor (V123-SEHIR-ULTRA testi).
+            # Uydu yolu ise kanıtlanmış kalitede (V122-UYDU). Geri-çekilmede UYDUYA ZORLA.
+            print("ULTRA Google 3D olmadı (GCP faturası askıda) -> kendi 3B motorumuz (UYDU modu)")
+            inp["satStyle"]=True
+            with open(jf.name,"w") as _jf: json.dump(inp,_jf)
+            try: os.remove(mp4tmp)
+            except Exception: pass
+            rc=_node("render3d.js"); _t=1
+            while not _ok(rc) and _t<3:
+                _t+=1; print(f"kendi 3B motoru deneme {_t}")
+                try: os.remove(mp4tmp)
+                except Exception: pass
+                rc=_node("render3d.js")
+            if not _ok(rc):
+                print("kendi 3B motoru da olmadı -> exit(9) (fresh worker re-dispatch)")
+                sys.exit(9)
+    else:
+        print(f"{day}: 3B render ({len(P)} nokta, {FR} kare) — kendi 3B motoru (Premium)...")
+        rc=_node("render3d.js")
+    os.unlink(jf.name)
+    if _ok(rc):
+        os.replace(mp4tmp,mp4)   # atomik: tam dosya nihai adı alır
+        sz=os.path.getsize(mp4); dur=int((FR+FPS*1.5)/FPS*1000)
+        print(f"video: {mp4} ({sz//1024} KB, ~{dur//1000}sn)")
+        if DRY: print("[DRY] gonderilmedi."); sys.exit(0)
+        if NOTIFY:                 # app videosu: Telegram/Matrix YOK, app'e senkron + push
+            sync_to_app(); push_done(); print("app'e senkronlandı + push"); sys.exit(0)
+        send_video(mp4,sz,dur); print("Element'e gonderildi."); sys.exit(0)
+    try: os.remove(mp4tmp)
+    except Exception: pass
+    if SEG and "/" in SEG:
+        # SEG modunda 2D fallback YASAK (2026-07-05 vakası: bir dilim düz TAM videoya düşüp birleşen
+        # videoyu 6dk yaptı + ortada mod zıplaması) -> exit(9): taze worker/görev dilimi yeniden dener.
+        print("SEG modunda 3B başarısız -> exit(9), 2D fallback YOK (dilim bütünlüğü)"); sys.exit(9)
+    print("3B render tümü başarısız → flyover 2D son çare"); MODE="flyover"   # en son çare (video garanti)
+
+# --- projeksiyon: flat = taban tam ekran; flyover = buyuk taban + panlayan kamera ---
+def w_xy(lon,lat):
+    x=(lon+180.0)/360.0; s=math.sin(math.radians(max(min(lat,85.0),-85.0)))
+    return x, 0.5-math.log((1+s)/(1-s))/(4*math.pi)
+lons=[p["lon"] for p in P]; lats=[p["lat"] for p in P]
+clon=(min(lons)+max(lons))/2; clat=(min(lats)+max(lats))/2
+x1,y1=w_xy(min(lons),max(lats)); x2,y2=w_xy(max(lons),min(lats))
+dx=max(abs(x2-x1),1e-7); dy=max(abs(y2-y1),1e-7)
+PAD=0.16
+if MODE=="flyover":
+    BWp=min(2560,(VW*4//3)//2*2); BHp=min(2560,(VH*4//3)//2*2); RW,RH=BWp//2,BHp//2  # ESKİ MÜKEMMEL: taban viewport'tan büyük, yumuşak pan (yakınlaştırma yok = ışınlanma yok)
+else:
+    BWp,BHp=VW,VH; RW,RH=BWp//2,BHp//2
+# ⚠️ KARO ÖLÇEĞİ 2× HATASI (2026-08-28, ölçüldü): harita ucumuzun @2x çıktısında
+# m/px = 156543.03392*cos(lat)/2^(z+1)  ->  dünya genişliği = 512*2^z piksel.
+# Burada 1024*2^z varsayılıyordu = TAM 2 KAT fazla. Sonuç: rota haritanın üstünde
+# 2 kat büyük çizilip kayıyordu (ölçüldü: 750 m yatay) — sürüş denizde görünüyordu.
+# Aynı hata taktik motorda daha önce yakalanıp düzeltilmişti; bu dosyada kalmış.
+zx=math.log2(BWp*(1-2*PAD)/(512*dx)); zy=math.log2(BHp*(1-2*PAD)/(512*dy))   # 512 = harita ucunun @2x dünya ölçeği
+zoom=max(1.0,min(18.0,min(zx,zy)+CAMZ))   # kilitli kademe DOĞRUDAN uygulanır (çarpan yok)
+ws=512*(2**zoom)   # piksel/dunya — harita ucuyla BİREBİR aynı ölçek
+cx,cy=w_xy(clon,clat)
+def to_px(lon,lat):
+    x,y=w_xy(lon,lat); return (x-cx)*ws+BWp/2,(y-cy)*ws+BHp/2
+
+tmp=tempfile.mkdtemp(prefix="rv_")
+basep=os.path.join(tmp,"base.png")
+url=(f"{HARITA_UC}/styles/v1/mapbox/satellite-streets-v12/static/"
+     f"{clon:.6f},{clat:.6f},{zoom:.3f},0/{RW}x{RH}@2x?access_token={MB}&attribution=false&logo=false")
+urllib.request.urlretrieve(url,basep)
+base=Image.open(basep).convert("RGB")
+if base.size!=(BWp,BHp): base=base.resize((BWp,BHp))
+ov=Image.new("RGBA",(BWp,BHp),(0,0,0,0)); ImageDraw.Draw(ov).rectangle([0,0,BWp,BHp],fill=(0,0,0,38))
+canvas=Image.alpha_composite(base.convert("RGBA"),ov).convert("RGB")   # uzerine rota artimli cizilecek
+
+f_big=ImageFont.truetype(FONT,46); f_med=ImageFont.truetype(FONT,30)
+f_huge=ImageFont.truetype(FONT,72); f_sm=ImageFont.truetype(FONT,26); f_tiny=ImageFont.truetype(FONT,18); f_big=ImageFont.truetype(FONT,48)
+
+# Relive tarzı zarif okunabilirlik: çıplak stroke yerine alt/üst degrade gölge (scrim).
+def vscrim(w,h,a_top,a_bot):
+    h=max(1,h); col=Image.new("L",(1,h))
+    for y in range(h): col.putpixel((0,y),int(a_top+(a_bot-a_top)*y/max(1,h-1)))
+    img=Image.new("RGBA",(w,h),(0,0,0,0)); img.putalpha(col.resize((w,h))); return img
+SCRIM_B_H=int(VH*0.30); SCRIM_T_H=int(VH*0.15)
+scrim_bot=vscrim(VW,SCRIM_B_H,0,205); scrim_top=vscrim(VW,SCRIM_T_H,165,0)
+# sinematik vignette (köşeleri yumuşakça karart) — bir kez hesapla, her kareye bindir
+from PIL import ImageFilter
+_vg=Image.new("L",(VW,VH),0)
+ImageDraw.Draw(_vg).ellipse([int(-VW*0.14),int(-VH*0.10),int(VW*1.14),int(VH*1.10)],fill=255)
+_vg=_vg.filter(ImageFilter.GaussianBlur(int(min(VW,VH)*0.16)))
+vignette=Image.new("RGBA",(VW,VH),(0,0,0,0)); vignette.putalpha(_vg.point(lambda x:int((255-x)*110/255)))
+pts_px=[to_px(p["lon"],p["lat"]) for p in P]
+N=len(P); FRAMES=max(90,min(int(dur_secs(TOTKM)*FPS),10800)); FIDX=frame_indices(P,FRAMES)   # 2D tavan 180sn (otonom); normal süreler zaten <60sn
+
+def mk_panel(w,h,a=150):
+    o=Image.new("RGBA",(w,h),(0,0,0,0)); ImageDraw.Draw(o).rounded_rectangle([0,0,w-1,h-1],18,fill=(10,12,26,a)); return o
+logo=None
+if FREE and os.path.exists(LOGO):
+    logo=Image.open(LOGO).convert("RGBA"); logo.thumbnail((180,180))
+
+print(f"{day}: {N} nokta, {TOTKM:.1f} km, mod={MODE}, hiz={SPEED}, zoom {zoom:.2f}, taban {BWp}x{BHp}, {FRAMES} kare...")
+cdraw=ImageDraw.Draw(canvas)
+mp4=os.path.join(OUT,f"rota_{day}_{int(P[0]['t'])}_{MODE}_{SPEED}_{ASP}{'_free' if FREE else ''}.mp4")
+mp4tmp=mp4+".part.mp4"   # önce .part, bitince nihai ad -> yarım sync/serve yok
+cmd=["ffmpeg","-y","-f","rawvideo","-pix_fmt","rgb24","-s",f"{VW}x{VH}","-framerate",str(FPS),"-i","-"]
+if MUSIC and os.path.exists(MUSIC): cmd+=["-i",MUSIC]
+else: cmd+=["-f","lavfi","-i","anullsrc=r=44100:cl=stereo"]   # sessiz ses kanalı: audio'suz mp4 telefonda AÇILMIYOR
+cmd+=["-c:v","libx264","-pix_fmt","yuv420p","-preset","veryfast","-crf","23"]
+cmd+=["-c:a","aac","-shortest"]
+cmd+=["-movflags","+faststart",mp4tmp]
+ff=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+last_idx=0
+camx,camy=pts_px[0]; buf=b""; lox=0; loy=0; disp_spd=0.0
+# en hızlı an
+peak_i=max(range(len(P)),key=lambda i:P[i]["spd"]) if P else 0
+peak_spd=P[peak_i]["spd"] if P else 0.0
+peak_left=0   # vurgu için kalan kare sayısı
+import math
+# --- profil avatarı (Relive girişi: yuvarlak fotoğraf / baş harf) ---
+def _circ(img,size):
+    img=img.convert("RGBA").resize((size,size))
+    m=Image.new("L",(size,size),0); ImageDraw.Draw(m).ellipse([0,0,size-1,size-1],fill=255)
+    o=Image.new("RGBA",(size,size),(0,0,0,0)); o.paste(img,(0,0),m); return o
+def _initials(txt,size):
+    o=Image.new("RGBA",(size,size),(0,0,0,0)); d=ImageDraw.Draw(o)
+    d.ellipse([0,0,size-1,size-1],fill=(38,86,156,255))
+    fi=ImageFont.truetype(FONT,int(size*0.42))
+    d.text((size/2,size/2-2),(txt or "?")[:2].upper(),font=fi,fill=(255,255,255,255),anchor="mm"); return o
+AVA=None
+try:
+    if AVATARF and os.path.exists(AVATARF): AVA=_circ(Image.open(AVATARF),260)
+except Exception as e: print("avatar yükleme hata:",e)
+if AVA is None:
+    _ini="".join(w[0] for w in NAME.split()[:2]) if NAME.strip() else ""
+    AVA=_initials(_ini or (NAME.strip()[:2] if NAME.strip() else "★"),260)
+def avatar_at(img,cx,cy,size,a):
+    av=AVA.resize((size,size))
+    av.putalpha(av.getchannel("A").point(lambda x:int(x*a)))
+    ring=Image.new("RGBA",(size+12,size+12),(0,0,0,0))
+    ImageDraw.Draw(ring).ellipse([0,0,size+11,size+11],outline=(255,255,255,int(235*a)),width=6)
+    img.alpha_composite(ring,(int(cx-size/2-6),int(cy-size/2-6)))
+    img.alpha_composite(av,(int(cx-size/2),int(cy-size/2)))
+# rota üstünde ilerleyen küçük yuvarlak profil-resmi marker (beyaz halkalı + gölge)
+MARK=80; _mi=AVA.resize((MARK-12,MARK-12))
+marker=Image.new("RGBA",(MARK,MARK),(0,0,0,0)); _md=ImageDraw.Draw(marker)
+_md.ellipse([2,2,MARK-1,MARK-1],fill=(0,0,0,90))            # hafif gölge
+_md.ellipse([0,0,MARK-3,MARK-3],fill=(255,255,255,255))     # beyaz halka
+marker.alpha_composite(_mi,(4,4))
+# en yüksek rakım noktası (varsa) — haritada iğnelenecek
+_av_alts=[(i,P[i].get("alt")) for i in range(len(P)) if isinstance(P[i].get("alt"),(int,float))]
+alt_i,alt_val=(max(_av_alts,key=lambda t:t[1]) if _av_alts else (None,None))
+# Relive iğne: gerçek harita noktasına tutturulmuş, pop-in + nabız + fade-out rozet
+def draw_pin(frame,sx,sy,label,life,total,accent):
+    t=life/max(1,total); al=min(1.0,life/max(1,total*0.14))
+    if t>0.76: al=min(al,max(0.0,(1.0-t)/0.24))
+    a=int(255*al)
+    if a<=0: return
+    rise=int(16*(1-min(1.0,life/max(1,total*0.16))))
+    d=ImageDraw.Draw(frame,"RGBA")
+    pr=int(15+6*math.sin(life*0.28))
+    d.ellipse([sx-pr,sy-pr,sx+pr,sy+pr],outline=accent+(int(a*0.55),),width=3)
+    d.ellipse([sx-11,sy-11,sx+11,sy+11],fill=accent+(a,)); d.ellipse([sx-4,sy-4,sx+4,sy+4],fill=(255,255,255,a))
+    tw=int(d.textlength(label,font=f_sm)); pw=tw+40; ph=54
+    px=max(8,min(VW-pw-8,sx-pw//2)); py=max(8,sy-34-ph+rise)
+    frame.alpha_composite(mk_panel(pw,ph,int(228*al)),(px,py))
+    ImageDraw.Draw(frame,"RGBA").text((px+pw/2,py+ph/2),label,font=f_sm,fill=accent+(a,),anchor="mm")
+spd_pin_life=-1; alt_pin_life=-1; PIN_T=int(FPS*2.8)
+# anı fotoğrafları: en yakın rota noktasına eşle
+PHOTO_PINS=[]
+if PHOTOS:
+    try:
+        for m in json.load(open(os.path.join(PHOTOS,"photos.json"))):
+            bi=min(range(len(P)),key=lambda i:(P[i]["lat"]-m["lat"])**2+(P[i]["lon"]-m["lon"])**2)
+            im=Image.open(os.path.join(PHOTOS,m["file"])).convert("RGBA"); im.thumbnail((VW//3,VH//3))
+            PHOTO_PINS.append({"idx":bi,"img":im,"left":0})
+        print(f"anı fotoğrafı: {len(PHOTO_PINS)} adet")
+    except Exception as e: print("foto yükleme hata:",e)
+# --- INTRO: isim + aktivite (yumuşak fade-in) ---
+try:
+    nIntro=int(FPS*2.7)
+    ay=int(VH*0.36)
+    for f in range(nIntro):
+        if f < nIntro*0.42: a=f/(nIntro*0.42)
+        elif f > nIntro*0.74: a=max(0.0,(nIntro-f)/(nIntro*0.26))
+        else: a=1.0
+        a=a*a*(3-2*a)   # smoothstep → daha yumuşak giriş/çıkış
+        bg=Image.new("RGBA",(VW,VH),(8,10,22,255))
+        asz=int(220*(0.84+0.16*a))                 # avatar hafif büyüyerek girer
+        avatar_at(bg,VW/2,ay,asz,a)
+        d=ImageDraw.Draw(bg,"RGBA")
+        ny=ay+asz//2+54
+        if NAME.strip():
+            d.text((VW/2,ny),NAME.strip(),font=f_big,fill=(255,255,255,int(255*a)),anchor="mm")
+        d.text((VW/2,ny+58),f"{ACTLBL}  •  {daylabel()} {hhmm(P[0]['t'])}",font=f_med,fill=(160,200,255,int(235*a)),anchor="mm")
+        lw=int(120*a); d.line([(VW/2-lw,ny+30),(VW/2+lw,ny+30)],fill=(120,200,255,int(220*a)),width=3)
+        ff.stdin.write(bg.convert("RGB").tobytes())
+except Exception as e:
+    print("intro hata:",e)
+t0=P[0]["t"]; tN=P[-1]["t"]; tspan=max(1e-6,tN-t0); seg_j=0
+for f in range(FRAMES):
+    # MESAFE+HIZ pacing (FIDX, fractional): çizgi gerçek hıza göre hızlanır/yavaşlar AMA duruşlarda
+    # DONMAZ; sona "uçma" yok. ftime yalnız HUD saati + flyover ileri-bakış için interpolasyonla türetilir.
+    fi=FIDX[f]; j=int(fi); jn=min(j+1,len(P)-1); fr=fi-j
+    t1=P[j]["t"]; t2=P[jn]["t"]; ftime=t1+(t2-t1)*fr
+    ax,ay=pts_px[j]; bx,by=pts_px[jn]
+    mx=ax+(bx-ax)*fr; my=ay+(by-ay)*fr                       # kayan konum
+    spd_now=P[j]["spd"]+(P[jn]["spd"]-P[j]["spd"])*fr
+    cum_now=P[j]["cum"]+(P[jn]["cum"]-P[j]["cum"])*fr
+    hr_now=P[j].get("hr") or 0
+    if j>last_idx:   # tam geçilen segmentleri tabana ARTIMLI çiz
+        seg=pts_px[last_idx:j+1]
+        if LINE_ON:
+            if CLEAR:
+                cdraw.line(seg,fill=(120,128,140),width=5,joint="curve"); cdraw.line(seg,fill=(245,248,252),width=2,joint="curve")
+            elif GLASS:
+                cdraw.line(seg,fill=(70,80,95),width=8,joint="curve"); cdraw.line(seg,fill=(235,240,248),width=3,joint="curve")
+            else:
+                cdraw.line(seg,fill=(0,0,0),width=9,joint="curve"); cdraw.line(seg,fill=LINE,width=5,joint="curve")
+        last_idx=j
+    if MODE=="flyover" and BWp>VW and BHp>VH:
+        _lt=min(tN,ftime+tspan*0.05); _lj=j
+        while _lj<len(P)-2 and P[_lj+1]["t"]<=_lt: _lj+=1
+        lax,lay=pts_px[min(len(P)-1,_lj+1)]                  # ileri-bakış: gideceğin yön (Relive)
+        tcx=mx*0.5+lax*0.5; tcy=my*0.5+lay*0.5
+        camx+=(tcx-camx)*0.08; camy+=(tcy-camy)*0.08         # daha yumuşak takip
+        ox=int(max(0,min(BWp-VW,camx-VW/2))); oy=int(max(0,min(BHp-VH,camy-VH/2))); lox,loy=ox,oy
+        frame=canvas.crop((ox,oy,ox+VW,oy+VH)).convert("RGBA"); mpx,mpy=mx-ox,my-oy
+    else:
+        frame=canvas.copy().convert("RGBA"); mpx,mpy=mx,my
+    # harita siyahtan açılış (ilk ~0.5sn)
+    fadeN=int(FPS*0.5)
+    if f<fadeN:
+        frame.alpha_composite(Image.new("RGBA",(VW,VH),(0,0,0,int(255*(1-f/max(1,fadeN))))))
+    frame.alpha_composite(vignette)
+    frame.alpha_composite(scrim_top,(0,0)); frame.alpha_composite(scrim_bot,(0,VH-SCRIM_B_H))
+    d=ImageDraw.Draw(frame,"RGBA")
+    # işlenen segmentin marker'a kadar olan kısmını çiz (çizgi marker'a bağlansın)
+    _sx=int(ax-mx+mpx); _sy=int(ay-my+mpy)
+    if LINE_ON:
+        if CLEAR:
+            d.line([(_sx,_sy),(mpx,mpy)],fill=(120,128,140,90),width=5); d.line([(_sx,_sy),(mpx,mpy)],fill=(245,248,252,150),width=2)
+        elif GLASS:
+            d.line([(_sx,_sy),(mpx,mpy)],fill=(70,80,95,150),width=8); d.line([(_sx,_sy),(mpx,mpy)],fill=(235,240,248,235),width=3)
+        else:
+            d.line([(_sx,_sy),(mpx,mpy)],fill=(0,0,0),width=9); d.line([(_sx,_sy),(mpx,mpy)],fill=LINE,width=5)
+    # ilerleyen marker: küçük yuvarlak profil resmi
+    frame.alpha_composite(marker,(int(mpx-MARK/2),int(mpy-MARK/2)))
+    # yazı fade
+    tf=int(FPS*0.6); tA=1.0
+    if f<tf: tA=f/max(1,tf)
+    elif f>FRAMES-tf: tA=max(0.0,(FRAMES-f)/max(1,tf))
+    ta=int(255*tA)
+    # HİKAYE GÜVENLİ ALANI (dikey): IG/WA hikaye üst kullanıcı adı (~%13) + alt aksiyon barı (~%12) HUD'u ezmesin
+    _story=VH>VW; _ty0=int(VH*0.135) if _story else 40; _by0=int(VH*0.125) if _story else 110
+    d.text((46,_ty0),f"{daylabel()} {hhmm(P[0]['t'])}",font=f_med,fill=(255,255,255,ta))
+    d.text((46,_ty0+40),f"▸ {TOTKM:.1f} km",font=f_med,fill=(150,210,255,ta))
+    # HIZ KALDIRILDI (hız tespiti yanlış/güvenilmez) — mesafe + saat + nabız büyük ve temiz
+    sub=f"▸ {cum_now/1000:.1f} km      ◷ {hhmm(ftime)}"+(f"      ❤ {int(hr_now)}" if hr_now else "")
+    d.text((46,VH-_by0),sub,font=f_big,fill=(255,255,255,ta))
+    _prog=f/max(1,FRAMES-1)
+    d.rectangle([0,VH-6,VW,VH-2],fill=(255,255,255,int(34*tA)))
+    d.rectangle([0,VH-6,int(VW*_prog),VH-2],fill=LINE+(int(225*tA),))
+    # MINIK Mapbox attribution (köşede, ToS uyumu) — sağ alt, soluk
+    # 2026-08-10: DÜZ (2B) motorun atfı da güncellendi — Mapbox'tan koptuk, karolar kendi
+    # proxy'mizden (Esri/Maxar + OSM). "© Mapbox" hem YANLIŞ hem eksikti. Lisans gereği KALMALI.
+    d.text((VW-12,VH-14),"© OpenStreetMap · Esri, Maxar",font=f_tiny,fill=(255,255,255,int(115*tA)),anchor="rd")
+    # (EN YÜKSEK HIZ iğnesi KALDIRILDI — hız tespiti yanlış)
+    # EN YÜKSEK RAKIM: o noktada haritada iğnele
+    if alt_i is not None and alt_pin_life<0 and j>=alt_i: alt_pin_life=0
+    if alt_i is not None and 0<=alt_pin_life<PIN_T:
+        asx=int(pts_px[alt_i][0]-mx+mpx); asy=int(pts_px[alt_i][1]-my+mpy)
+        draw_pin(frame,asx,asy,f"▲ {alt_val:.0f} m",alt_pin_life,PIN_T,(130,225,150)); alt_pin_life+=1
+    # anı fotoğrafları: rota o noktaya gelince ~2.2sn bindir
+    for pp in PHOTO_PINS:
+        if pp["left"]<=0 and j>=pp["idx"]: pp["left"]=int(FPS*2.2)
+        if pp["left"]>0:
+            pp["left"]-=1; im=pp["img"]; iw,ih=im.size; px=(VW-iw)//2; py=int(VH*0.15)
+            frame.alpha_composite(mk_panel(iw+16,ih+16,225),(px-8,py-8))
+            frame.alpha_composite(im,(px,py))
+    if logo is not None: frame.alpha_composite(logo,(VW-logo.width-30,VH-logo.height-30))
+    buf=frame.convert("RGB").tobytes(); ff.stdin.write(buf)   # ham kareyi ffmpeg'e pipe et (PNG yok)
+# --- SON: yumuşak zoom-out (tam kuş bakışı rota) + özet ---
+try:
+    full=canvas.convert("RGBA")
+    base=full.resize((VW,VH))
+    # 1) zoom-out: askeri uydu pull-back — MERKEZ sabit, smoothstep ease (savrulma/baş dönmesi yok)
+    if MODE=="flyover" and BWp>VW and BHp>VH:
+        zN=int(FPS*2.1)
+        c0x=lox+VW/2; c0y=loy+VH/2          # başlangıç merkez = son konum
+        c1x=BWp/2;    c1y=BHp/2             # bitiş merkez = tüm rotanın ortası
+        for z in range(zN):
+            t=z/max(1,zN-1); e=t*t*(3-2*t)  # smoothstep: yavaş başla-yavaş bitir
+            cw=VW+(BWp-VW)*e; ch=VH+(BHp-VH)*e
+            cx=c0x+(c1x-c0x)*e; cy=c0y+(c1y-c0y)*e
+            x0=int(max(0,min(BWp-cw,cx-cw/2))); y0=int(max(0,min(BHp-ch,cy-ch/2)))
+            reg=full.crop((x0,y0,int(x0+cw),int(y0+ch))).resize((VW,VH))
+            ff.stdin.write(reg.convert("RGB").tobytes())
+        for _ in range(int(FPS*0.5)):       # hedefi çerçevele: kısa askıda tut
+            ff.stdin.write(base.convert("RGB").tobytes())
+    # 2) özet kartı: zengin istatistik paneli fade-in
+    dur_sec=max(1,P[-1]["t"]-P[0]["t"]); dur_min=int(dur_sec/60); hh=dur_min//60; mm=dur_min%60
+    sure=f"{hh} sa {mm} dk" if hh else f"{mm} dk"
+    avg_spd=TOTKM/(dur_sec/3600.0)                     # ortalama hız (toplam yol/toplam süre)
+    # rakım kazancı (GPS gürültüsü için 2m deadband)
+    _alts=[p.get("alt") for p in P if isinstance(p.get("alt"),(int,float))]
+    gain=None
+    if len(_alts)>=5:
+        g=0.0; ref=_alts[0]
+        for av in _alts[1:]:
+            if av-ref>2: g+=av-ref; ref=av
+            elif av<ref: ref=av
+        gain=int(g)
+    # ortalama nabız (varsa)
+    _hrs=[p["hr"] for p in P if p.get("hr")]
+    avg_hr=int(sum(_hrs)/len(_hrs)) if _hrs else None
+    # kalori (MET tabanlı kaba tahmin, 75 kg; yalnızca eforlu aktivitelerde)
+    _MET={"walk":3.8,"run":9.8,"bike":8.0}
+    kcal=int(_MET[ACTTYPE]*75*(dur_sec/3600.0)) if ACTTYPE in _MET else None
+    # DejaVu'da olmayan emoji tofu kutusu basıyor; yalnızca gerçek glyph kullan (▸ ▲ ● ⚡ ❤ ◷ ★).
+    # Max hız/rakım artık harita pini olarak gösteriliyor → özet kartında düz yazı yok.
+    stats=[f"▸ {TOTKM:.1f} km     •     {sure}",
+           f"◷ {hhmm(P[0]['t'])} - {hhmm(P[-1]['t'])}"]   # ortalama HIZ kaldırıldı (hız tespiti yanlış)
+    _l3=[]
+    if gain and gain>=15: _l3.append(f"▲ {gain} m")   # toplam tırmanış (rakım kazancı) — hesaplıydı ama gösterilmiyordu
+    if avg_hr: _l3.append(f"❤ {avg_hr}")
+    if kcal: _l3.append(f"★ {kcal} kcal")
+    if _l3: stats.append("     •     ".join(_l3))
+    sN=int(FPS*3.4)
+    for f in range(sN):
+        if f < sN*0.30: a=f/(sN*0.30)
+        elif f > sN*0.82: a=max(0.0,(sN-f)/(sN*0.18))    # sonda yazılar yumuşak söner
+        else: a=1.0
+        a=a*a*(3-2*a)
+        ov_a=int(168*min(1.0,f/(sN*0.30)))               # karartma kalıcı (geri açılmaz)
+        fr=base.copy(); fr.alpha_composite(vignette); fr.alpha_composite(Image.new("RGBA",(VW,VH),(0,0,0,ov_a)))
+        d=ImageDraw.Draw(fr,"RGBA")
+        avatar_at(fr,VW/2,int(VH*0.19),150,a)
+        ty=int(VH*0.32)
+        d.text((VW/2,ty),(NAME.strip() or str(day)),font=f_big,fill=(255,255,255,int(255*a)),anchor="mm")
+        d.text((VW/2,ty+52),ACTLBL,font=f_med,fill=(160,200,255,int(225*a)),anchor="mm")
+        lw=int(130*a); d.line([(VW/2-lw,ty+88),(VW/2+lw,ty+88)],fill=(120,200,255,int(220*a)),width=3)
+        yy=int(VH*0.45)
+        for ln in stats:
+            d.text((VW/2,yy),ln,font=f_med,fill=(255,255,255,int(255*a)),anchor="mm"); yy+=70
+        if logo is not None: fr.alpha_composite(logo,(VW-logo.width-30,VH-logo.height-30))
+        ff.stdin.write(fr.convert("RGB").tobytes())
+    # final fade-to-black (temiz kapanış)
+    nFb=int(FPS*0.5)
+    for f in range(nFb):
+        fr=base.copy(); fr.alpha_composite(Image.new("RGBA",(VW,VH),(0,0,0,int(168+87*(f/max(1,nFb-1))))))
+        ff.stdin.write(fr.convert("RGB").tobytes())
+except Exception as e:
+    print("son ozet hata:",e)
+    for _ in range(int(FPS*1.5)): ff.stdin.write(buf)
+ff.stdin.close(); ff.wait()
+shutil.rmtree(tmp,ignore_errors=True)
+if not valid_mp4(mp4tmp):
+    print("render bozuk (moov yok) → atılıyor, sync/push yok")
+    try: os.remove(mp4tmp)
+    except Exception: pass
+    sys.exit(1)
+os.replace(mp4tmp,mp4)   # atomik: tam dosya nihai adı alır (yarım sync olmaz)
+sz=os.path.getsize(mp4); dur=int((FRAMES+FPS*1.5)/FPS*1000)
+print(f"video: {mp4} ({sz//1024} KB, ~{dur//1000}sn)")
+if DRY: print("[DRY] gonderilmedi."); sys.exit(0)
+
+def matrix(method,u,data=None,ct=None):
+    h={"Authorization":"Bearer "+BOT}
+    if ct: h["Content-Type"]=ct
+    return json.load(urllib.request.urlopen(urllib.request.Request(HS+u,data=data,method=method,headers=h),timeout=180))
+fn=os.path.basename(mp4)
+if NOTIFY:                          # app videosu: Telegram/Matrix YOK, app'e senkron + push
+    sync_to_app(); push_done(); print("app'e senkronlandı + push")
+else:
+    mxc=matrix("POST",f"/_matrix/media/v3/upload?filename={urllib.parse.quote(fn)}",open(mp4,"rb").read(),"video/mp4")["content_uri"]
+    matrix("PUT",f"/_matrix/client/v3/rooms/{urllib.parse.quote(ROOM)}/send/m.room.message/{int(time.time()*1000)}",
+           json.dumps({"msgtype":"m.video","body":fn,"url":mxc,"info":{"mimetype":"video/mp4","size":sz,"w":VW,"h":VH,"duration":dur}}).encode(),"application/json")
+    caption=f"🎬 {day} rota videosu — {TOTKM:.1f} km ({MODE}, {SPEED})"
+    subprocess.run(["/opt/claude-bridge/tg-send.sh","matrix",mp4,caption],timeout=120)
+    print("Element'e gonderildi.")

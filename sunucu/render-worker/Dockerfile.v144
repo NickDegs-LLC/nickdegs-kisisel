@@ -1,0 +1,11 @@
+# v144 (2026-09-01) — KARO ÖN-ISITMA + tarih düzeltmesi (v143'ün üstüne)
+#  1) KARO ÖN-ISITMA: render başlamadan önce rotanın karoları 32 paralel istekle çekilir.
+#     Ölçüm: soğuk karo 5.19sn -> ısıtılmış 0.22sn (24x). 54 karo 16.6sn'de ısınıyor
+#     (sırayla ~216sn sürerdi). Cloudflare önbelleği VERİ MERKEZİ BAŞINA olduğu için ısıtma
+#     render'ın KENDİ makinesinden yapılır; dispatch'ten yapılsa başka PoP ısınır, işe yaramaz.
+#     Hata yutulur: ısıtma zorunlu değil, sadece hızlandırma.
+#  2) TARİH: args'ta job.get("day","2026-01-01") sabiti videoya "1 Oca 2026" yazdırıyordu
+#     (API req'inde 'day' alanı YOK). Artık from epoch'undan TR günü türetiliyor.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v143
+FROM ${BASE}
+COPY rp_handler.v144.py /app/rp_handler.py

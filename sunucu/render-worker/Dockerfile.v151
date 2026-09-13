@@ -1,0 +1,20 @@
+# v151 (2026-09-07) — İKİ SESSİZ ARIZA FİKSİ (Barış onayı: "hepsini hallet").
+#
+# 1) AVATAR HİÇ İNMİYORDU (RunPod dahil, üretimde uzun süredir).
+#    `handler()` gövdesindeki yerel `import urllib.parse`, Python'da `urllib`'i O DAL HİÇ
+#    ÇALIŞMASA BİLE tüm fonksiyon için yerel isim yapıyordu → avatar indirme satırı her
+#    seferinde `UnboundLocalError` atıp `except`e düşüyor, "avatar indirilemedi" yazıp
+#    geçiyordu. Sessiz olduğu için fark edilmemişti. Minimal tekrar üretimle kanıtlandı.
+#    FİKS: `urllib.parse` modül seviyesine, fonksiyon içi import silindi.
+#
+# 2) CLOUDFLARE VARSAYILAN PYTHON UA'SINI 403'LÜYOR.
+#    Ölçüm (aynı konteyner, aynı çıkış IP'si): `Python-urllib/3.x` → 403 ·
+#    tarayıcı UA → 200 · `movelog-render/1.0` → 200.
+#    Risk: render biter, mp4 R2'ye yüklenir, ama /api/internal/render-done sessizce düşer →
+#    video kullanıcıya ULAŞMAZ. `pending-reconcile` görevinin (a) maddesi tam bu imza için var.
+#    FİKS: modül seviyesinde varsayılan opener'a kimlikli UA.
+#
+# Değişiklik YALNIZ rp_handler'da — route-video.py / streetview.py / 3d varlıkları v150'den aynen.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v150
+FROM ${BASE}
+COPY rp_handler.v151.py /app/rp_handler.py

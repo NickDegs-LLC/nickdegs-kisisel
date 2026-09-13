@@ -1,0 +1,54 @@
+name = "movelog-cron"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# routes: Faz 4'te eklenecek (nickdegs.com'a şimdilik trafik YOK)
+
+[observability]
+enabled = true
+
+[vars]
+ORTAM = "canli"
+RUNPOD_ENDPOINT_ID = "q9tw33kjmqx35a"
+# TAKTİK endpoint'i 2026-08-31 KURULDU (Barış kota onayı: movelog-render 15->12 → 3 worker buraya).
+# runpod-saglik + imaj-surum-bekcisi + kuyruk-bekcisi bu id'yi OTOMATİK devralır.
+# ⚠️ bekci-ortak.ts endpointler(): movelog-render wmaxVars=12 (kota devriyle birlikte düşürüldü).
+RUNPOD_ENDPOINT_TAC = "yvkajd6x7mp1lj"
+API_UC = "https://movelog-api.daclen10.workers.dev"
+DISPATCH_UC = "https://movelog-dispatch.daclen10.workers.dev"
+# sırlar (wrangler secret put, hepsi OPSİYONEL — yoksa ilgili görev kendini atlar):
+#   TICK_SECRET (manuel /internal/tick kapısı) · RUNPOD_API_KEY · JWT_SECRET ·
+#   RENDER_DONE_SECRET · ASC_KEY_ID / ASC_ISSUER_ID / ASC_APP_ID / ASC_P8 — bkz cf/SECRETS.md
+
+[[d1_databases]]
+binding = "DB"
+database_name = "movelog-db"
+database_id = "84d8e0a0-cc9b-45ec-b355-d1cc08a90dd9"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "fd5db982178f49c589858c525755fba7"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "movelog"
+
+[[queues.producers]]
+binding = "RENDER_Q"
+queue = "movelog-render"
+
+# ⚠️ ÖLÇÜLDÜ (2026-08-31): Worker→Worker HTTP fetch AYNI workers.dev bölgesinde YASAK —
+# https://movelog-api.daclen10.workers.dev/health çağrısı worker içinden "error code: 1042" + HTTP 404
+# döner (dışarıdan curl 200). Doğru mekanizma SERVICE BINDING'dir; kendi-kendini-test bunu kullanır.
+[[services]]
+binding = "API"
+service = "movelog-api"
+
+[[services]]
+binding = "DISPATCH"
+service = "movelog-dispatch"
+
+[triggers]
+# GOREVLER.md tetik grupları: dakikalık · 10dk · saatlik (5 ifade sınırının 3'ü; 2 yedek)
+crons = ["* * * * *", "*/10 * * * *", "0 * * * *"]

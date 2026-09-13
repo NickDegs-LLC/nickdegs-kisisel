@@ -1,0 +1,234 @@
+[
+  {
+    "method": "DELETE",
+    "path": "/api/account",
+    "fn": "delete_account",
+    "line": 2748,
+    "auth": "auth_user (Bearer JWT HS256; sub+exp+tv claim'leri; profiles[sub].alias varsa kanonik hesaba çözülür — main.py:183-198)",
+    "params": [],
+    "body": [],
+    "response": {
+      "ok": "bool (hep true)",
+      "deleted": "string — silinen kullanıcı id (alias çözümü SONRASI kanonik id)"
+    },
+    "errors": [
+      {"code": 401, "detail": "token yok"},
+      {"code": 401, "detail": "token geçersiz/süresi dolmuş"}
+    ],
+    "reads": [
+      "profiles (user anahtarı)",
+      "friends (user + tüm karşı taraflar)",
+      "dm (tüm anahtarlar taranır; anahtar formatı 'a|b')",
+      "read (user)",
+      "seen (user)",
+      "invites (tüm token'lar; v.by == user filtre)",
+      "freqs (tüm hedefler taranır)"
+    ],
+    "writes": [
+      "profiles: pop(user)",
+      "friends: fr[other].remove(user) her karşı tarafta + fr.pop(user)",
+      "dm: user'ı içeren tüm 'a|b' anahtarları pop",
+      "read: pop(user)",
+      "seen: pop(user)",
+      "invites: by==user olan tüm token'lar pop",
+      "freqs: freqs.pop(user) (bana gelen istekler) + her freqs[t].pop(user) (benim gönderdiklerim)"
+    ],
+    "external": [
+      "dosya sistemi: DATA_DIR/avatars/<basename(user)>.jpg silinir (os.remove, OSError yutulur) — main.py:2771-2776"
+    ],
+    "server_deps": [
+      "social.json (_load/_save, flock ile tek yazar — main.py:1342-1386)",
+      "DATA_DIR/avatars dizini"
+    ],
+    "cf_mapping": "D1: users/friends/dm/read/seen/invites/freqs tablolarında tek TRANSACTION içinde DELETE (JSON'daki çok-koleksiyon temizliği atomik olmalı). Avatar → R2 movelog bucket'ında avatars/<user>.jpg DELETE. Token iptali için tv bump gerekmiyor (profil zaten silindi ama tv kaydı da gidince eski token verify_jwt'de tv=0 beklentisiyle GEÇEBİLİR — CF'de silinen kullanıcı için ayrıca 'deleted' kontrolü ekle).",
+    "notes": "App Store Guideline 5.1.1 zorunlu ucu (docstring, satır 2750). TUZAK-1: SADECE sosyal graf + profil siliniyor — detected_rides, cloud_videos, kulüp üyelikleri, uploaded_tracks, R2 videoları, Traccar cihazı SİLİNMİYOR (satır 2751-2777'de bu koleksiyonlara dokunuş yok); CF portunda aynı davranış korunmalı mı Barış'a sorulmalı. TUZAK-2: os.path.basename(user) path-traversal koruması (satır 2771). İdempotent: ikinci çağrı da 200 döner (pop'lar None default'lu). TUZAK-3: profil silinince _token_versions'da tv kaydı kaybolur → verify_jwt tv karşılaştırması (satır 163: int(token.tv) != _token_versions().get(sub, 0); silinen kullanıcıda .get → 0) token tv=0 ise eski token'ı teknik olarak GEÇİRİR; tv daha önce bump'lanmışsa (>0) eski token 401 alır. Ek: _tv_cache 10sn TTL (satır 131-142) — silme sonrası ilk ~10sn eski tv haritası dönebilir. Bu davranış kod okumasından çıkarım (main.py:131-167), canlıda test edilmedi; ama auth sonrası profil boş olduğundan çoğu uç boş veri döner."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/handle",
+    "fn": "set_handle",
+    "line": 3000,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {"name": "handle", "type": "string", "required": true, "default": null, "note": "_norm_handle: strip + lstrip('@') + lower (main.py:2935); regex ^[a-z0-9_.]{3,20}$ (main.py:2931)"}
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "handle": "string — normalize edilmiş handle"
+    },
+    "errors": [
+      {"code": 400, "detail": "3-20 karakter: küçük harf, rakam, _ ve ."},
+      {"code": 409, "detail": "bu kullanıcı adı alınamaz (rezerve: admin, movelog, moveLog, support, destek, apple, review, system)"},
+      {"code": 409, "detail": "bu kullanıcı adı alınmış (başka kullanıcıda)"},
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "profiles (TÜM profiller lineer taranır — _by_handle, main.py:2939-2944, handle karşılaştırması .lower() ile)"
+    ],
+    "writes": [
+      "profiles[user].handle = h"
+    ],
+    "external": [],
+    "server_deps": [
+      "social.json tam-dosya lineer tarama (benzersizlik kontrolü)"
+    ],
+    "cf_mapping": "D1: users.handle sütunu + UNIQUE index (küçük harf saklandığı için COLLATE NOCASE gerekmez ama güvenlik için eklenebilir). Benzersizlik kontrolü UPDATE ... + UNIQUE constraint ihlalinde 409 — Python'daki kontrol-sonra-yaz (TOCTOU) yarışı D1'de constraint ile kapanır. Rezerve liste Worker sabitine taşınır.",
+    "notes": "Kendi mevcut handle'ını tekrar set etmek serbest (owner==user, satır 3009). Rezerve kümedeki 'moveLog' girdisi işlevsiz-fazlalık (giriş zaten lower'lanıyor, 'movelog' yakalıyor). TOCTOU: _load-kontrol-_save arası ikinci istek aynı handle'ı kapabilir (flock sadece yazmayı serileştirir, kontrolü değil) — CF'de UNIQUE index bunu düzeltir; hata mesajı sözleşmesi (409) korunmalı."
+  },
+  {
+    "method": "GET",
+    "path": "/api/intercom/{cid}/token",
+    "fn": "intercom_token",
+    "line": 3368,
+    "auth": "auth_user + Ultra zorunlu (_is_ultra: SADECE profiles[u].ultra — main.py:3124-3126) + kulüp üyeliği zorunlu",
+    "params": [
+      {"name": "cid", "in": "path", "type": "string", "required": true, "note": "kulüp id"}
+    ],
+    "body": [],
+    "response": {
+      "url": "string — LIVEKIT_URL (varsayılan wss://livekit.nickdegs.com, CONF'tan)",
+      "token": "string — LiveKit HS256 JWT (PyJWT ile imzalı; claims: iss=LIVEKIT_KEY, sub=user, nbf=now, exp=now+6*3600, name=profil adı|handle|'Rider', video={room, roomJoin:true, canPublish:true, canSubscribe:true, canPublishData:true})",
+      "room": "string — 'club_<cid>'"
+    },
+    "errors": [
+      {"code": 503, "detail": "interkom kapalı (LIVEKIT_KEY boşsa)"},
+      {"code": 402, "detail": "Ultra gerekli"},
+      {"code": 404, "detail": "kulüp yok (kulüp bulunamadı VEYA user üye değil — IDOR: üye olmayan 403 değil 404 alır, kulüp varlığı sızmaz)"},
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "profiles[user] (ultra, name, handle)",
+      "clubs[cid] (members listesi)"
+    ],
+    "writes": [],
+    "external": [
+      "LiveKit: istek anında AĞ ÇAĞRISI YOK — JWT lokal imzalanır (LIVEKIT_SECRET HS256, main.py:3389); istemci token'la livekit.nickdegs.com WSS'e kendisi bağlanır"
+    ],
+    "server_deps": [
+      "CONF: LIVEKIT_KEY, LIVEKIT_SECRET, LIVEKIT_URL (main.py:3364-3365)"
+    ],
+    "cf_mapping": "Worker secret'ları: LIVEKIT_KEY/SECRET/URL → wrangler secret. JWT imzalama PyJWT yerine WebCrypto HMAC-SHA256 (Hono/jose ya da elle base64url). D1: users + clubs okuma. LiveKit sunucusu sunucuda kalıyorsa (livekit.nickdegs.com) URL aynen; o da taşınırsa ayrı karar.",
+    "notes": "TUZAK: _is_ultra admin bypass İÇERMEZ (yalnız p.ultra) — _profile_of'taki 'ultra || admin' mantığından FARKLI; admin hesabı Ultra değilse interkoma giremez. Token 6 saat geçerli, oda adı deterministik club_<cid>. CF portunda bu asimetri aynen korunmalı (davranış değişikliği = gölge-mod diff)."
+  },
+  {
+    "method": "GET",
+    "path": "/api/badges",
+    "fn": "get_badges",
+    "line": 3678,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "badges": "string[] — kullanıcının kazandığı rozet kodları (yoksa [])",
+      "defs": "object — sabit BADGE_DEFS: {km1000:'1.000 km Kulübü', km5000:'5.000 km Kulübü', night:'Gece Kartalı', cities5:'5 Bölge Gezgini', streak7:'7 Gün Seri', longride:'Uzun Yol Ustası', first:'İlk Sürüş', social:'Yol Arkadaşı'} (main.py:3673-3675)"
+    },
+    "errors": [
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "profiles[user].badges"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [],
+    "cf_mapping": "D1: users.badges (JSON sütunu) SELECT; BADGE_DEFS Worker sabiti. Rozet YAZIMI bu uçta değil — POST /api/internal/badges (satır 3684, RENDER_DONE_SECRET'lı, ayrı grup) matrix host'taki günlük tarayıcıdan gelir; o tarayıcı CF'de cron worker görevine dönüşür.",
+    "notes": "defs isimleri SADECE Türkçe hard-coded (i18n yok — app tarafı çeviriyor olabilir, sözleşmede aynen korunmalı). badges alanı yoksa boş dizi döner."
+  },
+  {
+    "method": "GET",
+    "path": "/api/wrapped",
+    "fn": "wrapped",
+    "line": 3708,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "year": "int — TR saat dilimine (sabit UTC+3, main.py:28) göre içinde bulunulan yıl",
+      "km": "float — yıl içi toplam km, 1 ondalık",
+      "rides": "int — yıl içi sürüş sayısı",
+      "hours": "float — toplam süre saat, 1 ondalık (max(0, to-ts) toplamı / 3600)",
+      "longest_km": "float — en uzun tek sürüş km, 1 ondalık",
+      "night_rides": "int — TR saatiyle başlangıcı 22:00-04:59 arasında olan sürüşler",
+      "badges": "string[] — profiles[user].badges (yoksa [])"
+    },
+    "errors": [
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "detected_rides (TÜM kayıtlar taranır; filtre: v.user==user AND v.ts >= 1 Ocak <yıl> UTC+3)",
+      "profiles[user].badges"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "TR = timezone(timedelta(hours=3)) — sabit ofset, DST yok (main.py:28)"
+    ],
+    "cf_mapping": "D1: SELECT SUM(km), COUNT(*), SUM(MAX(0,to_ts-ts)), MAX(km), gece sayacı FROM rides WHERE user=? AND ts>=? — (user, ts) index'i şart. Gece hesabı: hour = (ts UTC + 3h) saati; SQL'de strftime ile ya da Worker'da satır bazında. TR sabiti Worker'da da SABİT +03:00 kalmalı (DST'siz).",
+    "notes": "TUZAK-1: eski detected_rides kayıtlarında km alanı yoksa 0 sayılır (groups planındaki ledger notu; satır 3718 float(v.get('km') or 0)). TUZAK-2: 'to' alanı yoksa süre 0'a kırpılır (max(0, ...)). TUZAK-3: tam-tablo taraması — kullanıcı sayısı büyüyünce pahalı; D1'de index'li sorguya döner. Yıl sınırı TR ofsetiyle hesaplanır, UTC değil. TUZAK-4 (bağımsız doğrulama, 08-30): rides uçlarındaki _own() fallback'i (user boşsa BARIS_UID sayılır, main.py:256-257) ve ORNEK_UID örnek-içerik istisnası (main.py:232, 267-270) BU uçta UYGULANMAZ — filtre ham v.get('user') != user (satır 3715); etiketsiz (user boş) eski kayıt Barış'ın wrapped'ına SAYILMAZ. Canlı veride boş-user detected_rides kaydı 0 (2026-08-30 ölçümü) — pratik fark yok ama CF portu da ham karşılaştırma kullanmalı, _own() taklit ETMEMELİ."
+  },
+  {
+    "method": "GET",
+    "path": "/api/leaderboard",
+    "fn": "leaderboard",
+    "line": 3730,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "week": "dizi — kapsam içindeki HERKES (0 km olanlar dahil), sıralı: [{username: string, name: string, handle: string, avatar: object, km: float(1 ondalık), rides: int, secs: int, rank: int(1'den başlar)}]",
+      "me": "int — kullanıcının rank'i (user her zaman kapsamda olduğundan pratikte >=1; next() default 0)"
+    },
+    "errors": [
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "friends[user]",
+      "clubs (TÜM kulüpler taranır — user üyesi olduğu kulüplerin members'ı kapsama eklenir)",
+      "detected_rides (TÜM kayıtlar; filtre: user kapsam içinde AND ts >= now-7*86400)",
+      "profiles (kapsamdaki her kullanıcı için _profile_of: name, handle, avatar, premium, ultra, sokak_hak, video_hak, free_tactical...)",
+      "free_tactical_enabled + free_tactical_devices (db kökü — _profile_of içinden, main.py:1406)"
+    ],
+    "writes": [],
+    "external": [
+      "dosya sistemi: os.path.exists('/opt/movelog/data/sv-kapali') — _profile_of her satır için sv_off bayrağını dosyadan okur (main.py:1398)"
+    ],
+    "server_deps": [
+      "sv-kapali bayrak dosyası (/opt/movelog/data/sv-kapali)"
+    ],
+    "cf_mapping": "D1: kapsam = self + friends + club üyeleri (JOIN); SELECT user, SUM(km), COUNT(*), SUM(MAX(0,to_ts-ts)) FROM rides WHERE user IN (...) AND ts>=? GROUP BY user; profil alanları users tablosundan. sv-kapali bayrağı → KV anahtarı (örn. flags:sv_off). Sıralama Worker'da: (-km, -rides, name).",
+    "notes": "GİZLİLİK (satır 3728 yorumu): kapsam SADECE arkadaşlar + kulüp arkadaşları — yabancı görünmez; IDOR'a kapalı. Kapsamdaki 0 km üyeler de listede (stats her kapsam üyesi için init edilir, satır 3739). Sıra kırıcı: km desc, rides desc, name asc. Yanıt satırları _profile_of'un TAMAMINI değil seçme alanlarını taşır (username/name/handle/avatar + km/rides/secs/rank). TUZAK-1: _profile_of çağrısı satır başına sv-kapali dosyasına stat atar — CF'de KV okuması istek başına 1 kez yapılıp satırlara dağıtılmalı. TUZAK-2 (bağımsız doğrulama, 08-30): _own() BARIS_UID fallback'i ve ORNEK_UID istisnası (main.py:232, 256-257, 267-270) BU uçta UYGULANMAZ — toplama ham u = v.get('user') ile (satır 3741-3742); etiketsiz eski kayıt kimseye sayılmaz (canlı veride boş-user kaydı 0). ORNEK_UID ('appreview') sadece kapsama girerse (arkadaş/kulüp üyesiyse) sıradan kullanıcı gibi listelenir — özel muamele yok; CF portu aynen."
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/find",
+    "fn": "find_users",
+    "line": 3894,
+    "auth": "auth_user",
+    "params": [
+      {"name": "q", "in": "query", "type": "string", "required": false, "default": "", "note": "_norm_handle uygulanır (@ soyulur, lower); norm sonrası <2 karakter ise arama yapılmaz"}
+    ],
+    "body": [],
+    "response": {
+      "users": "dizi (max 15) — her öğe _profile_of çıktısı + status: [{username, name, handle, avatar, premium: bool, ultra: bool, sv_off: bool, sokak_hak: int, video_hak: int, sokak_hediye: false, free_tactical: bool, admin: bool, status: 'friend'|'outgoing'|'incoming'|'none'}]; q<2 ise {\"users\": []}"
+    },
+    "errors": [
+      {"code": 401, "detail": "token yok / token geçersiz"}
+    ],
+    "reads": [
+      "profiles (TÜM profiller taranır; eşleşme: handle.startswith(qq) VEYA (len(qq)>=3 AND qq in name.lower()); self hariç)",
+      "friends[user] (status='friend' için)",
+      "freqs (TÜM hedefler taranır — my_out: user'ın gönderdiği bekleyen istekler; freqs[user] — my_in: gelen istekler)",
+      "free_tactical_enabled + free_tactical_devices (_profile_of içinden)"
+    ],
+    "writes": [],
+    "external": [
+      "dosya sistemi: /opt/movelog/data/sv-kapali stat'ı (_profile_of, her eşleşen satır için)"
+    ],
+    "server_deps": [
+      "sv-kapali bayrak dosyası"
+    ],
+    "cf_mapping": "D1: SELECT ... FROM users WHERE handle LIKE 'qq%' OR (LENGTH(qq)>=3 AND LOWER(name) LIKE '%qq%') LIMIT 15 (+ handle index; name araması için LIKE taraması kabul). status için friends + freqs tabloları. sv-kapali → KV. NOT: Python'daki 15-kesme dict sırasıyla olur (aşağıdaki tuzak) — CF portunda birebir diff istenirse aynı 'önce 15 topla sonra sırala' davranışı taklit edilmeli; ama doğrusu ORDER BY sonrası LIMIT — Faz 2 gölge modda bilinçli fark olarak işaretle.",
+    "notes": "TUZAK-1 (sıralama/kesme): satır 3916'da len(out)>=15 break, SIRALAMADAN ÖNCE — kesme dict iterasyon sırasına göre; 16. sıradaki arkadaş listeden düşebilir, sonra kalan 15 (arkadaş önce, prefix önce, handle asc) sıralanır. TUZAK-2: isim araması yalnız qq>=3 karakterde devreye girer (substring); handle araması 2 karakterde prefix. TUZAK-3 (DÜZELTİLDİ, bağımsız doğrulama): sort anahtarı 3'lü tuple (satır 3918): (status != 'friend', not (x['handle'] or '').lower().startswith(qq), x['handle']) — .lower() ve or-'' SADECE prefix kontrolünde; son eşitlik-kırıcı HAM x['handle'] (.lower() YOK). _profile_of handle'ı her zaman string döndürdüğünden ('' dahil, main.py:1392) handle'sız profiller boş stringle en öne sıralanır; handle'lar set_handle'da zaten lower'landığı için ham karşılaştırma pratikte case farkı yaratmaz. status öncelik sırası: friend > outgoing > incoming > none (satır 3912-3914). Yanıt _profile_of'un TÜM alanlarını sızdırır (sokak_hak, video_hak, free_tactical dahil — başkasının hak sayıları görünür; IDOR değil ama bilgi sızıntısı olarak not edilmeli, CF portunda aynen korunacak çünkü app sözleşmesi bu). TUZAK-4 (bağımsız doğrulama, 08-30): ORNEK_UID ('appreview', main.py:232) profili bu uçta ÖZEL MUAMELE GÖRMEZ — canlı veride profili var (name 'Review Tester', handle yok); handle'sız olduğundan prefix aramasıyla çıkmaz ama isim araması (qq>=3, örn. 'rev'/'test') ile bulunur ve arkadaş eklenebilir. CF portunda da istisna EKLENMEMELİ (mevcut davranış bu)."
+  }
+]

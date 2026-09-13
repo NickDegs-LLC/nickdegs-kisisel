@@ -1,0 +1,28 @@
+--- a/cf/api/src/routes/grup7.ts
++++ b/cf/api/src/routes/grup7.ts
+@@ -376,8 +376,13 @@
+         radiuses: seg.map(() => '32').join(';'),
+       })
+       // Python httpx timeout=30 eşleniği — aşım istisnası dış catch'e düşer → HAM iz (birebir)
++      // K0 §A3 ikincil muafiyet işareti (birincil = HARITA_UC içindeki yol öneki).
++      // Worker→origin bacağı sunucu-yanıdır → CORS ön-uçuş yok, bedava.
+       const rr = await fetch(`${onek}/matching/v5/mapbox/${prof}/${coords}?${params}`,
+-        { signal: AbortSignal.timeout(30_000) })
++        {
++          signal: AbortSignal.timeout(30_000),
++          headers: env.MOVELOG_KEY ? { 'X-Movelog-Key': env.MOVELOG_KEY } : {},
++        })
+       // Python: 200 + bozuk JSON → istisna → tüm eşleme iptal, HAM döner (dış except) — aynen
+       const d: Record<string, any> = rr.status === 200 ? await rr.json() : {}
+       if (d.code === 'Ok' && d.matchings) {
+--- a/cf/api/src/lib/env.ts
++++ b/cf/api/src/lib/env.ts
+@@ -16,6 +16,8 @@
+   JWT_SECRET: string             // HS256 imza anahtarı (main.py JWT_SECRET ile AYNI değer — gölge modda token'lar ortak)
+   RENDER_DONE_SECRET?: string    // iç uçlar (register-ride/render-done/render-failed/internal-music); boşsa FAIL-CLOSED (403)
+   GIFT_ADMIN_SECRET?: string     // admin uçları (announce/broadcast/costs/gencodes); boşsa FAIL-CLOSED (403)
++  MOVELOG_KEY?: string           // K0 §A3 muafiyet başlığı (X-Movelog-Key) — ikincil işaret;
++                                 // birincil muafiyet HARITA_UC içindeki yol öneğidir. Boşsa başlık gönderilmez.
+ 
+   // grup dönüş notlarından eklenen opsiyonel sırlar (SECRETS.md kayıtlı; boşsa ilgili uçlar
+   // fail-closed / 503 dalına düşer — gruplar kendi denetimlerinde bu davranışı doğruladı)

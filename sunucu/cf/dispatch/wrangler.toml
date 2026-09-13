@@ -1,0 +1,48 @@
+name = "movelog-dispatch"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# routes: Faz 4'te eklenecek (nickdegs.com'a şimdilik trafik YOK)
+
+[observability]
+enabled = true
+
+[vars]
+ORTAM = "canli"
+RUNPOD_ENDPOINT = "q9tw33kjmqx35a"
+# TAKTİK DALI (2026-08-30): ayrı CPU endpoint'i (movelog-tactical). mode=='tactical' işleri buraya gider.
+# 2026-08-31 KURULDU (Barış kota onayı: movelog-render 15->12, boşalan 3 worker buraya).
+# computeType=CPU · instanceIds=[cpu5g-8-32, cpu3g-8-32] · wmax=3 · imaj v2 (KARO FİKSİ'li).
+# Kimlik/tuzak notları: /opt/matrix/secrets/runpod-tactical.conf
+# BOŞ bırakılırsa taktik işler RunPod'a GİTMEZ, KV'ye alınır (dispatch:bekleyen:* +
+# dispatch:taktik:ertelendi:*) — iş kaybolmaz; kuyruk-bekçisi id gelince yeniden kuyruğa alır.
+RUNPOD_ENDPOINT_TAC = "yvkajd6x7mp1lj"
+# presigned R2 PUT için (S3 kimlikleri SIR olarak zaten var: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY).
+# SECRETS.md bölüm 3: R2_ENDPOINT + R2_BUCKET var olarak yeterli.
+R2_ENDPOINT = "https://45241304800d3e122aced1f0ae599943.r2.cloudflarestorage.com"
+R2_BUCKET = "movelog"
+[[d1_databases]]
+binding = "DB"
+database_name = "movelog-db"
+database_id = "84d8e0a0-cc9b-45ec-b355-d1cc08a90dd9"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "fd5db982178f49c589858c525755fba7"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "movelog"
+
+[[queues.consumers]]
+queue = "movelog-render"
+max_batch_size = 1
+max_retries = 3
+# 01.09: ölü-mektup kuyruğu YOKTU → 3 denemede düşen iş KALICI olarak siliniyordu, izi kalmıyordu.
+# Artık başarısız iş burada durur; gövdesi incelenebilir ve elle yeniden kuyruklanabilir.
+dead_letter_queue = "movelog-render-olu"
+
+[[queues.producers]]
+binding = "RENDER_Q"
+queue = "movelog-render"

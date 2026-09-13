@@ -1,0 +1,1 @@
+{ "name": "movelog-dispatch", "private": true, "type": "module", "main": "src/index.ts" }

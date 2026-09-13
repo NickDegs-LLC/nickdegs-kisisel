@@ -1,0 +1,1627 @@
+{
+ "meta": {
+  "ne": "harita katmanı DEVİR GÜNÜ temel çizgisi (BUGÜNKÜ canlı uç — mevcut sahibi)",
+  "uc": "https://harita.nickdegs.com",
+  "onek": "{ONEK} (maskeli — /opt/matrix/secrets/harita-uc.conf)",
+  "zaman_utc": "2026-08-31T09:26:46Z",
+  "zaman_tr": "2026-08-31 11:26:46 CEST",
+  "arac": "test/baseline-topla.py",
+  "not": "Devir SONRASI aynı komut YENİ uca koşulur; bu dosya referanstır.",
+  "bolumler": [
+   "devir"
+  ]
+ },
+ "devir_testi": {
+  "cikis_kodu": 0,
+  "metin": "harita katmanı — DEVİR GÜNÜ TESTİ (T1 ölçek · T3 başlık · T6 MVT-204 · T4 matching)\neşikler: T1<5.0/255 (kontrol>20.0) · parite<1.0 m\n\n══ ESKİ: https://harita.nickdegs.com (önek gizli) ══\n  OK   [T11] öneksiz /matching → 404 — durum=404\n  OK   [T11] öneksiz /styles → 404 — durum=404\n  OK   [T11] öneksiz /geocoding → 404 — durum=404\n  OK   [T11] yanlış önek → 404 — durum=404\n  OK   [T11] /saglik anonim 200 — durum=200 b'{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}'\n  OK   [T1] statik @2x çıktısı 2W×2H (256×256) — boyut=256x256\n  OK   [T1] z15 statik ↔ z16 karo ortalama fark < 5.0/255 — fark=1.51/255 (referans 0.21-1.39)\n  OK   [T1] kontrol: yanlış ölçek (z14) farkı > 20.0/255 — fark=60.31/255 (referans 64.8) — ayrım net mi\n  OK   [T3] /xyz 200 + gövde — durum=200 n=28894\n  OK   [T3] /xyz ACAO:*  (yoksa WebGL karo çekemez → video BEMBEYAZ) — *\n  OK   [T3] /xyz CORP: cross-origin — cross-origin\n  OK   [T3] /xyz Cache-Control 30 g — public, max-age=2592000, immutable\n  OK   [T3] /xyz Content-Type image/jpeg — image/jpeg\n bilgi [T3] /xyz ikinci istek cf-cache-status — HIT\n  OK   [T3] /mvt Content-Type + 200 — durum=200 ct=application/vnd.mapbox-vector-tile\n  OK   [T3] /mvt ACAO:* — *\n  OK   [T3] /mvt Cache-Control 30 g — public, max-age=2592000, immutable\n  OK   [T3] statik 200 + gövde — durum=200 n=30036\n bilgi [T3] statik Cache-Control (bugün YOK — B11 fiili durum) — YOK\n bilgi [T3] HEAD tuzağı (bu yüzden GET kullanılır) — HEAD statik → 501\n  OK   [T6] İstanbul z14: 404 DÖNMÜYOR — durum=200\n  OK   [T6] İstanbul z14: 200 + dolu karo — durum=200 n=834\n  OK   [T6] İstanbul z14: Content-Type — application/vnd.mapbox-vector-tile\n  OK   [T6] İstanbul z15: 404 DÖNMÜYOR — durum=200\n  OK   [T6] İstanbul z15: 200 + dolu karo — durum=200 n=454\n  OK   [T6] İstanbul z15: Content-Type — application/vnd.mapbox-vector-tile\n  OK   [T6] eksik karo (arşiv tavanı üstü z16): 404 DÖNMÜYOR — durum=204\n  OK   [T6] eksik karo (arşiv tavanı üstü z16): 204 (ya da asgari 200 karo) — durum=204 n=0  ← 204 kuralı\n  OK   [T6] derin okyanus z15: 404 DÖNMÜYOR — durum=200\n  OK   [T6] derin okyanus z15: 204 (ya da asgari 200 karo) — durum=200 n=73\n  OK   [T4] driving 200 — durum=200 121 ms\n FARK  [T4] code:\"Ok\" — ESKİ uçta YOK (bilinen kusur, A5; katman EKLEYECEK) — code=None\n  OK   [T4] confidence alanı var (taktik ≥0.35 ile erken kabul eder) — 0.9\n  OK   [T4] LineString + dolu geometri — n=5\n  OK   [T4] ~20 m yeniden örnekleme: max adım < 45 m (kamera penceresi buna kalibre) — max=26.3 m\n  OK   [T4] radiuses=30 kabul (yutulur) — durum=200\n  OK   [T4] radiuses=32 kabul (yutulur) — durum=200\n  OK   [T4] radiuses=45 kabul (yutulur) — durum=200\n  OK   [T4] oturmayan iz → bayt-birebir {\"matchings\":[]} — durum=200 govde=b'{\"matchings\":[]}'\n bilgi [T4] cycling profili (KV `profiller` politikası) — durum=404 → 404 = bugünkü davranış birebir\n bilgi [T4] walking profili (KV `profiller` politikası) — durum=404 → 404 = bugünkü davranış birebir\n  OK   [B8] geocoding 200 (A4: katmanda kalır) — durum=200\n  OK   [B8] minimal alan sözleşmesi: features[0].text — Cankurtaran Mahallesi\n  OK   [B8] context[] var — [{'id': 'place.1', 'text': 'Istanbul'}]\n\n══ YENİ uç verilmedi ══\n  Karşılaştırma HAZIR: devir günü aynı komuta `--yeni https://harita.nickdegs.com`\n  ekleyin (route çevrildikten sonra) ya da worker'ın workers.dev adresini verin.\n  Yukarıdaki ESKİ sonuçları TEMEL ÇİZGİdir — YENİ uç bunları tutturmalı.\n\nSONUÇ: 38 OK · 0 FAIL · 1 beklenen-fark · 5 bilgi",
+  "ozet": {
+   "OK": 38,
+   "FAIL": 0,
+   "BILGI": 5,
+   "FARK": 1
+  },
+  "satir": [
+   {
+    "uc": "ESKİ",
+    "test": "T11",
+    "durum": "OK",
+    "ad": "öneksiz /matching → 404",
+    "detay": "durum=404"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T11",
+    "durum": "OK",
+    "ad": "öneksiz /styles → 404",
+    "detay": "durum=404"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T11",
+    "durum": "OK",
+    "ad": "öneksiz /geocoding → 404",
+    "detay": "durum=404"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T11",
+    "durum": "OK",
+    "ad": "yanlış önek → 404",
+    "detay": "durum=404"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T11",
+    "durum": "OK",
+    "ad": "/saglik anonim 200",
+    "detay": "durum=200 b'{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}'"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T1",
+    "durum": "OK",
+    "ad": "statik @2x çıktısı 2W×2H (256×256)",
+    "detay": "boyut=256x256"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T1",
+    "durum": "OK",
+    "ad": "z15 statik ↔ z16 karo ortalama fark < 5.0/255",
+    "detay": "fark=1.51/255 (referans 0.21-1.39)"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T1",
+    "durum": "OK",
+    "ad": "kontrol: yanlış ölçek (z14) farkı > 20.0/255",
+    "detay": "fark=60.31/255 (referans 64.8) — ayrım net mi"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/xyz 200 + gövde",
+    "detay": "durum=200 n=28894"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/xyz ACAO:*  (yoksa WebGL karo çekemez → video BEMBEYAZ)",
+    "detay": "*"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/xyz CORP: cross-origin",
+    "detay": "cross-origin"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/xyz Cache-Control 30 g",
+    "detay": "public, max-age=2592000, immutable"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/xyz Content-Type image/jpeg",
+    "detay": "image/jpeg"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "BILGI",
+    "ad": "/xyz ikinci istek cf-cache-status",
+    "detay": "HIT"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/mvt Content-Type + 200",
+    "detay": "durum=200 ct=application/vnd.mapbox-vector-tile"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/mvt ACAO:*",
+    "detay": "*"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "/mvt Cache-Control 30 g",
+    "detay": "public, max-age=2592000, immutable"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "OK",
+    "ad": "statik 200 + gövde",
+    "detay": "durum=200 n=30036"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "BILGI",
+    "ad": "statik Cache-Control (bugün YOK — B11 fiili durum)",
+    "detay": "YOK"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T3",
+    "durum": "BILGI",
+    "ad": "HEAD tuzağı (bu yüzden GET kullanılır)",
+    "detay": "HEAD statik → 501"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z14: 404 DÖNMÜYOR",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z14: 200 + dolu karo",
+    "detay": "durum=200 n=834"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z14: Content-Type",
+    "detay": "application/vnd.mapbox-vector-tile"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z15: 404 DÖNMÜYOR",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z15: 200 + dolu karo",
+    "detay": "durum=200 n=454"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "İstanbul z15: Content-Type",
+    "detay": "application/vnd.mapbox-vector-tile"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "eksik karo (arşiv tavanı üstü z16): 404 DÖNMÜYOR",
+    "detay": "durum=204"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "eksik karo (arşiv tavanı üstü z16): 204 (ya da asgari 200 karo)",
+    "detay": "durum=204 n=0  ← 204 kuralı"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "derin okyanus z15: 404 DÖNMÜYOR",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T6",
+    "durum": "OK",
+    "ad": "derin okyanus z15: 204 (ya da asgari 200 karo)",
+    "detay": "durum=200 n=73"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "driving 200",
+    "detay": "durum=200 121 ms"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "FARK",
+    "ad": "code:\"Ok\" — ESKİ uçta YOK (bilinen kusur, A5; katman EKLEYECEK)",
+    "detay": "code=None"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "confidence alanı var (taktik ≥0.35 ile erken kabul eder)",
+    "detay": "0.9"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "LineString + dolu geometri",
+    "detay": "n=5"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "~20 m yeniden örnekleme: max adım < 45 m (kamera penceresi buna kalibre)",
+    "detay": "max=26.3 m"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "radiuses=30 kabul (yutulur)",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "radiuses=32 kabul (yutulur)",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "radiuses=45 kabul (yutulur)",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "OK",
+    "ad": "oturmayan iz → bayt-birebir {\"matchings\":[]}",
+    "detay": "durum=200 govde=b'{\"matchings\":[]}'"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "BILGI",
+    "ad": "cycling profili (KV `profiller` politikası)",
+    "detay": "durum=404 → 404 = bugünkü davranış birebir"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "T4",
+    "durum": "BILGI",
+    "ad": "walking profili (KV `profiller` politikası)",
+    "detay": "durum=404 → 404 = bugünkü davranış birebir"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "B8",
+    "durum": "OK",
+    "ad": "geocoding 200 (A4: katmanda kalır)",
+    "detay": "durum=200"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "B8",
+    "durum": "OK",
+    "ad": "minimal alan sözleşmesi: features[0].text",
+    "detay": "Cankurtaran Mahallesi"
+   },
+   {
+    "uc": "ESKİ",
+    "test": "B8",
+    "durum": "OK",
+    "ad": "context[] var",
+    "detay": "[{'id': 'place.1', 'text': 'Istanbul'}]"
+   }
+  ]
+ },
+ "T1_olcek": [
+  {
+   "ad": "taksim",
+   "zoom": 16,
+   "karo": [
+    16,
+    38044,
+    24562
+   ],
+   "karo_merkez": [
+    28.9846802,
+    41.0358589
+   ],
+   "xyz_durum": 200,
+   "xyz_bayt": 28894,
+   "xyz_sha256": "482671991782f79ff702622d1c66662d2b896692589a18ac40ac99b2f51ab701",
+   "xyz_imza8x8": "5a6b67706f759886565a678683819c86515d62876a6267815d67586564677c806664526e6961646e6e6b6460675d62566c675f5d615f645b665e5a695a5f6761",
+   "statik_durum": 200,
+   "statik_bayt": 30036,
+   "statik_boyut": [
+    256,
+    256
+   ],
+   "statik_sha256": "a095ebb0fae7202fa6f98b6ded7d10f1029d57462ae7b9317341b9ba87a68c59",
+   "statik_imza8x8": "5a6b677070759886565a678683819c86515d62876a6267815d67586564677c806664526e6961646e6e6a6560675d62566c675f5d615f645b665e5a695a5f6761",
+   "fark_255": 1.512,
+   "kontrol_yanlis_olcek_fark_255": 60.309
+  },
+  {
+   "ad": "kadikoy-sahil",
+   "zoom": 16,
+   "karo": [
+    16,
+    38051,
+    24573
+   ],
+   "karo_merkez": [
+    29.0231323,
+    40.9902648
+   ],
+   "xyz_durum": 200,
+   "xyz_bayt": 27144,
+   "xyz_sha256": "96d30ca570220829c9c3b4b2e1799c52b8e8662da550e3a2e4e848762409f0c0",
+   "xyz_imza8x8": "0d192045636467793762796a68727b756a7a71515668756e4d5f65596070655f4f5a5d60675e59536c68546462575a5b6c5b5755504b5b605e4d485151485963",
+   "statik_durum": 200,
+   "statik_bayt": 28201,
+   "statik_boyut": [
+    256,
+    256
+   ],
+   "statik_sha256": "535d16558f5c18752c72258ceaeae3427e68a8bf540d146782f1e7b57f158035",
+   "statik_imza8x8": "0d192045636467793762796a68727b746a7a71515668756e4d5f65596070655f4f5a5d60675e59536c68546362575a5b6c5b5755504b5b605e4d485150485963",
+   "fark_255": 1.414,
+   "kontrol_yanlis_olcek_fark_255": 60.799
+  },
+  {
+   "ad": "ordu-sahil",
+   "zoom": 16,
+   "karo": [
+    16,
+    39665,
+    24575
+   ],
+   "karo_merkez": [
+    37.8890991,
+    40.9819715
+   ],
+   "xyz_durum": 200,
+   "xyz_bayt": 28881,
+   "xyz_sha256": "34180f11922fb749c91d98a60d15163d935eed0f8cf9cb29548f8f1ba01f6266",
+   "xyz_imza8x8": "7d65626881797276817073726d6c7a7f64728173746b6e65636978666e7475756765787c70727279726d7071717f7b846c63666a737471647770706d7273635b",
+   "statik_durum": 200,
+   "statik_bayt": 30058,
+   "statik_boyut": [
+    256,
+    256
+   ],
+   "statik_sha256": "5b4cb588dfacd7d7f67fc20fc8e0d7f237b29b83bf0a708124374d062491874e",
+   "statik_imza8x8": "7d65626881797276817073726d6c7a7f64728173746b6e65636978666e7475756765787c70727279726d7070717f7b846c63666a737471647770706d7273635b",
+   "fark_255": 1.564,
+   "kontrol_yanlis_olcek_fark_255": 53.603
+  },
+  {
+   "ad": "ankara-kizilay",
+   "zoom": 15,
+   "karo": [
+    15,
+    19374,
+    12414
+   ],
+   "karo_merkez": [
+    32.8546143,
+    39.9223758
+   ],
+   "xyz_durum": 200,
+   "xyz_bayt": 35604,
+   "xyz_sha256": "018e9df41655acecd04c5a8e12b01c96639ca76e93bba5a7fa95690086b19152",
+   "xyz_imza8x8": "6064636a5c7d656b57635e5c73644d595661605e73655a5f606665536963575e65636b576d69595c5662676d69695f5c5754606c625a6354524f55505b5a6b5c",
+   "statik_durum": 200,
+   "statik_bayt": 37804,
+   "statik_boyut": [
+    256,
+    256
+   ],
+   "statik_sha256": "3adcc628d1a9776014048fbb842fae140e30b83ea14fb735eff5803d9d5cd84b",
+   "statik_imza8x8": "6064626a5c7d656b57635e5c73644d585661605e73655a5f606665536963575e65626b576d69595c5662676d69695f5c5754606c625a6354524f55505b5a6b5c",
+   "fark_255": 2.509,
+   "kontrol_yanlis_olcek_fark_255": 62.634
+  },
+  {
+   "ad": "izmir-konak",
+   "zoom": 14,
+   "karo": [
+    14,
+    9426,
+    6295
+   ],
+   "karo_merkez": [
+    27.1252441,
+    38.4191664
+   ],
+   "xyz_durum": 200,
+   "xyz_bayt": 21897,
+   "xyz_sha256": "b614b60fcbf8a4d3c834a79289194d5e26349d25ac991399b3886e424c632e34",
+   "xyz_imza8x8": "2625302e27294a68292a2b2629345f703232302b31637b8233322f2f4c7b8786312b2b457583847c312f386d767d7772302f4b50505b5a682f33606b735a5162",
+   "statik_durum": 200,
+   "statik_bayt": 23170,
+   "statik_boyut": [
+    256,
+    256
+   ],
+   "statik_sha256": "57e722a4b77071db54915719884855655b427acf2f2313e3f2f3761805b22d73",
+   "statik_imza8x8": "2625302e27294a68292a2b2629345f703232302b31637b8233322f2f4b7b8786312b2b457583837c312f386d767d7772302f4b50505b5a682f33606b725a5162",
+   "fark_255": 1.509,
+   "kontrol_yanlis_olcek_fark_255": 34.323
+  }
+ ],
+ "T3_basliklar": {
+  "oneksiz": [
+   {
+    "yol": "/xyz/sat/16/38044/24562.jpg",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 309,
+    "bayt": 28894,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "28894",
+     "cache-control": "public, max-age=2592000, immutable",
+     "access-control-allow-origin": "*",
+     "cross-origin-resource-policy": "cross-origin",
+     "cf-cache-status": "HIT",
+     "server": "cloudflare",
+     "age": "173181",
+     "expires": "Mon, 28 Sep 2026 09:14:12 GMT",
+     "date": "Mon, 31 Aug 2026 09:20:33 GMT"
+    },
+    "tum_baslik_adlari": [
+     "accept-ranges",
+     "access-control-allow-origin",
+     "age",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "cross-origin-resource-policy",
+     "date",
+     "expires",
+     "last-modified",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/xyz/str/16/38044/24562.jpg",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 50,
+    "bayt": 26220,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "26220",
+     "cache-control": "public, max-age=2592000, immutable",
+     "access-control-allow-origin": "*",
+     "cross-origin-resource-policy": "cross-origin",
+     "cf-cache-status": "HIT",
+     "server": "cloudflare",
+     "age": "238",
+     "expires": "Wed, 30 Sep 2026 09:16:35 GMT",
+     "date": "Mon, 31 Aug 2026 09:20:34 GMT"
+    },
+    "tum_baslik_adlari": [
+     "accept-ranges",
+     "access-control-allow-origin",
+     "age",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "cross-origin-resource-policy",
+     "date",
+     "expires",
+     "last-modified",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/mvt/14/9640/6156.mvt",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 1118,
+    "bayt": 834,
+    "basliklar": {
+     "content-type": "application/vnd.mapbox-vector-tile",
+     "content-length": "834",
+     "cache-control": "public, max-age=2592000, immutable",
+     "access-control-allow-origin": "*",
+     "cross-origin-resource-policy": "cross-origin",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "expires": "Wed, 30 Sep 2026 09:20:35 GMT",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "access-control-allow-origin",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "cross-origin-resource-policy",
+     "date",
+     "expires",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/yukseklik?bbox=28.970,41.020,28.990,41.040&n=16",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 214,
+    "bayt": 1533,
+    "basliklar": {
+     "content-type": "application/json",
+     "cache-control": "public, max-age=604800",
+     "access-control-allow-origin": "*",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "vary": "Accept-Encoding",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "access-control-allow-origin",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules",
+     "transfer-encoding",
+     "vary"
+    ]
+   },
+   {
+    "yol": "/saglik",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 108,
+    "bayt": 51,
+    "basliklar": {
+     "content-type": "application/json",
+     "content-length": "51",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/matching/v5/mapbox/driving/28.97918,41.02506;28.97850,41.02560;28.97780,41.02620",
+    "yontem": "GET",
+    "durum": 404,
+    "ms": 98,
+    "bayt": 1084,
+    "basliklar": {
+     "content-type": "text/html",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules",
+     "transfer-encoding"
+    ]
+   },
+   {
+    "yol": "/styles/v1/mapbox/satellite-v9/static/29.000000,41.000000,10.000,0/64x64@2x",
+    "yontem": "GET",
+    "durum": 404,
+    "ms": 74,
+    "bayt": 1084,
+    "basliklar": {
+     "content-type": "text/html",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules",
+     "transfer-encoding"
+    ]
+   },
+   {
+    "yol": "/geocoding/v5/mapbox.places/28.9784,41.0082.json?limit=1",
+    "yontem": "GET",
+    "durum": 404,
+    "ms": 90,
+    "bayt": 1084,
+    "basliklar": {
+     "content-type": "text/html",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules",
+     "transfer-encoding"
+    ]
+   }
+  ],
+  "onekli": [
+   {
+    "yol": "/{ONEK}/styles/v1/mapbox/satellite-v9/static/28.984680,41.035859,15.000,0/128x128@2x?access_token=pk.x",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 64,
+    "bayt": 30036,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "30036",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:35 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/{ONEK}/styles/v1/mapbox/streets-v12/static/28.984680,41.035859,15.000,0/128x128@2x?access_token=pk.x",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 1848,
+    "bayt": 31666,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "31666",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:37 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/{ONEK}/matching/v5/mapbox/driving/28.97918,41.02506;28.97850,41.02560;28.97780,41.02620?geometries=geojson&overview=full&tidy=true&access_token=pk.x",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 529,
+    "bayt": 209,
+    "basliklar": {
+     "content-type": "application/json",
+     "content-length": "209",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:38 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/{ONEK}/geocoding/v5/mapbox.places/28.9784,41.0082.json?limit=1&language=tr",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 162,
+    "bayt": 101,
+    "basliklar": {
+     "content-type": "application/json",
+     "content-length": "101",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:38 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/{ONEK}/xyz/sat/16/38044/24562.jpg",
+    "yontem": "GET",
+    "durum": 200,
+    "ms": 271,
+    "bayt": 28894,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "28894",
+     "cache-control": "public, max-age=2592000",
+     "cf-cache-status": "MISS",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:38 GMT"
+    },
+    "tum_baslik_adlari": [
+     "accept-ranges",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "date",
+     "last-modified",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   {
+    "yol": "/yanlisonek/matching/v5/mapbox/driving/28.97918,41.02506;28.97850,41.02560;28.97780,41.02620",
+    "yontem": "GET",
+    "durum": 404,
+    "ms": 160,
+    "bayt": 1084,
+    "basliklar": {
+     "content-type": "text/html",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:38 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules",
+     "transfer-encoding"
+    ]
+   }
+  ],
+  "head_tuzagi": {
+   "onekli_statik_HEAD": {
+    "yol": "/{ONEK}/styles/v1/mapbox/satellite-v9/static/28.984680,41.035859,15.000,0/128x128@2x?access_token=pk.x",
+    "yontem": "HEAD",
+    "durum": 501,
+    "ms": 97,
+    "bayt": 0,
+    "basliklar": {
+     "content-type": "text/html;charset=utf-8",
+     "cf-cache-status": "DYNAMIC",
+     "server": "cloudflare",
+     "date": "Mon, 31 Aug 2026 09:20:38 GMT"
+    },
+    "tum_baslik_adlari": [
+     "alt-svc",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-type",
+     "date",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   },
+   "oneksiz_xyz_HEAD": {
+    "yol": "/xyz/sat/16/38044/24562.jpg",
+    "yontem": "HEAD",
+    "durum": 200,
+    "ms": 233,
+    "bayt": 0,
+    "basliklar": {
+     "content-type": "image/jpeg",
+     "content-length": "28894",
+     "cache-control": "public, max-age=2592000, immutable",
+     "access-control-allow-origin": "*",
+     "cross-origin-resource-policy": "cross-origin",
+     "cf-cache-status": "HIT",
+     "server": "cloudflare",
+     "age": "173186",
+     "expires": "Mon, 28 Sep 2026 09:14:12 GMT",
+     "date": "Mon, 31 Aug 2026 09:20:39 GMT"
+    },
+    "tum_baslik_adlari": [
+     "accept-ranges",
+     "access-control-allow-origin",
+     "age",
+     "alt-svc",
+     "cache-control",
+     "cf-cache-status",
+     "cf-ray",
+     "connection",
+     "content-length",
+     "content-type",
+     "cross-origin-resource-policy",
+     "date",
+     "expires",
+     "last-modified",
+     "nel",
+     "report-to",
+     "server",
+     "speculation-rules"
+    ]
+   }
+  },
+  "xyz_ikinci_istek_cf_cache_status": "HIT",
+  "statik_ikinci_istek_onbellek": "DYNAMIC"
+ },
+ "T6_mvt": [
+  {
+   "ad": "istanbul-z14",
+   "karo": [
+    14,
+    9640,
+    6156
+   ],
+   "durum": 200,
+   "bayt": 834,
+   "ms": 1056,
+   "content_type": "application/vnd.mapbox-vector-tile",
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*",
+   "katmanlar": [
+    "earth",
+    "landuse",
+    "places",
+    "roads"
+   ]
+  },
+  {
+   "ad": "istanbul-z15",
+   "karo": [
+    15,
+    19281,
+    12312
+   ],
+   "durum": 200,
+   "bayt": 454,
+   "ms": 1990,
+   "content_type": "application/vnd.mapbox-vector-tile",
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*",
+   "katmanlar": [
+    "earth",
+    "landuse",
+    "roads"
+   ]
+  },
+  {
+   "ad": "arsiv-tavani-ustu-z16",
+   "karo": [
+    16,
+    20000,
+    30000
+   ],
+   "durum": 204,
+   "bayt": 0,
+   "ms": 1904,
+   "content_type": null,
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*"
+  },
+  {
+   "ad": "derin-okyanus-z15",
+   "karo": [
+    15,
+    3640,
+    16384
+   ],
+   "durum": 200,
+   "bayt": 73,
+   "ms": 368,
+   "content_type": "application/vnd.mapbox-vector-tile",
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*",
+   "katmanlar": [
+    "water"
+   ]
+  },
+  {
+   "ad": "derin-okyanus-z14",
+   "karo": [
+    14,
+    1820,
+    8192
+   ],
+   "durum": 200,
+   "bayt": 73,
+   "ms": 1052,
+   "content_type": "application/vnd.mapbox-vector-tile",
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*",
+   "katmanlar": [
+    "water"
+   ]
+  },
+  {
+   "ad": "cok-derin-zoom-z18",
+   "karo": [
+    18,
+    152176,
+    98248
+   ],
+   "durum": 204,
+   "bayt": 0,
+   "ms": 2364,
+   "content_type": null,
+   "cache_control": "public, max-age=2592000, immutable",
+   "acao": "*"
+  }
+ ],
+ "T4_matching": {
+  "durum": 200,
+  "ms": 183,
+  "ust_seviye_anahtarlar": [
+   "matchings"
+  ],
+  "code_alani_var_mi": false,
+  "code": null,
+  "matching_anahtarlar": [
+   "confidence",
+   "geometry"
+  ],
+  "confidence": 0.9,
+  "geometry_tipi": "LineString",
+  "nokta_sayisi": 5,
+  "max_adim_m": 26.26,
+  "ort_adim_m": 17.78,
+  "bos_sonuc": {
+   "durum": 200,
+   "govde": "{\"matchings\":[]}",
+   "bayt_birebir_mi": true
+  },
+  "profiller": {
+   "driving": 200,
+   "cycling": 404,
+   "walking": 404
+  }
+ },
+ "B8_geocoding": {
+  "durum": 200,
+  "ms": 125,
+  "ust_anahtarlar": [
+   "features"
+  ],
+  "feature_anahtarlar": [
+   "context",
+   "text"
+  ],
+  "text": "Cankurtaran Mahallesi",
+  "place_name": null,
+  "context": [
+   {
+    "id": "place.1",
+    "text": "Istanbul"
+   }
+  ],
+  "center": null,
+  "types_country": {
+   "durum": 200,
+   "text": "Turkey",
+   "short_code": null
+  }
+ },
+ "yukseklik": {
+  "yol": "/yukseklik?bbox=28.970,41.020,28.990,41.040&n=16",
+  "durum": 200,
+  "ms": 194,
+  "bayt": 1533,
+  "content_type": "application/json",
+  "anahtarlar": [
+   "bbox",
+   "grid",
+   "kule",
+   "n"
+  ],
+  "n": 16,
+  "bbox": [
+   28.97,
+   41.02,
+   28.99,
+   41.04
+  ],
+  "kule": [],
+  "grid_satir": 256,
+  "grid_sutun": null,
+  "grid_min": 0.0,
+  "grid_max": 34.4,
+  "grid_ort": 13.07,
+  "grid_sha256": "a873251cc68254faa98a8282fd5d8051a1166e8435cc40a76915b4d29d3eda51"
+ },
+ "karada_kalibrasyon": {
+  "su_renk": [
+   191,
+   217,
+   242
+  ],
+  "tolerans": 12,
+  "zoom": 16,
+  "bilinen_su": [
+   {
+    "ad": "bogaz-ortakoy",
+    "su_mu": true,
+    "karo_durum": 200,
+    "piksel": [
+     186,
+     213,
+     240
+    ],
+    "su_uzakligi": 5
+   },
+   {
+    "ad": "marmara-aci",
+    "su_mu": true,
+    "karo_durum": 200,
+    "piksel": [
+     191,
+     217,
+     242
+    ],
+    "su_uzakligi": 0
+   },
+   {
+    "ad": "halic",
+    "su_mu": true,
+    "karo_durum": 200,
+    "piksel": [
+     191,
+     217,
+     242
+    ],
+    "su_uzakligi": 0
+   },
+   {
+    "ad": "karadeniz-acik",
+    "su_mu": true,
+    "karo_durum": 200,
+    "piksel": [
+     191,
+     217,
+     242
+    ],
+    "su_uzakligi": 0
+   },
+   {
+    "ad": "izmir-korfez",
+    "su_mu": true,
+    "karo_durum": 200,
+    "piksel": [
+     191,
+     217,
+     242
+    ],
+    "su_uzakligi": 0
+   }
+  ],
+  "bilinen_kara": [
+   {
+    "ad": "taksim",
+    "su_mu": false,
+    "karo_durum": 200,
+    "piksel": [
+     251,
+     248,
+     239
+    ],
+    "su_uzakligi": 60
+   },
+   {
+    "ad": "kadikoy",
+    "su_mu": false,
+    "karo_durum": 200,
+    "piksel": [
+     230,
+     214,
+     181
+    ],
+    "su_uzakligi": 61
+   },
+   {
+    "ad": "ankara",
+    "su_mu": false,
+    "karo_durum": 200,
+    "piksel": [
+     243,
+     189,
+     165
+    ],
+    "su_uzakligi": 77
+   },
+   {
+    "ad": "konya",
+    "su_mu": false,
+    "karo_durum": 200,
+    "piksel": [
+     237,
+     234,
+     203
+    ],
+    "su_uzakligi": 46
+   },
+   {
+    "ad": "izmir-konak",
+    "su_mu": false,
+    "karo_durum": 200,
+    "piksel": [
+     240,
+     236,
+     201
+    ],
+    "su_uzakligi": 49
+   }
+  ],
+  "ozet": "bilinen su 5/5 su sayıldı · bilinen kara 0/5 YANLIŞ su sayıldı",
+  "en_yakin_kara_uzakligi": 46,
+  "ayrim_net_mi": true
+ },
+ "karada_70": [
+  {
+   "ad": "kiyi-istanbul-marmara",
+   "dosya": "/opt/movelog/routes/moto_2026-07-09_1025.tcx",
+   "karada_beklenir": true,
+   "ham_nokta": 104,
+   "matching_durum": 200,
+   "matching_ms": 2666,
+   "eslesen_nokta": 646,
+   "confidence": 0.9,
+   "kaynak": "matching geometrisi",
+   "test_nokta": 70,
+   "karada": 70,
+   "suda": 0,
+   "karo_alinamadi": 0,
+   "sonuc": "70/70",
+   "gecti": true,
+   "olcut": "tüm noktalar KARADA olmalı",
+   "su_noktalari": [],
+   "bbox_lon_lat": [
+    29.02517,
+    40.95214,
+    29.09657,
+    40.9895
+   ]
+  },
+  {
+   "ad": "kiyi-ordu-karadeniz",
+   "dosya": "/opt/movelog/routes/moto_2026-07-26_0938.tcx",
+   "karada_beklenir": true,
+   "ham_nokta": 430,
+   "matching_durum": 200,
+   "matching_ms": 210,
+   "eslesen_nokta": 325,
+   "confidence": 0.9,
+   "kaynak": "matching geometrisi",
+   "test_nokta": 70,
+   "karada": 70,
+   "suda": 0,
+   "karo_alinamadi": 0,
+   "sonuc": "70/70",
+   "gecti": true,
+   "olcut": "tüm noktalar KARADA olmalı",
+   "su_noktalari": [],
+   "bbox_lon_lat": [
+    37.8749,
+    40.97553,
+    37.92629,
+    40.98994
+   ]
+  },
+  {
+   "ad": "ic-kesim-dag",
+   "dosya": "/opt/movelog/routes/moto_2026-08-01_0624.tcx",
+   "karada_beklenir": true,
+   "ham_nokta": 1867,
+   "matching_durum": 200,
+   "matching_ms": 428,
+   "eslesen_nokta": 3687,
+   "confidence": 0.9,
+   "kaynak": "matching geometrisi",
+   "test_nokta": 70,
+   "karada": 70,
+   "suda": 0,
+   "karo_alinamadi": 0,
+   "sonuc": "70/70",
+   "gecti": true,
+   "olcut": "tüm noktalar KARADA olmalı",
+   "su_noktalari": [],
+   "bbox_lon_lat": [
+    37.67232,
+    40.52723,
+    37.9073,
+    40.97633
+   ]
+  },
+  {
+   "ad": "KONTROL-deniz-cizgisi",
+   "dosya": "/opt/movelog/routes/moto_2026-07-14_2108.tcx",
+   "karada_beklenir": false,
+   "ham_nokta": 322,
+   "matching_durum": 200,
+   "matching_ms": 681,
+   "eslesen_nokta": 0,
+   "confidence": null,
+   "uyari": "eşleşen geometri 70 noktadan kısa (0) — ham ize düşüldü",
+   "kaynak": "ham iz (matching oturmadı)",
+   "test_nokta": 70,
+   "karada": 21,
+   "suda": 49,
+   "karo_alinamadi": 0,
+   "sonuc": "21/70",
+   "gecti": true,
+   "olcut": "KONTROL: bu iz denizden geçer, karada testi DÜŞMELİ",
+   "su_noktalari": [
+    {
+     "lon": 29.025859,
+     "lat": 40.979381,
+     "karo_durum": 200,
+     "piksel": [
+      190,
+      217,
+      244
+     ],
+     "su_uzakligi": 2
+    },
+    {
+     "lon": 29.026707,
+     "lat": 40.978966,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.027766,
+     "lat": 40.978448,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.028826,
+     "lat": 40.977929,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.029673,
+     "lat": 40.977514,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.030732,
+     "lat": 40.976995,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.031792,
+     "lat": 40.976476,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.032639,
+     "lat": 40.976061,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.033699,
+     "lat": 40.975543,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    },
+    {
+     "lon": 29.034758,
+     "lat": 40.975024,
+     "karo_durum": 200,
+     "piksel": [
+      191,
+      217,
+      242
+     ],
+     "su_uzakligi": 0
+    }
+   ],
+   "bbox_lon_lat": [
+    29.0248,
+    40.938,
+    29.065,
+    40.98935
+   ]
+  }
+ ],
+ "notlar": {
+  "saglik_yeniden_olcum": {
+   "neden": "Gömülü devir-testi koşusunda /saglik durum=0 (ağ hatası) FAIL verdi; aynı gün ayrı koşuda 200 idi — GEÇİCİ olup olmadığı doğrulandı.",
+   "istek": 10,
+   "iki_yuz": 10,
+   "ort_ms": 219.1,
+   "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}",
+   "sonuc": "GEÇİCİ — /saglik sağlam",
+   "olcumler": [
+    {
+     "durum": 200,
+     "ms": 225,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 233,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 272,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 233,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 184,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 285,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 251,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 103,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 71,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    },
+    {
+     "durum": 200,
+     "ms": 334,
+     "govde": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}"
+    }
+   ]
+  },
+  "devir_testi_gomulu_fail": "İlk gömülü koşuda /saglik durum=0 (geçici ağ hatası) 1 FAIL vermişti; bölüm yeniden koşuldu ve 38 OK · 0 FAIL · 1 FARK · 5 bilgi alındı — DEVIR-GUNU-CHECKLIST A1 beklentisiyle birebir. /saglik ayrıca 10/10 200 ölçüldü.",
+  "su_tespiti_yontemi": "Karada testi /xyz/str (Esri World_Street_Map) rasterinin su dolgu rengiyle yapılır: (191,217,242), kanal başına tolerans 12, zoom 16. Kalibrasyon her koşuda tekrarlanır — bilinen 5 su + 5 kara noktası. ⚠️ Devir sonrası /xyz/str KAYNAĞI değişirse su rengi de değişir; o durumda karada_kalibrasyon.ayrim_net_mi=false olur ve 70/70 sonucu GÜVENİLMEZ sayılmalıdır — önce renk yeniden kalibre edilir.",
+  "sentetik_rota_uyarisi": "/opt/movelog/routes altındaki moto_2026-07-14_2108.tcx ve bike_2026-07-14_2108.tcx adım mesafesi sabit (cv=0.001) DÜZ ÇİZGİlerdir ve Marmara'nın üstünden geçer — gerçek GPS değil. Karada testinde KONTROL deneyi olarak kullanılır."
+ },
+ "devir_sonrasi_beklenen_degisiklikler": [
+  {
+   "madde": "T4 matching `code` alanı",
+   "bugun": "YOK (code=None)",
+   "devir_sonrasi": "\"Ok\" ZORUNLU",
+   "kaynak": "A5 kararı — katman ekler (KARAR.md #5); code'a bakan 4 tüketici var",
+   "yoksa": "4 tüketici ham ize düşer → yol-oturtma sessizce kaybolur"
+  },
+  {
+   "madde": "Önekli statik `Cache-Control`",
+   "bugun": "YOK",
+   "devir_sonrasi": "public, max-age=2592000",
+   "kaynak": "B11 bonus — src/statik-forward.js",
+   "yoksa": "origin'e her istek iner (yavaş ama çalışır) — geri dönüş şartı DEĞİL"
+  },
+  {
+   "madde": "Önekli statik ACAO",
+   "bugun": "YOK",
+   "devir_sonrasi": "*",
+   "kaynak": "katman ekler (devir-testi T3 YENİ dalı)",
+   "yoksa": "not al; /xyz ACAO'su ayrı ve zaten * "
+  },
+  {
+   "madde": "Önekli statik 2. istek önbelleği",
+   "bugun": "DYNAMIC (önbellek yok)",
+   "devir_sonrasi": "X-Onbellek: cache-api",
+   "kaynak": "Cache API (statik URL deterministik)",
+   "yoksa": "performans notu"
+  },
+  {
+   "madde": "Boş matching sonucunun önbelleklenmesi",
+   "bugun": "30 gün diske yazılıyor",
+   "devir_sonrasi": "YAZILMAZ (sonraki istek toparlar)",
+   "kaynak": "KARAR.md bilinçli fark",
+   "yoksa": "dışarıdan gözlemlenemez"
+  },
+  {
+   "madde": "/saglik gövdesi (ÖNEKSİZ)",
+   "bugun": "{\"ok\": true, \"kaynak\": \"esri\", \"katman\": \"premium\"}",
+   "devir_sonrasi": "zone sahibi değişiyor → içerik DEĞİŞEBİLİR; bizim worker {\"ok\":true,\"katman\":\"cf-harita-katman\"} döner (önekli/workers.dev)",
+   "kaynak": "route'lar dar: /saglik Hooder hattında kalır",
+   "yoksa": "-"
+  },
+  {
+   "madde": "/xyz · /mvt · /yukseklik (ÖNEKSİZ)",
+   "bugun": "bu sunucudaki harita-proxy.py (Esri + yerel arşiv)",
+   "devir_sonrasi": "SAHİBİ DEĞİŞİYOR (hooder-harita) — davranışın AYNI kalması beklenir",
+   "kaynak": "T1/T6/yukseklik ölçümleri buradan geliyor",
+   "yoksa": "T1>5/255 ⇒ DERHAL geri dönüş · T6'da 404 ⇒ render riski"
+  },
+  {
+   "madde": "Önekli /{ONEK}/xyz/sat",
+   "bugun": "200, CC 30 g (immutable YOK), ACAO YOK",
+   "devir_sonrasi": "route'umuz kapsamıyor (/{ONEK}/matching|styles|geocoding) → Hooder hattı",
+   "kaynak": "bu ölçümde keşfedildi",
+   "yoksa": "kullanan tüketici yok, bilgi amaçlı"
+  },
+  {
+   "madde": "cycling/walking profilleri",
+   "bugun": "404",
+   "devir_sonrasi": "404 (A6 devir günü DEĞİŞMEZ; KV profiller=[\"driving\"])",
+   "kaynak": "KARAR.md A6",
+   "yoksa": "200 dönerse KV tohumu yanlış"
+  },
+  {
+   "madde": "Geocoding (öneksiz/önekli)",
+   "bugun": "öneksiz 404 · önekli 200 + features[0].text",
+   "devir_sonrasi": "AYNI (A4: katmanda kalır, origin'e forward + 7 g Cache API)",
+   "kaynak": "KARAR.md A4",
+   "yoksa": "route claim edilmezse önekli geocoding 404 → videolarda şehir adı sessizce kaybolur"
+  },
+  {
+   "madde": "70/70 rota-karada (3 gerçek rota)",
+   "bugun": "3/3 rota 70/70 KARADA",
+   "devir_sonrasi": "AYNI kalmalı",
+   "kaynak": "08-28 750 m kayma regresyonu",
+   "yoksa": "düşerse T1 ile birlikte bak: ölçek hatası ⇒ geri dönüş"
+  }
+ ]
+}

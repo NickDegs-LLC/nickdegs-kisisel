@@ -1,0 +1,30 @@
+# v147 (2026-09-04, Barış "hepsini hallet") — BEYAZ VİDEO + ZIPLAMA
+#
+# 1) BEYAZ VİDEO (Semra 04.09 vakası): 3B videonun 9,267. saniyesinde TEK KAREDE hem harita hem
+#    ayrı 2B HUD tuvali saf beyaza döndü ve 28,3 sn (karelerin %73'ü) öyle kaldı. JS yaşamaya devam
+#    etti (HUD sayaçları ilerledi) → süreç ölmedi, YALNIZ GPU destekli bağlamlar öldü = Chrome GPU
+#    süreci çöküşü. Eski tek bekçi ağ hatası sayıyordu (_tileHata>400); bağlam kaybı SIFIR fetch
+#    hatası ürettiği için hiç tetiklenmedi → beyaz video "başarılı" sayılıp yayınlandı.
+#      · 3d/render3d.js  : webglcontextlost dinleyicileri + her 15 karede gl.isContextLost() → exit(7)
+#                          (rp_handler 7'yi zaten re-dispatch + refresh_worker olarak ele alıyor)
+#      · rp_handler      : SON SAVUNMA — yüklemeden önce 12 kare örnekle; %40+ beyazsa yükleme İPTAL,
+#                          iş taze worker'a devredilir. Test: bozuk video RED, 3 sağlam video GEÇ (4/4).
+#
+# 2) ZIPLAMA ("harita/çizgi/çubuk/nokta zıplıyor"): tüm kamera yumuşatma katsayıları 60fps'e göre
+#    elle ayarlanmış, hiçbirinde fps terimi yok → 30fps'te her süzgeç yarı hızda, kare başı yer
+#    değiştirme iki katı. Ayrıca konum takibinde `if(dpos>10m)` SERT KAPISI vardı: kamera hata
+#    eşiği aşana dek durup sonra boşalıyordu (tut-boşalt = testere dişi). ÖLÇÜLDÜ: 30fps'te saniyede
+#    3,01 sıçrama, taban hareketin 9,2 katı (60fps referans: 1,55/sn ve 4,6x).
+#      · a_eff = 1-(1-a60)^(60/fps) ile tüm EMA'lar kare hızına normalize edildi (doğrulandı:
+#        60 ve 30 fps'te zaman sabitleri birebir aynı, fark ~1e-16)
+#      · sert kapı → smoothstep rampa (DZ..2·DZ arasında kazanç 0'dan tam değere sürekli çıkar)
+#    NOT: aynı düzeltme telefon hattına da uygulandı (3d/telefon-html.js → cf api motor3d şablonu,
+#    ayrı dağıtıldı) — asıl kötü zıplama 30fps koşan telefon hattındaydı.
+#
+# ⚠️ TUZAK (v143'ten beri): imajda çalışan dosya `3d/render3d.v143.js`'tir — Dockerfile.v143 onu
+# `/app/3d/render3d.js` olarak kopyalar ve v144/v145/v146 bunu EZMEZ. 729 satırlık `3d/render3d.js`
+# çalışma kopyası imaja HİÇ girmez (telefon şablonunun kaynağıdır). MD5 ile doğrulandı.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v146
+FROM ${BASE}
+COPY rp_handler.v147.py /app/rp_handler.py
+COPY 3d/render3d.v143.js /app/3d/render3d.js

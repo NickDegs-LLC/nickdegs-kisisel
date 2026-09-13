@@ -1,0 +1,44 @@
+--- a/scripts/movelog-cloud.py
++++ b/scripts/movelog-cloud.py
+@@ -8,6 +8,10 @@
+ from datetime import datetime, timezone, timedelta
+ 
+ TR = timezone(timedelta(hours=3))
++# 2026-08-30 K0 §A3: harita tabani parametrik (sunucu emekli olunca ortak katmani gosterir;
++# muafiyet onegi TABANIN ICINDE tasinir). Varsayilan = bugunku davranis, sifir degisiklik.
++_HARITA = os.environ.get("MOVELOG_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ GENREQ = "/opt/matrix/routes/genreq";  os.makedirs(GENREQ, exist_ok=True)
+ PUSHREQ = "/opt/matrix/routes/pushreq"; os.makedirs(PUSHREQ, exist_ok=True)
+ PROJECT = "move-log-500805"
+@@ -184,7 +188,7 @@
+         if len(seg) < 2: break
+         coords = ";".join(f"{p['lon']:.6f},{p['lat']:.6f}" for p in seg)
+         rad = ";".join("32" for _ in seg)
+-        url = (f"http://127.0.0.1:8890/matching/v5/mapbox/{prof}/{coords}"
++        url = (f"{_HARITA}/matching/v5/mapbox/{prof}/{coords}"
+                f"?geometries=geojson&overview=full&tidy=true&radiuses={rad}&access_token={MB}")
+         got = False
+         for _try in range(3):
+--- a/scripts/activity-detect.py
++++ b/scripts/activity-detect.py
+@@ -11,6 +11,10 @@
+ from datetime import datetime, timedelta, timezone
+ 
+ sys.path.insert(0, "/opt/matrix/garmin-lib")
++# 2026-08-30 K0 §A3: harita tabani parametrik (sunucu emekli olunca ortak katmani gosterir;
++# muafiyet onegi TABANIN ICINDE tasinir). Varsayilan = bugunku davranis, sifir degisiklik.
++_HARITA = os.environ.get("MOVELOG_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ TR = timezone(timedelta(hours=3))
+ TRACCAR, TUSER, TPASS = _yerel.traccar_creds(); DEVICE=1   # merkezi depo: /etc/nickdegs/traccar.conf
+ HS="http://127.0.0.1:8008"; BOT="SIR_KALDIRILDI_bkz_secrets_MATRIX_BOT_TOKEN"
+@@ -27,7 +31,7 @@
+     # rota başlangıç GPS'inden ÜLKE (reklam analitiği; kimlik/PII değil, sadece ülke)
+     try:
+         _mb=[l.split('=',1)[1].strip() for l in open('/opt/matrix/secrets/mapbox.conf') if l.startswith('MAPBOX_PUBLIC_TOKEN=')][0]
+-        _u=f"http://127.0.0.1:8890/geocoding/v5/mapbox.places/{lon},{lat}.json?access_token={_mb}&types=country&limit=1"
++        _u=f"{_HARITA}/geocoding/v5/mapbox.places/{lon},{lat}.json?access_token={_mb}&types=country&limit=1"
+         _d=json.load(urllib.request.urlopen(_u,timeout=12)); _f=_d.get("features",[])
+         return _f[0]["text"] if _f else "?"
+     except Exception:

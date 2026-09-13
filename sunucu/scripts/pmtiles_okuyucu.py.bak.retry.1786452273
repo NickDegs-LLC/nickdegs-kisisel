@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""PMTiles v3 + MVT okuyucu — kendi Protomaps arşivimizden SOKAK KAROSU üretir.
+
+NEDEN: taktik motor kentsel tespiti için "streets" raster karo istiyor
+(route_gen._road_density: gri tonlama -> FIND_EDGES -> ortalama). Mapbox öldü.
+Kendi planet pmtiles'ımız (137 GB) yeni sunucuda duruyor; buraya KOPYALAMIYORUZ —
+salt-okuma sshfs ile ağ üzerinden aralık okuyoruz (ortanca ~93 ms, sonra önbellek).
+
+⚠️ MOTOR MÜHÜRLÜ: _road_density'nin kalibrasyon sabitleri ((d-0.055)/0.033) DEĞİŞMEZ.
+Bu yüzden burada üretilen görüntü, Mapbox streets'in kenar-yoğunluğu ARALIĞINI taklit
+etmek zorunda (şehir 0.100-0.113 · kasaba ~0.064 · kır/dağ 0.025-0.052).
+Ayar düğmeleri: _CIZGI (yol kalınlıkları) ve _BINA_DOLGU. Ölçmeden değiştirme.
+
+Kütüphane gerekmez: saf Python varint/protobuf çözümü (Hooder'ın harita_vektor.py
+deseninden esinlenildi, kod kopyalanmadı).
+"""
+import gzip
+import io
+import math
+import os
+import struct
+import threading
+
+from PIL import Image, ImageDraw
+
+PMTILES = os.environ.get("PMTILES_YOL", "/mnt/harita-uzak/20260809.pmtiles")
+
+_kilit = threading.Lock()
+_bas = {"hdr": None, "kok": None, "yol": None}   # başlık + kök dizin önbelleği
+_yaprak = {}                                      # leaf dir önbelleği (offset -> entries)
+_YAPRAK_MAX = 96
+
+
+# ─────────────────────────── varint / protobuf ───────────────────────────
+def _varint(b, i):
+    s = r = 0
+    while True:
+        x = b[i]; i += 1
+        r |= (x & 0x7F) << s
+        if not (x & 0x80):
+            return r, i
+        s += 7
+
+
+def _zigzag(n):
+    return (n >> 1) ^ -(n & 1)
+
+
+# ─────────────────────────── PMTiles v3 ───────────────────────────
+def _dizin_coz(veri):
+    """Dizin bloğu -> [(tile_id, offset, uzunluk, run)] listesi."""
+    i = 0
+    n, i = _varint(veri, i)
+    tid = [0] * n; run = [0] * n; uz = [0] * n; ofs = [0] * n
+    son = 0
+    for k in range(n):
+        d, i = _varint(veri, i); son += d; tid[k] = son
+    for k in range(n):
+        run[k], i = _varint(veri, i)
+    for k in range(n):
+        uz[k], i = _varint(veri, i)
+    for k in range(n):
+        v, i = _varint(veri, i)
+        ofs[k] = (ofs[k - 1] + uz[k - 1]) if (v == 0 and k > 0) else (v - 1)
+    return list(zip(tid, ofs, uz, run))
+
+
+def _oku(f, ofs, uzunluk):
+    f.seek(ofs); return f.read(uzunluk)
+
+
+def _basla():
+    """Başlık + kök dizini bir kez oku (sonra bellekte)."""
+    with _kilit:
+        if _bas["hdr"] is not None and _bas["yol"] == PMTILES:
+            return _bas
+        with open(PMTILES, "rb") as f:
+            h = f.read(127)
+            if h[:7] != b"PMTiles":
+                raise RuntimeError("pmtiles imzası yok")
+            kok_o, kok_u = struct.unpack("<QQ", h[8:24])
+            yap_o, _yap_u = struct.unpack("<QQ", h[40:56])
+            veri_o, _ = struct.unpack("<QQ", h[56:72])
+            ic, tc = h[97], h[98]
+            minz, maxz = h[100], h[101]
+            ham = _oku(f, kok_o, kok_u)
+        if ic == 2:
+            ham = gzip.decompress(ham)
+        _bas.update({"hdr": {"yaprak_o": yap_o, "veri_o": veri_o, "tc": tc,
+                             "minz": minz, "maxz": maxz, "ic": ic},
+                     "kok": _dizin_coz(ham), "yol": PMTILES})
+        return _bas
+
+
+def _tile_id(z, x, y):
+    """ZXY -> Hilbert tile id (PMTiles v3)."""
+    if z == 0:
+        return 0
+    tid = ((1 << (2 * z)) - 1) // 3     # önceki seviyelerin toplamı
+    rx = ry = 0; t = 0; n = 1 << z
+    tx, ty = x, y
+    s = n >> 1
+    while s > 0:
+        rx = 1 if (tx & s) > 0 else 0
+        ry = 1 if (ty & s) > 0 else 0
+        t += s * s * ((3 * rx) ^ ry)
+        # döndür
+        if ry == 0:
+            if rx == 1:
+                tx = s - 1 - tx; ty = s - 1 - ty
+            tx, ty = ty, tx
+        s >>= 1
+    return tid + t
+
+
+def _bul(girdiler, tid):
+    """Sıralı dizide tile_id ara (run-length destekli)."""
+    lo, hi = 0, len(girdiler) - 1
+    while lo <= hi:
+        m = (lo + hi) // 2
+        t, o, u, r = girdiler[m]
+        if tid < t:
+            hi = m - 1
+        elif r == 0:                     # yaprak dizine işaret
+            if tid >= t:
+                if m + 1 < len(girdiler) and tid >= girdiler[m + 1][0]:
+                    lo = m + 1; continue
+                return (o, u, True)
+            hi = m - 1
+        elif tid < t + r:
+            return (o, u, False)
+        else:
+            lo = m + 1
+    return None
+
+
+def karo_oku(z, x, y):
+    """Ham MVT (gzip açılmış) döndür; yoksa None."""
+    b = _basla(); hdr = b["hdr"]
+    tid = _tile_id(z, x, y)
+    girdiler = b["kok"]
+    with open(PMTILES, "rb") as f:
+        for _ in range(4):               # en fazla 4 yaprak seviyesi
+            s = _bul(girdiler, tid)
+            if s is None:
+                return None
+            ofs, uz, yaprak_mi = s
+            if not yaprak_mi:
+                ham = _oku(f, hdr["veri_o"] + ofs, uz)
+                if hdr["tc"] == 2:
+                    ham = gzip.decompress(ham)
+                return ham
+            anahtar = (ofs, uz)
+            g = _yaprak.get(anahtar)
+            if g is None:
+                d = _oku(f, hdr["yaprak_o"] + ofs, uz)
+                if hdr["ic"] == 2:
+                    d = gzip.decompress(d)
+                g = _dizin_coz(d)
+                if len(_yaprak) < _YAPRAK_MAX:
+                    _yaprak[anahtar] = g
+            girdiler = g
+    return None
+
+
+# ─────────────────────────── MVT çözümü ───────────────────────────
+def mvt_katmanlar(ham, istenen=("roads", "buildings")):
+    """MVT -> {katman: [(tip, [[(x,y),...] parça]) ...]} (karo yerel koordinat, extent normalize)."""
+    sonuc = {}
+    i = 0; n = len(ham)
+    while i < n:
+        anahtar, i = _varint(ham, i)
+        alan, tel = anahtar >> 3, anahtar & 7
+        if alan == 3 and tel == 2:                      # layer
+            uz, i = _varint(ham, i)
+            kat = ham[i:i + uz]; i += uz
+            ad, ozellikler, extent = None, [], 4096
+            j = 0; m = len(kat)
+            while j < m:
+                k2, j = _varint(kat, j)
+                a2, t2 = k2 >> 3, k2 & 7
+                if a2 == 1 and t2 == 2:
+                    u2, j = _varint(kat, j); ad = kat[j:j + u2].decode("utf-8", "replace"); j += u2
+                elif a2 == 2 and t2 == 2:
+                    u2, j = _varint(kat, j); ozellikler.append(kat[j:j + u2]); j += u2
+                elif a2 == 5 and t2 == 0:
+                    extent, j = _varint(kat, j)
+                elif t2 == 2:
+                    u2, j = _varint(kat, j); j += u2
+                elif t2 == 0:
+                    _v, j = _varint(kat, j)
+                else:
+                    j += {1: 8, 5: 4}.get(t2, 0)
+            if ad in istenen:
+                sonuc[ad] = [_ozellik_coz(o, extent) for o in ozellikler]
+        elif tel == 2:
+            uz, i = _varint(ham, i); i += uz
+        elif tel == 0:
+            _v, i = _varint(ham, i)
+        else:
+            i += {1: 8, 5: 4}.get(tel, 0)
+    return sonuc
+
+
+def _ozellik_coz(ham, extent):
+    """Feature -> (geom_tipi, [parça listesi]) — koordinatlar 0..1 normalize."""
+    i = 0; n = len(ham); gtip = 0; geo = None
+    while i < n:
+        k, i = _varint(ham, i)
+        a, t = k >> 3, k & 7
+        if a == 3 and t == 0:
+            gtip, i = _varint(ham, i)
+        elif a == 4 and t == 2:
+            u, i = _varint(ham, i); geo = ham[i:i + u]; i += u
+        elif t == 2:
+            u, i = _varint(ham, i); i += u
+        elif t == 0:
+            _v, i = _varint(ham, i)
+        else:
+            i += {1: 8, 5: 4}.get(t, 0)
+    parcalar = []
+    if not geo:
+        return (gtip, parcalar)
+    i = 0; x = y = 0; suan = []
+    while i < len(geo):
+        cmd, i = _varint(geo, i)
+        kid, adet = cmd & 7, cmd >> 3
+        if kid == 1:                                    # MoveTo
+            for _ in range(adet):
+                dx, i = _varint(geo, i); dy, i = _varint(geo, i)
+                x += _zigzag(dx); y += _zigzag(dy)
+                if suan:
+                    parcalar.append(suan)
+                suan = [(x / extent, y / extent)]
+        elif kid == 2:                                  # LineTo
+            for _ in range(adet):
+                dx, i = _varint(geo, i); dy, i = _varint(geo, i)
+                x += _zigzag(dx); y += _zigzag(dy)
+                suan.append((x / extent, y / extent))
+        elif kid == 7:                                  # ClosePath
+            if suan:
+                suan.append(suan[0])
+    if suan:
+        parcalar.append(suan)
+    return (gtip, parcalar)
+
+
+# ─────────────────────────── raster üretimi ───────────────────────────
+# Mapbox streets kenar-yoğunluğu ARALIĞINI taklit eden çizim ayarları.
+# (kalibrasyon: bilinen 16 nokta ile ölçülür — ölçmeden dokunma)
+# ⚠️ Kalibrasyon PROXY üzerinden yapılır (motor 256px karo + 2x mozaik görüyor).
+# Ortam değişkeniyle ezilebilir: PM_CIZGI / PM_BINA / PM_YOL_TON
+_CIZGI = int(os.environ.get("PM_CIZGI", "1"))        # yol çizgi kalınlığı (px)
+_BINA_DOLGU = int(os.environ.get("PM_BINA", "246"))  # bina gri tonu (255=beyaz zemin, yüksek=silik)
+_YOL_TON = int(os.environ.get("PM_YOL_TON", "180"))  # yol gri tonu (yüksek=silik=düşük yoğunluk)
+
+
+_COZUM = {}          # (z,x,y) -> çözülmüş katmanlar (aynı ebeveyn 16 kez çözülmesin)
+_COZUM_MAX = 64
+
+
+def _katman_getir(z, x, y):
+    k = (z, x, y)
+    v = _COZUM.get(k)
+    if v is not None:
+        return v
+    ham = karo_oku(z, x, y)
+    v = mvt_katmanlar(ham) if ham else {}
+    if len(_COZUM) >= _COZUM_MAX:
+        _COZUM.clear()
+    _COZUM[k] = v
+    return v
+
+
+def sokak_karosu(z, x, y, boyut=512):
+    """Tek z/x/y için sokak rasteri (L modu). Karo yoksa boş beyaz döner.
+    ⚠️ Protomaps arşivi z0-15; motor z16 (ince mod) istiyor -> AŞIRI YAKINLAŞTIRMA:
+    z15 ebeveyn karosu okunur, ilgili çeyrek büyütülerek çizilir (standart over-zoom)."""
+    im = Image.new("L", (boyut, boyut), 255)
+    maxz = _basla()["hdr"]["maxz"]
+    olcek, sx, sy = 1, 0, 0
+    if z > maxz:
+        dz = z - maxz
+        olcek = 2 ** dz
+        sx, sy = x - ((x >> dz) << dz), y - ((y >> dz) << dz)
+        x, y, z = x >> dz, y >> dz, maxz
+    kat = _katman_getir(z, x, y)
+    if not kat:
+        return im
+    d = ImageDraw.Draw(im)
+
+    def _pt(u, v):
+        return ((u * olcek - sx) * boyut, (v * olcek - sy) * boyut)
+
+    for gtip, parcalar in kat.get("buildings", []):
+        for p in parcalar:
+            if len(p) >= 3:
+                d.polygon([_pt(u, v) for u, v in p], fill=_BINA_DOLGU, outline=_YOL_TON)
+    kal = max(1, int(round(_CIZGI * (olcek ** 0.5))))   # over-zoom'da çizgi orantılı kalınlaşır
+    for gtip, parcalar in kat.get("roads", []):
+        for p in parcalar:
+            if len(p) >= 2:
+                d.line([_pt(u, v) for u, v in p], fill=_YOL_TON, width=kal)
+    return im
+
+
+def _z_xy(lat, lon, z):
+    n = 2 ** z
+    xt = (lon + 180.0) / 360.0 * n
+    yt = (1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n
+    return xt, yt
+
+
+def statik_sokak(lat, lon, z, genislik=512, yukseklik=512):
+    """Mapbox 'static' eşdeğeri: merkez etrafında karoları birleştirip kırp."""
+    xt, yt = _z_xy(lat, lon, z)
+    KB = 512
+    # kapsayacak karo aralığı
+    x0 = int(math.floor(xt - genislik / (2 * KB))); x1 = int(math.floor(xt + genislik / (2 * KB)))
+    y0 = int(math.floor(yt - yukseklik / (2 * KB))); y1 = int(math.floor(yt + yukseklik / (2 * KB)))
+    mozaik = Image.new("L", ((x1 - x0 + 1) * KB, (y1 - y0 + 1) * KB), 255)
+    for gx in range(x0, x1 + 1):
+        for gy in range(y0, y1 + 1):
+            mozaik.paste(sokak_karosu(z, gx % (2 ** z), gy, KB), ((gx - x0) * KB, (gy - y0) * KB))
+    px = (xt - x0) * KB; py = (yt - y0) * KB
+    sol = int(px - genislik / 2); ust = int(py - yukseklik / 2)
+    return mozaik.crop((sol, ust, sol + genislik, ust + yukseklik))
+
+
+def yogunluk(lat, lon, z=16):
+    """route_gen._road_density ile AYNI ölçüm — kalibrasyon karşılaştırması için."""
+    from PIL import ImageFilter, ImageOps
+    im = statik_sokak(lat, lon, z, 1024, 1024).resize((128, 128))
+    return (sum(ImageOps.grayscale(im).filter(ImageFilter.FIND_EDGES).getdata()) / (128 * 128)) / 255.0
+
+
+if __name__ == "__main__":
+    import sys, time
+    NOKTA = [("İstanbul", 41.0082, 28.9784), ("Ankara", 39.9334, 32.8597),
+             ("Samsun", 41.2867, 36.33), ("Elazığ", 38.6810, 39.2264),
+             ("Tunceli", 39.1079, 39.5401), ("Pertek", 38.8710, 39.3200),
+             ("Dağ/kır", 39.0500, 39.1000), ("Otoyol", 40.0500, 32.0000)]
+    for ad, la, lo in NOKTA:
+        t = time.time(); d = yogunluk(la, lo)
+        print(f"{ad:10s} yoğunluk={d:.4f}  ({time.time()-t:.1f} sn)")

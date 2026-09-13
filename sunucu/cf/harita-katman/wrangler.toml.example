@@ -1,0 +1,75 @@
+# cf-harita-katman — CANLI yapılandırma ŞABLONU (KARAR.md #2). Elle deploy ETME; deploy.sh doldurur:
+#   {ONEK}  ← /opt/matrix/secrets/harita-uc.conf HARITA_UC_ONEK (gizli önek repoya YAZILMAZ)
+#   {KV_ID} ← HARITA_AYAR namespace id'si (deploy.sh bulur/oluşturur)
+name = "harita-katman"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+account_id = "45241304800d3e122aced1f0ae599943"
+# 31.08: AÇILDI. Gerekçe (iki tane, ikisi de ölçüm kaynaklı):
+#  1) /xyz /mvt /yukseklik uçlarının ROUTE'u YOK (aşağıdaki uyarı) — tek ölçüm/teşhis adresi
+#     workers.dev. `?tam=1` sağlık ucu da oradan okunur.
+#  2) harita.nickdegs.com route'ları bir gün elden çıkarsa (Hooder zone kesimi) uçlar
+#     workers.dev üzerinden ERİŞİLEBİLİR kalır — tüketiciye tek env değişikliği yeter.
+# Güvenlik: her motor ucu gizli önek arkasında (öneksiz → 404, T11). Öneksiz açık olan TEK şey
+# `/saglik` ve o zaten bilinçli anonim (B12).
+workers_dev = true
+
+# Route'lar dar tutulur: yalnız matching + styles + geocoding bu worker'a düşer; /xyz /mvt
+# /yukseklik /saglik harita.nickdegs.com'un o günkü sahibinde (hooder-harita) kalır.
+#
+# ⚠️⚠️ ÇIPLAK /xyz /mvt /yukseklik ROUTE'U HÂLÂ YASAK — ÖLÇÜM (31.08):
+# harita.nickdegs.com/xyz/'e gelen 4.510 isteğin ~4.400'ü HOODER'IN OYUN İSTEMCİLERİ
+# (`Hooder/2.4 MapLibre… iOS`, `app.realvirtuality.landlord… Android`). Çıplak /xyz/ route'unu
+# claim etmek Hooder'ın oyun haritasını öldürür → YASAK (oturum sınırları).
+# ✅ ÖNEKLİ yol (`/{ONEK}/xyz|mvt|yukseklik`) 31.08'de EKLENDİ (aşağıda). Hooder ETKİLENMEDİ —
+# kanıt: `OPTIONS` ön-uçuşu çıplak yolda 501 (nginx→proxy), önekli yolda 204 (worker).
+# Beraberinde tüketici hizalandı: render3d.js `HARITA_TABAN` varsayılanı önekli adres oldu
+# (telefon-html.js render3d.js'i kaynak olarak okuduğu için o da otomatik hizalandı).
+# ⚠️ Deploy ÖNCESİ dev10 ile rota koordinasyonu ŞART (hooder-kapi tablosuyla çakışmasın).
+# K0 §A3 MUAFİYET: MLOG_ONEK ayrı verilirse aynı uçlar o önekten de karşılanır
+# (aşağıdaki üç satırın {MLOG_ONEK}'li ikizleri deploy.sh tarafından eklenir).
+routes = [
+  { pattern = "harita.nickdegs.com/{ONEK}/matching/*", zone_name = "nickdegs.com" },
+  { pattern = "harita.nickdegs.com/{ONEK}/styles/*",   zone_name = "nickdegs.com" },
+  # 31.08 EKLENDİ — sunucusuzlaştırma. Bunlar olmadan sunucu kapanınca önekli /xyz /mvt
+  # /yukseklik nginx'e düşüp 502 verir → 3B render "KARO AĞI ÖLÜ" ile exit(7).
+  { pattern = "harita.nickdegs.com/{ONEK}/xyz/*",       zone_name = "nickdegs.com" },
+  { pattern = "harita.nickdegs.com/{ONEK}/mvt/*",       zone_name = "nickdegs.com" },
+  { pattern = "harita.nickdegs.com/{ONEK}/yukseklik*",  zone_name = "nickdegs.com" },
+  # A4 KARARI (KARAR.md §A4, 30.08): geocoding katmanda kalır → route AÇIK + KV
+  # geocoding_forward=1 (deploy.sh tohumlar). Route claim edilmezse devir sonrası bu yol
+  # zone'un o günkü sahibine düşer ve 404 olur → videolarda şehir/mahalle adı SESSİZCE kaybolur.
+  { pattern = "harita.nickdegs.com/{ONEK}/geocoding/*", zone_name = "nickdegs.com" },
+]
+
+[vars]
+ONEK = "{ONEK}"
+# K0 §A3: muafiyet öneki. BOŞ bırakılırsa ONEK'in kendisi muafiyet öneki olur (önerilen —
+# tüketicilerde sıfır kod değişikliği). Hooder ayrı bir önek isterse deploy.sh buraya basar.
+MLOG_ONEK = "{MLOG_ONEK}"
+# Host başlığı nginx server_name'e (harita.nickdegs.com) uysun diye taban AYNI ad kalır;
+# bağlantı ORIGIN_COZUM'daki GRİ-BULUT A kaydına gider (cf.resolveOverride) → döngü yok.
+# ORIGIN_COZUM kaydı deploy günü açılır: harita-origin.nickdegs.com A <sunucu-IP> (proxy KAPALI).
+ORIGIN_TABAN = "https://harita.nickdegs.com"
+ORIGIN_COZUM = "harita-origin.nickdegs.com"
+OSRM_BEKLEME_MS = "120"
+# 02.09 — ORTAK arşivdeki PMTiles anahtarı (Hooder arşivi yenileyince tek satır değişir).
+PMTILES_ANAHTAR = "pmtiles/20260809.pmtiles"
+# MOVELOG_KEY = wrangler secret (vars DEĞİL) — deploy.sh `wrangler secret put` ile basar.
+
+[[kv_namespaces]]
+binding = "HARITA_AYAR"
+id = "{KV_ID}"
+
+# Move Log'un KENDİ kovası: match önbelleği + yükseklik + `ms-bina/15/…` (Microsoft binaları,
+# scripts/ms-bina-r2-export.py) + `ghs/…` (GHS bina yüksekliği blokları, scripts/ghs-r2-export.py).
+[[r2_buckets]]
+binding = "MATCH_CACHE"
+bucket_name = "harita-match-cache"
+
+# 02.09 — ORTAK HARİTA KATMANI (Barış 30.08: "Sadece Hooder yazabilecek"). Bu bağ **SALT-OKUR**
+# kullanılır: src/pmtiles.js yalnız `get(..., {range})` çağırır; put/delete YASAK. Hooder'ın
+# kovasına dokunulmaz, yalnız Protomaps arşivi (z0-15) aralık okumayla tüketilir.
+[[r2_buckets]]
+binding = "PMTILES"
+bucket_name = "hooder-harita"

@@ -1,0 +1,22 @@
+{
+  "name": "movelog-cf",
+  "private": true,
+  "workspaces": [
+    "api",
+    "gps",
+    "dispatch",
+    "cron"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dry": "for w in api gps dispatch cron; do (cd $w && npx wrangler deploy --dry-run --outdir /tmp/wr-$w) || exit 1; done"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "wrangler": "latest"
+  },
+  "dependencies": {
+    "hono": "latest"
+  }
+}

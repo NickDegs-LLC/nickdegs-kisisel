@@ -1,0 +1,9 @@
+# v139 — KARO ÖLÇEĞİ 2× DÜZELTMESİ + KAMERA KADEMESİ KİLİDİ (2026-08-28, Barış)
+# 1) route-video.py'de dünya genişliği 1024*2^z varsayılıyordu; harita ucumuzun @2x
+#    çıktısında doğrusu 512*2^z. Sonuç: rota haritanın üstünde 2 kat büyük çizilip
+#    kayıyordu (ölçüldü: ~750 m) -> sürüş denizde görünüyordu. Yatay ve dikeyde AYNI hata.
+# 2) Kamera kademeleri (yakın/orta/uzak) kilitlendi: 0.85*0.7 (=0.6, ayırt edilemez) yerine
+#    ±1.0 tam kat -> her kademe bir öncekinin tam 2 katı.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v138
+FROM ${BASE}
+COPY scripts/route-video.py /app/scripts/route-video.py

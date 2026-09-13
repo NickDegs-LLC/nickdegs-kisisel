@@ -1,0 +1,856 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/live/start",
+    "fn": "live_start",
+    "line": 3141,
+    "auth": "auth_user (Bearer JWT HS256; alias çözümü profiles[sub].alias → kanonik hesap; tv token-versiyon iptali — main.py:183-198)",
+    "params": [],
+    "body": [
+      {
+        "ad": "user",
+        "tip": "string (hedef username)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — boşsa arkadaş kontrolünden 403 düşer"
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)",
+      "fresh": "bool — hedefin son Traccar fix'i <120 sn mi (main.py:3158-3159)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / token geçersiz-süresi dolmuş"
+      },
+      {
+        "code": 402,
+        "detail": "Ultra gerekli"
+      },
+      {
+        "code": 403,
+        "detail": "sadece arkadaşını izleyebilirsin"
+      },
+      {
+        "code": 422,
+        "detail": "FastAPI Body(...) doğrulaması (JSON gövde yoksa)"
+      }
+    ],
+    "reads": [
+      "profiles[user].ultra (_is_ultra, main.py:3124-3126)",
+      "friends[user] (liste, hedef üyeliği)",
+      "profiles[target].trackerId"
+    ],
+    "writes": [
+      "social.json'a YAZMAZ",
+      "dosya: DATA_DIR/pushq/live_<target>_<ts>.json = {user:<target>, silent:'live'} — 'user' anahtarı HEDEFİ taşır, izleyeni değil (fresh değilse; main.py:3163)"
+    ],
+    "external": [
+      "Traccar GET /api/devices?uniqueId= (_traccar_id_for, main.py:2622)",
+      "Traccar GET /api/positions?deviceId= (main.py:3154-3156)",
+      "dolaylı: pushq → broadcast worker → APNs/FCM sessiz push"
+    ],
+    "server_deps": [
+      "TRACCAR_URL=http://127.0.0.1:8084 (+TRACCAR_USER/PASS)",
+      "DATA_DIR/pushq dizini (dosya-kuyruğu)"
+    ],
+    "cf_mapping": "Traccar sorguları → D1 positions (movelog-gps ingest'inden son fix ts'i, tazelik <120sn SQL ile); pushq dosyası → Queue mesajı veya Worker'dan doğrudan APNs/FCM (WebCrypto) sessiz push",
+    "notes": "TUZAK: _is_ultra SADECE profiles[u].ultra bakar, admin bayrağını SAYMAZ (_profile_of ise admin'i ultra sayar) — sadece admin=true olan hesap burada 402 alır. trackerId yoksa fresh=False kalır ve yine sessiz push kuyruklanır. TRACCAR_USER boşsa _traccar_id_for None döner → fresh=False.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/live/{username}",
+    "fn": "live_get",
+    "line": 3168,
+    "auth": "auth_user",
+    "params": [
+      {
+        "ad": "username",
+        "tip": "string (path — izlenen arkadaş)",
+        "zorunlu": true,
+        "varsayilan": null
+      }
+    ],
+    "body": [],
+    "response": {
+      "lat": "float",
+      "lon": "float",
+      "spd": "float km/h (Traccar knot × 1.852; beacon-fallback'ta 0.0)",
+      "hr": "int|null (25<hr<250 filtresi; hr_live <12 sn tazeyse Traccar nabzının ÖNÜNE geçer, main.py:3260)",
+      "alt": "int (yuvarlanmış m; beacon-fallback'ta 0)",
+      "age": "int sn (fix/beacon yaşı)",
+      "today_km": "float (detected_rides bugünkü toplam, TR günü)",
+      "batt": "int|null (0-100 dışı null; beacon tazeyse beacon'dan)",
+      "charging": "bool",
+      "course": "int (beacon-fallback'ta 0)",
+      "acc": "int (accuracy, yuvarlanmış)",
+      "trail": "[[lat,lon],...] son 15 dk, 5 hane yuvarlı, max 120 nokta (beacon-fallback'ta [])",
+      "ride_min": "int (bu sürüşün dakikası; bugünkü noktalarda 240 sn'den büyük boşlukta kesilir, >5 km/h başlangıcı)",
+      "avg_kmh": "float (bugün, >5 km/h hareketli noktaların ortalaması)",
+      "max_kmh": "float (bugünün maksimumu)",
+      "temp": "float|null (open-meteo)",
+      "wcode": "int|null (open-meteo weather_code)",
+      "name": "string (name || handle || username)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 402,
+        "detail": "Ultra gerekli"
+      },
+      {
+        "code": 403,
+        "detail": "sadece arkadaşını izleyebilirsin"
+      },
+      {
+        "code": 404,
+        "detail": "cihaz yok (profiles[username].trackerId yok VEYA Traccar'da cihaz bulunamadı)"
+      },
+      {
+        "code": 404,
+        "detail": "konum yok (Traccar pozisyonu yok VE last_beacon'da lat yok)"
+      }
+    ],
+    "reads": [
+      "profiles[user].ultra",
+      "friends[user]",
+      "profiles[username]: trackerId, last_beacon{ts,lat,lon,batt,charging}, hr_live{hr,ts}, name, handle",
+      "detected_rides (tümü taranır: user==username && ts>=bugün00:00 TR → km toplamı)"
+    ],
+    "writes": [
+      "yok"
+    ],
+    "external": [
+      "Traccar GET /api/devices?uniqueId=",
+      "Traccar GET /api/positions?deviceId= (anlık; main.py:3182-3184)",
+      "Traccar GET /api/positions from/to (son 15 dk iz + bugünün tamamı; main.py:3221-3225)",
+      "GET https://api.open-meteo.com/v1/forecast (current temp+weather_code; bellek-içi _WCACHE 15 dk TTL, 0.1° hücre; main.py:3105-3121)"
+    ],
+    "server_deps": [
+      "TRACCAR_URL 127.0.0.1:8084",
+      "TR=UTC+3 sabit zaman dilimi (gün başı hesabı)",
+      "_WCACHE süreç-içi dict (Worker'da izole edge instance'lar arasında paylaşılmaz)"
+    ],
+    "cf_mapping": "Traccar → D1 positions (3 sorgu: son fix, son 15 dk, bugün); detected_rides toplamı → D1 rides SUM(km); open-meteo → fetch + KV cache (anahtar lat/lon 0.1°, TTL 900 sn); beacon/hr_live → KV veya D1 users",
+    "notes": "BEACON ÜSTÜNLÜĞÜ: last_beacon.ts son Traccar fix'inden yeniyse lat/lon/batt/age beacon'dan gelir, spd=0/course=0 (main.py:3253-3259). Traccar pozisyonu hiç yoksa ama beacon varsa aynı anahtar setiyle 'son bilinen' yanıtı döner (trail=[], çoğu alan 0/None). main.py:3202-3203'te ölü kod var ('if False else' — sadece sağ dal çalışır). App bunu 4 sn'de bir çeker — CF'de sorgu maliyeti buna göre.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/live/beacon",
+    "fn": "live_beacon",
+    "line": 3276,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "lat",
+        "tip": "float",
+        "zorunlu": false,
+        "varsayilan": "yok — parse edilemezse alan yazılmaz (hata dönmez)"
+      },
+      {
+        "ad": "lon",
+        "tip": "float",
+        "zorunlu": false,
+        "varsayilan": "yok — aynı"
+      },
+      {
+        "ad": "batt",
+        "tip": "int 0-100",
+        "zorunlu": false,
+        "varsayilan": "yok — aralık dışı/parse hatası sessizce atılır"
+      },
+      {
+        "ad": "charging",
+        "tip": "bool",
+        "zorunlu": false,
+        "varsayilan": false
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "profiles[user] (setdefault ile oluşturulur)"
+    ],
+    "writes": [
+      "profiles[user].last_beacon = {ts:int, lat?, lon?, batt?, charging:bool} (her çağrıda TAMAMEN değiştirilir)"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "_save = tüm social.json'u flock+mkstemp+fsync ile atomik yeniden yazma (main.py:1362-1386)"
+    ],
+    "cf_mapping": "Tek UPDATE: D1 users.last_beacon (JSON kolonu) veya KV (sık yazılan geçici veri — app her açılışta/periyodik çağırır; KV önerilir, live_get okurken birleştirir)",
+    "notes": "Ultra/arkadaş şartı YOK — herkes kendi beacon'ını yazar. lat gelmeden batt gelebilir; live_get beacon'ı sadece lat varsa fallback olarak kullanır (main.py:3189).",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/live/hr-request",
+    "fn": "live_hr_request",
+    "line": 3301,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "user",
+        "tip": "string (nabzı istenen arkadaş)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 403"
+      }
+    ],
+    "response": {
+      "ok": "bool — true; hedef hr_share kapattıysa false (200 döner, hata DEĞİL)",
+      "reason": "string 'off' (sadece ok=false halinde)",
+      "hr": "int|null (hedefin hr_live'ı <12 sn tazeyse anında döner)",
+      "age": "int|null sn (taze hr varsa değer, değilse null; ok=false 'off' yanıtında bu ANAHTAR HİÇ YOK — yanıt sadece {ok,reason,hr}, main.py:3310)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 403,
+        "detail": "sadece arkadaşını izleyebilirsin"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "friends[user]",
+      "profiles[target]: hr_share (varsayılan true), hr_live{hr,ts}, hr_woke"
+    ],
+    "writes": [
+      "profiles[target].hr_want_until = now+25 (izleme penceresi)",
+      "profiles[target].hr_woke = now (push kısma damgası; 15 sn'de en çok 1)",
+      "dosya: DATA_DIR/pushq/hr_<target>_<now>.json = {user:<target>, silent:'hrpeek'} — 'user' anahtarı HEDEFİ taşır (kısma penceresi açıksa; main.py:3317)"
+    ],
+    "external": [
+      "dolaylı: pushq → APNs/FCM sessiz push (saat kısa HR ölçümü başlatır)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq dosya-kuyruğu"
+    ],
+    "cf_mapping": "hr_want_until/hr_woke/hr_live → KV (25 sn ömürlü sıcak durum; D1'e yazmak israf); sessiz push → Worker'dan doğrudan APNs/FCM veya Queue",
+    "notes": "Ultra şartı YOK (live_start'ın aksine) — arkadaşlık yeter. hr_share=false yolunda _save ÇAĞRILMAZ (setdefault target profili oluşturmuş olsa da diske inmez). İzleyen bunu keepalive olarak ~saniyeler arayla çağırır; her çağrı bugün tam dosya _save'i tetikliyor — CF'de KV yazımına dönmesi büyük kazanç.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/live/hr-report",
+    "fn": "live_hr_report",
+    "line": 3326,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "hr",
+        "tip": "int (25<hr<250 dışı sessizce yok sayılır)",
+        "zorunlu": false,
+        "varsayilan": "parse edilemezse 0 → kaydedilmez ama yine 200 döner"
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)",
+      "want": "bool — now < hr_want_until; false ise saat/telefon ölçümü DURDURMALI (pil sözleşmesi)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "profiles[user].hr_want_until"
+    ],
+    "writes": [
+      "profiles[user].hr_live = {hr:int, ts:now} (SADECE 25<hr<250 ise; _save de sadece o zaman)"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok (yalnız social.json)"
+    ],
+    "cf_mapping": "KV: hr_live:<user> (TTL ~30 sn) yaz + hr_want_until:<user> oku; D1 gerekmez",
+    "notes": "Ölçülen tarafın saati/telefonu çağırır. Geçersiz hr'da bile want yanıtı verilir — döngü kırılmaz. hr_live'ı live_get ve hr-request 12 sn tazelik penceresiyle okur.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/live/hr-share",
+    "fn": "live_hr_share",
+    "line": 3344,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "on",
+        "tip": "bool",
+        "zorunlu": false,
+        "varsayilan": true
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)",
+      "hr_share": "bool (yazılan değer)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "profiles[user]"
+    ],
+    "writes": [
+      "profiles[user].hr_share = bool"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok"
+    ],
+    "cf_mapping": "D1 users.hr_share kolonu (kalıcı gizlilik tercihi — KV değil D1)",
+    "notes": "Gizlilik anahtarı, varsayılan AÇIK. hr-request bu bayrağı hedef tarafta okur ve kapalıysa {ok:false,reason:'off'} döndürür.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/live/hr-poll",
+    "fn": "live_hr_poll",
+    "line": 3354,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "want": "bool — biri nabzımı istiyor mu (now < hr_want_until)",
+      "share": "bool — hr_share (varsayılan true)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      }
+    ],
+    "reads": [
+      "profiles[user].hr_want_until, hr_share"
+    ],
+    "writes": [
+      "yok"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok"
+    ],
+    "cf_mapping": "KV okuma (hr_want_until) + D1 users.hr_share; salt okur, edge cache'lenebilir ama want 25 sn pencereli — cache'lenmemeli",
+    "notes": "Sessiz push kaçarsa yedek yol: ölçülen taraf 'bana bakan var mı?' diye düşük maliyetle sorar. Yazma yok, ucuz uç.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/live/wave",
+    "fn": "live_wave",
+    "line": 3623,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "user",
+        "tip": "string (el sallanan arkadaş)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 403"
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 403,
+        "detail": "sadece arkadaşına"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "friends[user]",
+      "profiles[user] (_profile_of → name/handle; yan etki: _profile_of FS'ten /opt/movelog/data/sv-kapali bayrağını ve db'den free_tactical_enabled/free_tactical_devices okur)",
+      "profiles[target].lang"
+    ],
+    "writes": [
+      "social.json'a YAZMAZ",
+      "dosya: DATA_DIR/pushq/<ts_ms>_<hex8>.json = {user:target, title:'Move Log 👋', body:<13 dilde lokalize>, route:'profile'} (_pushq, main.py:2986-2997; ts MİLİsaniye, token_hex(4)=8 hex)"
+    ],
+    "external": [
+      "dolaylı: pushq → APNs/FCM görünür push"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq dosya-kuyruğu",
+      "_profile_of FS: /opt/movelog/data/sv-kapali dosya-bayrağı (main.py:1398 — çağıranın profili okunurken)"
+    ],
+    "cf_mapping": "Push → Worker'dan doğrudan APNs/FCM (WebCrypto) veya Queue; 13 dilli _WV şablonu Worker koduna taşınır; hedef dili D1 users.lang",
+    "notes": "Ultra şartı YOK. Push metni HEDEFİN diline göre seçilir (izleyenin değil); dil yoksa 'en'. Rate-limit YOK — spam mümkün (CF'de eklenebilir ama gölge modda birebir davranış korunmalı).",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/live/club/{cid}",
+    "fn": "live_club",
+    "line": 3643,
+    "auth": "auth_user",
+    "params": [
+      {
+        "ad": "cid",
+        "tip": "string (path — kulüp id, 'c<ts><hex6>')",
+        "zorunlu": true,
+        "varsayilan": null
+      }
+    ],
+    "body": [],
+    "response": {
+      "riders": "[{user:string, name:string, lat:float, lon:float, spd:float km/h, age:int sn, course:int}] — konumu OLMAYAN üye listeden atlanır",
+      "club": "string (kulüp adı)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 402,
+        "detail": "Ultra gerekli"
+      },
+      {
+        "code": 404,
+        "detail": "kulüp yok (kulüp bulunamadı VEYA çağıran üye değil — IDOR koruması, üye olmayana varlığı sızdırılmaz)"
+      }
+    ],
+    "reads": [
+      "profiles[user].ultra",
+      "clubs[cid]: members, name",
+      "profiles[m].trackerId, name, handle (her üye için)"
+    ],
+    "writes": [
+      "yok"
+    ],
+    "external": [
+      "Traccar GET /api/devices (TÜM cihazlar → uniqueId→id haritası)",
+      "Traccar GET /api/positions (TÜM cihazların son konumu, tek çağrı)"
+    ],
+    "server_deps": [
+      "TRACCAR_URL 127.0.0.1:8084"
+    ],
+    "cf_mapping": "İki toplu Traccar çağrısı → tek D1 sorgusu: positions'tan device başına son fix (üye trackerId listesiyle JOIN); users+club_members D1",
+    "notes": "Konvoy görünümü: hr/batt/trail YOK, sadece konum+hız+yaş. Traccar'daki 'tüm pozisyonlar' çağrısı çok-kullanıcılı büyüdükçe pahalı — D1'de zaten üye-filtreli sorguya iner. beacon fallback'i BURADA YOK (live_get'in aksine): kaydı olmayan üye haritada görünmez.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/clubs",
+    "fn": "my_clubs",
+    "line": 3783,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "clubs": "[{id:string, name:string, owner:string, member_count:int, created:int}] — created'a göre YENİDEN ESKİYE sıralı; ÜYE görünümü değil: code ve members alanları YOK (_club_out member=False)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      }
+    ],
+    "reads": [
+      "clubs (TÜMÜ taranır, user in members filtresi)"
+    ],
+    "writes": [
+      "yok"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok"
+    ],
+    "cf_mapping": "D1: SELECT c.* FROM clubs c JOIN club_members m ON ... WHERE m.user=? ORDER BY created DESC",
+    "notes": "Liste görünümü kasıtlı olarak code/members içermez (detay için /api/clubs/{cid}). Ultra şartı yok.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/clubs",
+    "fn": "create_club",
+    "line": 3792,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "name",
+        "tip": "string (strip sonrası min 3, 40'a KIRPILIR)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 400"
+      }
+    ],
+    "response": {
+      "id": "string 'c<epoch><hex6>'",
+      "name": "string",
+      "owner": "string (çağıran)",
+      "member_count": "int (1)",
+      "created": "int epoch",
+      "code": "string 6 hane, alfabe 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' (I,O,0,1 yok; benzersizlik mevcut kodlara karşı denenir)",
+      "members": "[profil] — profil şekli: {username,name,handle,avatar,premium,ultra,sv_off,sokak_hak,video_hak,sokak_hediye:false,free_tactical,admin} (_profile_of, main.py:1389-1407)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 400,
+        "detail": "grup adı en az 3 karakter"
+      },
+      {
+        "code": 400,
+        "detail": "grup sınırına ulaştın (CLUB_MAX_PER_USER=10 — SAHİPLİK değil ÜYE OLUNAN grup sayısı)"
+      },
+      {
+        "code": 500,
+        "detail": "kod üretilemedi (50 denemede benzersiz kod çıkmazsa; pratikte imkansız)"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "clubs (kota sayımı + kod benzersizlik kümesi)",
+      "profiles[user] (üye profili için) + free_tactical_enabled, free_tactical_devices (profil çıktısı içinde)"
+    ],
+    "writes": [
+      "clubs[cid] = {name, owner:user, members:[user], code, created:int}"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "_profile_of FS bağımlılığı: /opt/movelog/data/sv-kapali dosya-bayrağı (sv_off alanı)"
+    ],
+    "cf_mapping": "D1: INSERT clubs + club_members; kod benzersizliği UNIQUE index ile; sv_off dosya bayrağı → KV bayrağı (flags:sv_off)",
+    "notes": "Kota üyelik bazlı: 10 gruba üye olan kullanıcı YENİ grup KURAMAZ. cid ve code sunucuda üretilir (secrets). Yanıt member=True görünümü — davet kodu hemen döner.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/clubs/{cid}",
+    "fn": "club_detail",
+    "line": 3808,
+    "auth": "auth_user",
+    "params": [
+      {
+        "ad": "cid",
+        "tip": "string (path)",
+        "zorunlu": true,
+        "varsayilan": null
+      }
+    ],
+    "body": [],
+    "response": {
+      "id": "string",
+      "name": "string",
+      "owner": "string",
+      "member_count": "int",
+      "created": "int",
+      "code": "string (davet kodu — sadece üye gördüğü için sızmaz)",
+      "members": "[profil] (_profile_of şekli)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 404,
+        "detail": "grup bulunamadı (yok VEYA çağıran üye değil — IDOR: üye olmayana kod/üye listesi verilmez)"
+      }
+    ],
+    "reads": [
+      "clubs[cid]",
+      "profiles[m] her üye için (+_profile_of'un free_tactical/sv-kapali okumaları)"
+    ],
+    "writes": [
+      "yok"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "_profile_of FS: /opt/movelog/data/sv-kapali"
+    ],
+    "cf_mapping": "D1: clubs + club_members + users JOIN; üyelik şartı WHERE ile",
+    "notes": "Üye olmayan için 403 değil 404 — varlık bilgisi de gizlenir. Gölge mod diff'inde bu ayrıma dikkat.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/clubs/join",
+    "fn": "join_club",
+    "line": 3827,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "code",
+        "tip": "string 6 karakter (strip + UPPER'lanır)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 400"
+      }
+    ],
+    "response": {
+      "_sekil": "_club_out member=True: {id,name,owner,member_count,created,code,members:[profil]}"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 400,
+        "detail": "geçersiz kod (uzunluk != 6)"
+      },
+      {
+        "code": 400,
+        "detail": "grup dolu (CLUB_MAX_MEMBERS=30)"
+      },
+      {
+        "code": 404,
+        "detail": "kod bulunamadı"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "clubs (TÜMÜ taranır, code eşleşmesi)",
+      "profiles[user] (_profile_of), profiles[owner].lang",
+      "profiles[m] her üye için (yanıttaki members listesi _club_out member=True → _profile_of; main.py:3779)"
+    ],
+    "writes": [
+      "clubs[cid].members.append(user)",
+      "dosya: DATA_DIR/pushq/... = kurucuya KENDİ dilinde '{u}, {g} grubuna katıldı 🏍️' push'u (_CLUB_JOIN_B 13 dil, main.py:3818-3824)"
+    ],
+    "external": [
+      "dolaylı: pushq → APNs/FCM görünür push (kurucuya)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq",
+      "_profile_of FS: /opt/movelog/data/sv-kapali (yanıt profillerinde)"
+    ],
+    "cf_mapping": "D1: SELECT clubs WHERE code=? (index'li) + INSERT club_members; push → APNs/FCM WebCrypto/Queue",
+    "notes": "İDEMPOTENT: zaten üyeyse aynı member-görünümü döner, push ATILMAZ, sayaç değişmez. Katılım için Ultra/arkadaşlık ŞARTSIZ (kulüp = arkadaşlık yerine geçer, grup videosu eşleşmesinde kullanılır). Üye kota kontrolü (10 grup) join'de YOK — sadece create'te; join ile 10'dan fazla gruba girilebilir (davranış farkı, CF'de aynen korunmalı).",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/clubs/leave",
+    "fn": "leave_club",
+    "line": 3851,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "id",
+        "tip": "string (kulüp id)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 404"
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 404,
+        "detail": "grup bulunamadı (yok veya üye değil)"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "clubs[cid]"
+    ],
+    "writes": [
+      "clubs[cid].members.remove(user)",
+      "members boşaldıysa clubs[cid] SİLİNİR",
+      "kurucu ayrıldıysa owner = members[0] (listedeki en eski üye — katılım sırası)"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok"
+    ],
+    "cf_mapping": "D1: DELETE club_members; sonra transaction içinde COUNT=0 → DELETE clubs, yoksa owner=user ise en eski üyeye (MIN(joined_at)) devir — üye sırası D1'de joined_at kolonuyla korunmalı",
+    "notes": "TUZAK: JSON dizi sırası = katılım sırası, devir mantığı buna dayanır; D1 şemasında club_members'a joined_at/sıra kolonu ŞART. Kimseye push atılmaz.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/clubs/kick",
+    "fn": "kick_member",
+    "line": 3867,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "id",
+        "tip": "string (kulüp id)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 403"
+      },
+      {
+        "ad": "user",
+        "tip": "string (çıkarılacak üye)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — sessiz no-op"
+      }
+    ],
+    "response": {
+      "ok": "bool (hep true — hedef üye değilse/kendisiyse de)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 403,
+        "detail": "sadece kurucu çıkarabilir (kulüp HİÇ YOKSA da 403 döner, 404 değil)"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "clubs[cid].owner, members"
+    ],
+    "writes": [
+      "clubs[cid].members.remove(target) (SADECE target üyeyse ve target != user; aksi halde no-op, _save çağrılmaz)"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "yok"
+    ],
+    "cf_mapping": "D1: owner kontrolü + DELETE club_members WHERE club=? AND user=? AND user != owner",
+    "notes": "Kurucu KENDİNİ kick edemez (target != user şartı — kendisi için leave kullanır). Çıkarılan üyeye push/bildirim YOK. Hedef üye değilse hata dönmez ({ok:true}) — gölge diff'te birebir.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/clubs/rename",
+    "fn": "rename_club",
+    "line": 3880,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "id",
+        "tip": "string (kulüp id)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 403"
+      },
+      {
+        "ad": "name",
+        "tip": "string (strip + 40'a kırpılır, min 3)",
+        "zorunlu": true,
+        "varsayilan": "\"\" — 400"
+      }
+    ],
+    "response": {
+      "_sekil": "_club_out member=True: {id,name,owner,member_count,created,code,members:[profil]}"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "detail": "token yok / geçersiz"
+      },
+      {
+        "code": 403,
+        "detail": "sadece kurucu yeniden adlandırır (kulüp yoksa da 403)"
+      },
+      {
+        "code": 400,
+        "detail": "grup adı en az 3 karakter"
+      },
+      {
+        "code": 422,
+        "detail": "JSON gövde yoksa"
+      }
+    ],
+    "reads": [
+      "clubs[cid]",
+      "profiles[m] (yanıttaki üye profilleri)"
+    ],
+    "writes": [
+      "clubs[cid].name = name"
+    ],
+    "external": [
+      "yok"
+    ],
+    "server_deps": [
+      "_profile_of FS: /opt/movelog/data/sv-kapali (yanıt profillerinde)"
+    ],
+    "cf_mapping": "D1: UPDATE clubs SET name=? WHERE id=? AND owner=?",
+    "notes": "Kontrol SIRASI: önce owner (403), SONRA ad validasyonu (400) — kurucu olmayan geçersiz adla 403 alır, 400 değil. Gölge diff'te sıra korunmalı. Üyelere push yok.",
+    "durum": "TAMAM — api/src/routes/grup2.ts (2026-08-30)"
+  }
+]

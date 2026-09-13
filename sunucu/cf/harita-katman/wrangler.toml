@@ -1,0 +1,33 @@
+# cf-harita-katman — YEREL GELİŞTİRME yapılandırması. ⚠️ BUNUNLA DEPLOY ETME.
+# Canlı deploy: deploy.sh — wrangler.toml.example + gizli önek scratch dizininde birleştirilir.
+# Bu dosyada route YOK, kimlik YOK; kv id'si sahte (deploy denenirse wrangler kendisi reddeder).
+name = "harita-katman"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+workers_dev = true
+
+[vars]
+# Yerel test öneki — GERÇEK önek /opt/matrix/secrets/harita-uc.conf'ta, repoya girmez.
+# Forward duman testi gerçek öneği ister: test/dev-baslat.sh onu --var ile geçirir.
+ONEK = "testonek"
+MLOG_ONEK = ""                                  # boş = muafiyet öneki ONEK ile aynı (K0 §A3)
+ORIGIN_TABAN = "https://harita.nickdegs.com"   # devirden ÖNCE DNS hâlâ bu sunucuda → forward canlı test edilebilir
+OSRM_BEKLEME_MS = "120"
+PMTILES_ANAHTAR = "pmtiles/20260809.pmtiles"           # ortak arşiv anahtarı (02.09)
+
+[[kv_namespaces]]
+binding = "HARITA_AYAR"
+id = "00000000000000000000000000000000"        # yerel simülatör id'ye bakmaz; canlıyı deploy.sh doldurur
+
+# 02.09: `remote = true` → yerel dev GERÇEK R2'yi okur (uçtan uca test: ms-bina/ + ghs/ + ortak PMTiles).
+# Yerel simülatörde kovalar BOŞ olurdu → mvt hep origin'e düşer, yukseklik sıfır-grid verirdi.
+[[r2_buckets]]
+binding = "MATCH_CACHE"
+bucket_name = "harita-match-cache"
+remote = true
+
+# ORTAK arşiv — SALT-OKUR (src/pmtiles.js yalnız get+range; put/delete YASAK, Barış 30.08).
+[[r2_buckets]]
+binding = "PMTILES"
+bucket_name = "hooder-harita"
+remote = true

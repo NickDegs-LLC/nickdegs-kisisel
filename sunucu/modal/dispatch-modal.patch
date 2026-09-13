@@ -1,0 +1,61 @@
+--- a/cf/dispatch/src/index.ts
++++ b/cf/dispatch/src/index.ts
+@@ -3,6 +3,9 @@
+ export type Env = {
+   DB: D1Database; KV: KVNamespace; R2: R2Bucket; RENDER_Q: Queue; ORTAM: string
+   RUNPOD_API_KEY: string; RUNPOD_ENDPOINT: string; DISPATCH_SECRET: string
++  // MODAL DALI (2026-09-07): motor seçimi KV `dispatch:motor` bayrağında ('runpod' | 'modal').
++  // Bayrak KV'de olduğu için GERİ DÖNÜŞ YENİDEN DAĞITIM İSTEMEZ.
++  MODAL_SECRET?: string
+   // TAKTİK DALI (2026-08-30): ayrı CPU endpoint'i + presigned R2 PUT için S3 kimlikleri.
+   RUNPOD_ENDPOINT_TAC?: string
+   R2_ENDPOINT?: string; R2_ACCESS_KEY_ID?: string; R2_SECRET_ACCESS_KEY?: string; R2_BUCKET?: string
+@@ -140,6 +143,30 @@
+   return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
+ }
+ 
++// ---------- MODAL DALI (2026-09-07) ----------
++// Modal ucu RunPod'un /run sözleşmesini TAKLİT EDER ({"input": job} alır,
++// {"id":..., "status":"IN_QUEUE"} döner) → çağıran taraf aynı kalır. Geri çağrı
++// (/api/internal/render-done) motorun KENDİSİ tarafından yapılır, RunPod'daki gibi.
++const MODAL_RUN = 'https://daclen10--movelog-render-run.modal.run'
++
++async function modalGonder(env: Env, job: Job): Promise<{ ok: boolean; status: number; body: string }> {
++  if (!env.MODAL_SECRET) return { ok: false, status: 0, body: 'MODAL_SECRET yok' }
++  const r = await fetch(MODAL_RUN, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json' },
++    body: JSON.stringify({ secret: env.MODAL_SECRET, input: job }),
++  })
++  return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
++}
++
++/** Hangi motor? KV bayrağı — okunamazsa RunPod (arıza ≠ sessiz motor değişimi). */
++async function motorSec(env: Env): Promise<'runpod' | 'modal'> {
++  try {
++    const v = await env.KV.get('dispatch:motor')
++    return String(v ?? '').replace(/"/g, '') === 'modal' ? 'modal' : 'runpod'
++  } catch { return 'runpod' }
++}
++
+ // ---------- R2 SigV4 query presign (api/src/routes/grup1.ts:221 ile aynı desen, method parametrik) ----------
+ const enc = new TextEncoder()
+ const hex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
+@@ -430,9 +457,15 @@
+           m.ack()
+           continue
+         }
+-        const r = taktik ? await taktikGonder(env, is, rid) : await runpodGonder(env, is)
++        // Taktik dalı RunPod'da KALIR (ayrı CPU endpoint'i, taşınmadı) — yalnız GPU render'ı seçilebilir.
++        const motor = taktik ? 'runpod' : await motorSec(env)
++        const r = taktik
++          ? await taktikGonder(env, is, rid)
++          : motor === 'modal'
++            ? await modalGonder(env, is)
++            : await runpodGonder(env, is)
+         await env.KV.put('dispatch:son',
+-          JSON.stringify({ rid, status: r.status, dal: taktik ? 'taktik' : 'render', t: simdi() }))
++          JSON.stringify({ rid, status: r.status, dal: taktik ? 'taktik' : 'render', motor, t: simdi() }))
+         if (r.ok) { m.ack(); continue }
+         // Taktik ertelemeleri (yapılandırma eksik / özel müzik / presign yok): retry İŞE YARAMAZ.
+         // İş KAYBOLMASIN -> gövdeyi KV'ye al + ack. Sebep ayrı anahtarda görünür.

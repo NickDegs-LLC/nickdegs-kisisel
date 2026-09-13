@@ -1,0 +1,117 @@
+#!/bin/bash
+# Auto-heal: Docker containers, Nginx, disk, SSL otomatik tarama ve onarım
+
+LOG="/var/log/auto-heal.log"
+MATRIX_COMPOSE="/opt/matrix/docker-compose.yml"
+MEDIASTACK_COMPOSE="/opt/mediastack/docker-compose.yml"
+DISK_WARN=90
+SSL_WARN_DAYS=30
+NOTIFY="/opt/matrix/scripts/notify.sh"
+
+# Kasıtlı durdurulmuş containerlar — restart edilmez
+# (RAM tasarrufu için kalıcı kapatılan atıl servisler 2026-05-30)
+# (2026-08-03 server oturumu — mobil pivot: atil lab/kisisel servisler kalici kapatildi;
+#  komga+suwayomi medya oturumunun karari. auto-heal bunlari GERI ACMASIN.)
+SKIP_CONTAINERS="mautrix-telegram minecraft whisper ollama open-webui flowise tubearchivist tubearchivist-es emby stirling-pdf netdata languagetool drawio rsshub pinry linkstack umami libretranslate postiz n8n immich-server immich-machine-learning joplin teedy planka komga suwayomi"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG"
+}
+
+healed=0
+
+# --- Docker Container Kontrolü ---
+check_docker() {
+    # Exited veya unhealthy containerları yeniden başlat
+    while IFS= read -r line; do
+        name=$(echo "$line" | awk '{print $1}')
+        status=$(echo "$line" | awk '{print $2}')
+
+        # Skip listesindeyse atla
+        if echo "$SKIP_CONTAINERS" | grep -qw "$name"; then continue; fi
+
+        if [[ "$status" == "exited" || "$status" == "dead" ]]; then
+            log "HATA: $name container durmuş ($status) — yeniden başlatılıyor"
+            docker start "$name" >> "$LOG" 2>&1 && log "OK: $name başlatıldı" && $NOTIFY "🔄 AUTO-HEAL: $name container yeniden başlatıldı" || { log "FAIL: $name başlatılamadı"; $NOTIFY "❌ HATA: $name container başlatılamadı!"; }
+            healed=1
+        fi
+
+        # Health check: (unhealthy)
+        if docker inspect "$name" --format '{{.State.Health.Status}}' 2>/dev/null | grep -q "unhealthy"; then
+            log "HATA: $name unhealthy — yeniden başlatılıyor"
+            docker restart "$name" >> "$LOG" 2>&1 && log "OK: $name restart edildi" && $NOTIFY "⚠️ AUTO-HEAL: $name unhealthy, restart edildi" || { log "FAIL: $name restart edilemedi"; $NOTIFY "❌ HATA: $name restart edilemedi!"; }
+            healed=1
+        fi
+    done < <(docker ps -a --format "{{.Names}} {{.State}}" 2>/dev/null)
+}
+
+# --- Nginx Kontrolü ---
+check_nginx() {
+    if ! systemctl is-active --quiet nginx; then
+        log "HATA: nginx durmuş — yeniden başlatılıyor"
+        nginx -t >> "$LOG" 2>&1 && systemctl start nginx && log "OK: nginx başlatıldı" && $NOTIFY "🔄 AUTO-HEAL: nginx yeniden başlatıldı" || { log "FAIL: nginx başlatılamadı"; $NOTIFY "❌ KRİTİK: nginx başlatılamadı!"; }
+        healed=1
+    fi
+}
+
+# --- Systemd Failed Servisler ---
+check_systemd() {
+    # cloud-init-hotplugd hariç tüm failed servisleri yeniden başlat
+    IGNORE="cloud-init-hotplugd"
+    while IFS= read -r svc; do
+        [[ "$svc" == *"$IGNORE"* ]] && continue
+        log "HATA: $svc failed — yeniden başlatılıyor"
+        systemctl restart "$svc" >> "$LOG" 2>&1 && log "OK: $svc restart edildi" || log "FAIL: $svc restart edilemedi"
+        healed=1
+    done < <(systemctl list-units --state=failed --no-pager --plain 2>/dev/null | awk '/\.service/{print $1}')
+}
+
+# --- Disk Alanı Kontrolü ---
+check_disk() {
+    while IFS= read -r line; do
+        usage=$(echo "$line" | awk '{print $5}' | tr -d '%')
+        mount=$(echo "$line" | awk '{print $6}')
+        if [[ "$usage" -ge "$DISK_WARN" ]]; then
+            log "UYARI: Disk doluluk %$usage — $mount"
+            $NOTIFY "⚠️ DİSK UYARI: $mount %$usage dolu!"
+        fi
+    done < <(df -h | grep '^/dev/')
+}
+
+# --- SSL Sertifika Kontrolü ---
+check_ssl() {
+    if command -v certbot &>/dev/null; then
+        while IFS= read -r line; do
+            days=$(echo "$line" | grep -oP '\d+(?= days)')
+            domain=$(echo "$line" | grep -oP '(?<=Domains: )\S+')
+            if [[ -n "$days" && "$days" -lt "$SSL_WARN_DAYS" ]]; then
+                log "UYARI: SSL sertifikası $domain — $days gün kaldı, yenileniyor"
+                certbot renew --quiet >> "$LOG" 2>&1 && systemctl reload nginx && log "OK: SSL yenilendi" && $NOTIFY "🔐 SSL sertifikası yenilendi: $domain ($days gün kalmıştı)"
+                healed=1
+            fi
+        done < <(certbot certificates 2>/dev/null | grep -E "Domains:|Expiry")
+    fi
+}
+
+# --- Synapse API Kontrolü ---
+check_synapse() {
+    if ! curl -sf http://localhost:8008/health > /dev/null 2>&1; then
+        log "HATA: Synapse API yanıt vermiyor — container restart"
+        docker restart synapse >> "$LOG" 2>&1 && log "OK: synapse restart edildi" || log "FAIL: synapse restart edilemedi"
+        healed=1
+    fi
+}
+
+# --- Ana Akış ---
+log "=== Auto-heal başladı ==="
+check_docker
+check_nginx
+check_systemd
+check_disk
+check_ssl
+check_synapse
+
+if [[ "$healed" -eq 0 ]]; then
+    log "Tüm sistemler sağlıklı"
+fi
+log "=== Auto-heal tamamlandı ==="

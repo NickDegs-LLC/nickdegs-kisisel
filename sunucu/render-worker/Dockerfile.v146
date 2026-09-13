@@ -1,0 +1,10 @@
+# v146 (2026-09-01, Barış "kur") — llvmpipe = BOZUK (v145'in üstüne)
+# MIG dilimi (RTX PRO 6000 MIG 1g.24gb) OpenGL/EGL vermez; Chrome sessizce Mesa llvmpipe'a (yazılımsal GL)
+# düşer, glhealth "OK" derdi ve 3B ~50x yavaş sürünüp flyover'a kayardı. Artık:
+#   · 3d/glhealth.js: renderer 'llvmpipe|softpipe' ise BROKEN (exit 1)
+#   · rp_handler: "llvmpipe" imzası da KESİN bozukluk -> iş fresh worker'a re-dispatch + refresh_worker
+# Endpoint gpuIds'inde MIG dışlaması (version 159) birinci savunma; bu imaj ikinci savunma.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v145
+FROM ${BASE}
+COPY rp_handler.v146.py /app/rp_handler.py
+COPY 3d/glhealth.js /app/3d/glhealth.js

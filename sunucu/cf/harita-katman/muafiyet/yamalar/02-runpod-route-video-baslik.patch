@@ -1,0 +1,49 @@
+--- a/render-worker/scripts/route-video.py
++++ b/render-worker/scripts/route-video.py
+@@ -32,6 +32,17 @@
+ # istekler RunPod IP'si CrowdSec'te DROP ise SESSİZCE yutulur (log yok, timeout, matching çalışmaz).
+ # CF üzerinden gelen istek CF IP'sinden gelir (whitelist) -> worker hangi IP'de olursa olsun çalışır.
+ HARITA_UC = os.environ.get("HARITA_UC") or "https://harita.nickdegs.com/24579d9db6c7c001"
++# 2026-08-30 K0 §A3 MUAFİYET (ikincil işaret): Hooder zone'unda datacenter/cloud ASN bloğu +
++# davranış-tabanlı kalıcı /64 yasağı var. BİRİNCİL muafiyet YOL ÖNEĞİdir (HARITA_UC / HARITA_TABAN
++# içinde taşınır, kod değişikliği istemez). Bu başlık yalnız sunucu-yanı (urllib) çağrılarda
++# ek/yedek işarettir — tarayıcı tarafında CORS ön-uçuş gerektirdiği için KULLANILAMAZ.
++# Boşsa hiçbir şey değişmez (başlık gönderilmez).
++MLOG_KEY = os.environ.get("MOVELOG_KEY", "")
++def _hbas():
++    return {"X-Movelog-Key": MLOG_KEY} if MLOG_KEY else {}
++def _hac(u, timeout=30):
++    """Harita ucuna GET — muafiyet başlığıyla (urlopen ile birebir aynı dönüş)."""
++    return urllib.request.urlopen(urllib.request.Request(u, headers=_hbas()), timeout=timeout)
+ # Google Maps API key (Photorealistic 3D Tiles — gerçek foto-gerçekçi 3B)
+ GKEY=os.environ.get("GOOGLE_MAPS_KEY")
+ if not GKEY:
+@@ -313,7 +324,7 @@
+         got=False
+         for _try in range(3):                        # geçici API hatasında retry: worker'lar arası TUTARLILIK şart
+             try:                                     # (paralel segment worker'ları aynı matched geometriyi üretmeli)
+-                d=json.load(urllib.request.urlopen(url,timeout=30))
++                d=json.load(_hac(url,30))
+                 if d.get("code")=="Ok" and d.get("matchings"):
+                     for m in d["matchings"]:        # boşlukta bölünse bile TÜM parçalar sırayla eklenir
+                         for c in m["geometry"]["coordinates"]:
+@@ -470,7 +481,7 @@
+     def _poi(lat,lon):
+         try:
+             u=f"{HARITA_UC}/geocoding/v5/mapbox.places/{lon},{lat}.json?access_token={MB}&types=poi,neighborhood,locality,place&limit=1&language=tr"
+-            d=json.load(urllib.request.urlopen(u,timeout=15)); fs=d.get("features",[])
++            d=json.load(_hac(u,15)); fs=d.get("features",[])
+             return fs[0]["text"] if fs else ""
+         except Exception: return ""
+     _i=0
+@@ -684,7 +695,9 @@
+ basep=os.path.join(tmp,"base.png")
+ url=(f"{HARITA_UC}/styles/v1/mapbox/satellite-streets-v12/static/"
+      f"{clon:.6f},{clat:.6f},{zoom:.3f},0/{RW}x{RH}@2x?access_token={MB}&attribution=false&logo=false")
+-urllib.request.urlretrieve(url,basep)
++# urlretrieve BAŞLIK ALMAZ -> urlopen+kopyala (davranış birebir: aynı dosya, aynı hata yolu)
++with _hac(url,60) as _r, open(basep,"wb") as _f:
++    shutil.copyfileobj(_r,_f)
+ base=Image.open(basep).convert("RGB")
+ if base.size!=(BWp,BHp): base=base.resize((BWp,BHp))
+ ov=Image.new("RGBA",(BWp,BHp),(0,0,0,0)); ImageDraw.Draw(ov).rectangle([0,0,BWp,BHp],fill=(0,0,0,38))

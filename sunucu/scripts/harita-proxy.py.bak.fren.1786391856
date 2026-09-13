@@ -1,0 +1,621 @@
+#!/usr/bin/env python3
+# HARİTA PROXY (2026-08-09, Barış: "Mapbox kapanırsa uygulama biter — kalıcı çözelim, tekte,
+# minimum/sıfır ücret"). Taktik motorun TÜM karo trafiği buradan geçer (127.0.0.1:8890).
+#
+# URL biçimi MAPBOX STATIC API İLE BİREBİR AYNI:
+#   /styles/v1/mapbox/{stil}/static/{lon},{lat},{z},{bearing}/{W}x{H}[@2x]?...
+# -> motor dosyalarındaki TEK değişiklik host ("api.mapbox.com" -> "127.0.0.1:8890");
+#    mühürlü dosyalarda mantık DEĞİŞMEZ (Barış'ın "tekte kalıcı çöz" talimatıyla).
+#
+# KAYNAK ZİNCİRİ (istek başına, sırayla):
+#   0) DİSK ÖNBELLEĞİ /opt/matrix/harita-cache — tekrar edilen yol SONSUZA DEK bedava
+#   1) MAPBOX (yaşadığı sürece passthrough -> görüntü bugünkünün birebir aynısı)
+#   2) ESRİ (anahtarsız/ücretsiz): World_Imagery (uydu, z19) / World_Street_Map (sokak)
+#   3) HOODER SENTINEL (yalnız uydu, z<=14): /opt/payment/sat_cache (YALNIZ OKUMA — dev10 alanı)
+#      + gerekirse https://realvirtuality.app/hooder-api/sat/. Atıf: "Sentinel-2 cloudless by EOX".
+#
+# ZOOM MATEMATİĞİ (⚠️ karo-ölçeği 2x hatasının dersi): Mapbox static z, 512px karo esasıdır ve
+# @2x çıktının m/px'i = 156543.03392*cos(lat)/2^(z+1). OSM/Esri 256px karoda aynı m/px için
+# osm_z = mapbox_z + 1. Kesirli z: üstten karo çek, 2^(fark) ile yeniden ölçekle.
+import base64
+import io
+import json
+import math
+import os
+import sys
+import re
+import threading
+import time
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from PIL import Image
+
+CACHE = "/opt/matrix/harita-cache"
+HOODER_LOCAL = "/opt/payment/sat_cache"          # yalnız okunur (Hooder/dev10 alanı)
+HOODER_URL = "https://realvirtuality.app/hooder-api/sat/{z}/{x}/{y}.jpg"
+ESRI = {"sat": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "str": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"}
+MB = ""
+try:
+    # ⚠️ yorum satırında "token" kelimesi GEÇİYOR — sadece anahtar=değer satırlarına bak,
+    # SECRET (sk.) tercih et (static API server-side'da sk ile çalışır), yoksa PUBLIC.
+    _kv = {}
+    for l in open("/opt/matrix/secrets/mapbox.conf"):
+        l = l.strip()
+        if l and not l.startswith("#") and "=" in l:
+            k, v = l.split("=", 1)
+            _kv[k.strip().upper()] = v.strip().strip('"')
+    MB = _kv.get("MAPBOX_SECRET_TOKEN") or _kv.get("MAPBOX_PUBLIC_TOKEN") or ""
+except Exception:
+    pass
+FORCE_ESRI = os.environ.get("HARITA_FORCE_ESRI", "") == "1"   # test/tatbikat anahtarı
+
+KAYNAK_CONF = "/opt/matrix/harita-kaynak.json"
+_conf = {"mtime": 0.0, "data": None}
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # pmtiles_okuyucu yan dosyada
+
+
+def _kaynaklar():
+    """Kaynak zinciri config'i — mtime değişince otomatik yeniden yüklenir (restart GEREKMEZ).
+    Bozuk/eksik dosyada yerleşik güvenli zincire düşer (render asla haritasız kalmaz)."""
+    try:
+        mt = os.path.getmtime(KAYNAK_CONF)
+        if _conf["data"] is None or mt != _conf["mtime"]:
+            d = json.load(open(KAYNAK_CONF))
+            _conf["data"] = d
+            _conf["mtime"] = mt
+            print(f"harita-kaynak.json yüklendi ({len(d.get('kaynaklar', []))} kaynak, "
+                  f"mapbox_passthrough={d.get('mapbox_passthrough', True)})", flush=True)
+        return _conf["data"]
+    except Exception as e:
+        if _conf["data"] is None:
+            print("kaynak config okunamadı, yerleşik zincir:", str(e)[:80], flush=True)
+            return {"mapbox_passthrough": True, "kaynaklar": [
+                {"tip": "dizin", "tur": "sat", "yol": HOODER_LOCAL, "minz": 0, "maxz": 14},
+                {"tip": "esri", "tur": "sat", "minz": 0, "maxz": 19},
+                {"tip": "esri", "tur": "str", "minz": 0, "maxz": 19}]}
+        return _conf["data"]
+
+
+_mb_dead = {"ts": 0.0}          # Mapbox öldüyse 10 dk boyunca tekrar deneme (istek başı bekleme olmasın)
+_lock = threading.Lock()
+
+
+def _mapbox_ok():
+    if not _kaynaklar().get("mapbox_passthrough", True):
+        return False          # config ile Mapbox tamamen kapatılabilir (sürüm/restart gerekmez)
+    return MB and not FORCE_ESRI and (time.time() - _mb_dead["ts"] > 600)
+
+
+def _fetch(url, timeout=25):
+    rq = urllib.request.Request(url, headers={"User-Agent": "MoveLogHaritaProxy/1.0"})
+    with urllib.request.urlopen(rq, timeout=timeout) as r:
+        return r.read()
+
+
+def _cpath(kind, key):
+    p = os.path.join(CACHE, kind, key)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    return p
+
+
+# 🚦 DIŞ SERVİS FRENİ (Barış 11.08: "üç uygulama aynı haritada, %80 önceliğim Hooder").
+# Esri/EOX/OSRM/Nominatim'e giden istekler AYNI IP'den Hooder tarafından da kullanılıyor.
+# Ban yersek Hooder'ın oyun haritası da ölür -> saniyede en fazla _DIS_HIZ dış istek.
+_DIS_HIZ = float(os.environ.get("HARITA_DIS_HIZ", "6"))     # istek/sn tavanı
+_dis_kilit = threading.Lock()
+_dis_son = {"t": 0.0}
+
+
+def _dis_fren():
+    with _dis_kilit:
+        _ara = 1.0 / max(0.5, _DIS_HIZ)
+        _bek = _dis_son["t"] + _ara - time.time()
+        if _bek > 0:
+            time.sleep(_bek)
+        _dis_son["t"] = time.time()
+
+
+def _tile(kind, osmz, x, y, katman=None):
+    """Tek 256px karo: önbellek -> (uydu: hooder yerel z<=14) -> esri -> hooder url. PIL Image döner."""
+    n = 2 ** osmz
+    x %= n
+    if not (0 <= y < n):
+        return Image.new("RGB", (256, 256), (10, 12, 18))
+    cp = _cpath(f"tile-{kind}", f"{osmz}/{x}/{y}.jpg")
+    if os.path.exists(cp):
+        try:
+            return Image.open(cp).convert("RGB")
+        except Exception:
+            pass
+    data = None
+    # AKTİF KATMAN (premium/ultra): tac_dispatch her lokal render öncesi yazar. Kaynakta
+    # "katman" alanı yoksa HERKESE açık; varsa yalnız o katmana servis edilir.
+    # katman parametre olarak geldiyse (uzak worker ?k=... ile bildirir) onu kullan; yoksa
+    # dosyadan oku (yerel taktik render yolu — DAVRANIŞ DEĞİŞMEDİ).
+    if katman in ("premium", "ultra"):
+        _katman = katman
+    else:
+        try:
+            _katman = open("/opt/matrix/harita-cache/.aktif-katman").read().strip() or "premium"
+        except Exception:
+            _katman = "premium"
+    for k in _kaynaklar().get("kaynaklar", []):
+        if k.get("katman") and k["katman"] != _katman:
+            continue
+        if k.get("tur", kind) != kind:
+            continue
+        if not (k.get("minz", 0) <= osmz <= k.get("maxz", 19)):
+            continue
+        try:
+            if k.get("tip") == "dizin":
+                hp = os.path.join(k["yol"], str(osmz), str(x), f"{y}.jpg")
+                if os.path.exists(hp):
+                    data = open(hp, "rb").read()
+            elif k.get("tip") == "xyz":
+                _dis_fren(); data = _fetch(k["url"].format(z=osmz, x=x, y=y))
+            elif k.get("tip") == "esri":
+                _dis_fren(); data = _fetch(ESRI[kind].format(z=osmz, x=x, y=y))
+            elif k.get("tip") == "eox":
+                # EOX Sentinel-2 cloudless (CC BY 4.0) — YEDEK uydu. ⚠️ WMTS yol sırası {z}/{y}/{x}
+                # (satır/sütun) — xyz'nin TERSİ. Esri gri alanı riskine karşı emniyet kemeri.
+                _dis_fren()
+                data = _fetch("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857"
+                              f"/default/g/{osmz}/{y}/{x}.jpg")
+            elif k.get("tip") == "pmtiles":
+                # KENDİ PROTOMAPS ARŞİVİMİZ (yeni sunucuda 137 GB, salt-okuma sshfs ile ağdan).
+                # Yalnız SOKAK katmanı: motorun kentsel tespiti bu görüntünün kenar yoğunluğunu
+                # ölçer. Kalibrasyon (2026-08-10, 8 nokta): Esri'den DAHA DOĞRU — Elazığ 0.54→0.98,
+                # Tunceli 0.00→0.76 (mühürlü Mapbox davranışına yakınsama). Ayarlar okuyucuda.
+                import pmtiles_okuyucu as _pm
+                _im = _pm.sokak_karosu(osmz, x, y, 256)
+                _b = io.BytesIO(); _im.convert("RGB").save(_b, "JPEG", quality=88)
+                data = _b.getvalue()
+        except Exception:
+            data = None
+        if data and len(data) > 200:
+            break
+        data = None
+    if not data:
+        return Image.new("RGB", (256, 256), (10, 12, 18))
+    try:
+        open(cp, "wb").write(data)
+    except Exception:
+        pass
+    return Image.open(io.BytesIO(data)).convert("RGB")
+
+
+# ⚠️ ÖLÇÜM ile GÖSTERİM ayrı (10.08, V123 testinde yakalandı): taktik motorun kentsel tespiti
+# soluk pmtiles rasterini ÖLÇER (kalibre edilmiş), ama 3D worker aynı "str"i EKRANDA GÖSTERİYOR
+# -> video soluk/beyaz harita ile çıkıyordu. Çözüm: statik(ölçüm) yolu "strm", karo(gösterim) "str".
+def _stitch(kind, lon, lat, z, w, h):
+    """Mapbox static {lon},{lat},{z}/{w}x{h}@2x eşdeğeri: 2w x 2h px, m/px=156543*cos/2^(z+1)."""
+    outw, outh = 2 * w, 2 * h
+    zi = min(19, max(0, int(math.ceil(z)) + 1))          # osm zoom (üstten)
+    scale = 2.0 ** (z + 1 - zi)                          # kesirli z telafisi
+    n = 2 ** zi
+    cx = (lon + 180.0) / 360.0 * n * 256
+    sy = math.sin(math.radians(max(-85.05, min(85.05, lat))))
+    cy = (0.5 - math.log((1 + sy) / (1 - sy)) / (4 * math.pi)) * n * 256
+    # çıktının kaynak-pikselde yarı genişliği
+    hw, hh = outw / (2 * scale), outh / (2 * scale)
+    x0, y0 = cx - hw, cy - hh
+    tx0, ty0 = int(x0 // 256), int(y0 // 256)
+    tx1, ty1 = int((cx + hw) // 256), int((cy + hh) // 256)
+    mosaic = Image.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256))
+    for ty in range(ty0, ty1 + 1):
+        for tx in range(tx0, tx1 + 1):
+            mosaic.paste(_tile(kind, zi, tx, ty), ((tx - tx0) * 256, (ty - ty0) * 256))
+    crop = mosaic.crop((int(round(x0 - tx0 * 256)), int(round(y0 - ty0 * 256)),
+                        int(round(x0 - tx0 * 256 + 2 * hw)), int(round(y0 - ty0 * 256 + 2 * hh))))
+    if crop.size != (outw, outh):
+        crop = crop.resize((outw, outh), Image.LANCZOS)
+    return crop
+
+
+def _stitch_bbox(kind, lon0, lat0, lon1, lat1, w, h):
+    """Mapbox static [minlon,minlat,maxlon,maxlat]/{w}x{h}@2x eşdeğeri.
+    ⚠️ MOTOR BUNU KULLANIYOR (route_gen TEK MOZAİK'i böyle çeker) — 2026-08-10'a kadar proxy'de
+    YOKTU, taktik üretim 404 alıp kırılıyordu (Mapbox kesildikten sonra fark edilmedi).
+    Mapbox davranışı: bbox'ı oranı koruyarak sığdırır (ölçek=min), merkez=bbox merkezi.
+    route_gen aynı kuralı varsayıp piksel projeksiyonunu kendi kuruyor -> BİREBİR uymalı."""
+    outw, outh = 2 * w, 2 * h
+
+    def _merc(lon, lat):
+        x = (lon + 180.0) / 360.0
+        sy = math.sin(math.radians(max(-85.05, min(85.05, lat))))
+        y = 0.5 - math.log((1 + sy) / (1 - sy)) / (4 * math.pi)
+        return x, y
+
+    bx0, by0 = _merc(lon0, lat1)          # üst-sol (kuzey-batı)
+    bx1, by1 = _merc(lon1, lat0)          # alt-sağ (güney-doğu)
+    if bx1 < bx0:
+        bx0, bx1 = bx1, bx0
+    if by1 < by0:
+        by0, by1 = by1, by0
+    gw, gh = max(1e-12, bx1 - bx0), max(1e-12, by1 - by0)
+    olcek = min(outw / gw, outh / gh)     # px / birim-merkator (Mapbox "fit" kuralı)
+    # kapsanan alan: merkez sabit, çıktı boyutunca genişlet
+    mcx, mcy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+    kx0, kx1 = mcx - outw / (2 * olcek), mcx + outw / (2 * olcek)
+    ky0, ky1 = mcy - outh / (2 * olcek), mcy + outh / (2 * olcek)
+    # yeterli çözünürlükte osm zoom seç (1 kaynak px >= 1 çıktı px)
+    zi = 0
+    while zi < 19 and (2 ** zi) * 256 * (kx1 - kx0) < outw:
+        zi += 1
+    n = 2 ** zi
+    x0, y0 = kx0 * n * 256, ky0 * n * 256
+    x1, y1 = kx1 * n * 256, ky1 * n * 256
+    tx0, ty0 = int(math.floor(x0 / 256)), int(math.floor(y0 / 256))
+    tx1, ty1 = int(math.floor((x1 - 1e-6) / 256)), int(math.floor((y1 - 1e-6) / 256))
+    # güvenlik: aşırı karo sayısını sınırla (zoom düşür)
+    while (tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 400 and zi > 0:
+        zi -= 1; n = 2 ** zi
+        x0, y0 = kx0 * n * 256, ky0 * n * 256
+        x1, y1 = kx1 * n * 256, ky1 * n * 256
+        tx0, ty0 = int(math.floor(x0 / 256)), int(math.floor(y0 / 256))
+        tx1, ty1 = int(math.floor((x1 - 1e-6) / 256)), int(math.floor((y1 - 1e-6) / 256))
+    mosaic = Image.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256))
+    for ty in range(ty0, ty1 + 1):
+        for tx in range(tx0, tx1 + 1):
+            mosaic.paste(_tile(kind, zi, tx, ty), ((tx - tx0) * 256, (ty - ty0) * 256))
+    crop = mosaic.crop((int(round(x0 - tx0 * 256)), int(round(y0 - ty0 * 256)),
+                        int(round(x1 - tx0 * 256)), int(round(y1 - ty0 * 256))))
+    if crop.size != (outw, outh):
+        crop = crop.resize((outw, outh), Image.LANCZOS)
+    return crop
+
+
+_nom_last = {"ts": 0.0}
+
+def _geocode(lon, lat, qs):
+    """Mapbox geocoding passthrough; ölmüşse Nominatim -> Mapbox-biçimli minimal JSON.
+    Motorun kullandığı alanlar SADECE: features[0].text + context[].id(place*/region*)+text."""
+    key = f"geo/{'ulke_' if 'types=country' in qs else ''}{round(lon,4)}_{round(lat,4)}.json"
+    cp = _cpath("static", key)
+    if os.path.exists(cp):
+        return open(cp, "rb").read()
+    data = None
+    if _mapbox_ok():
+        try:
+            q = re.sub(r"access_token=[^&]*", "", qs).strip("&")
+            data = _fetch(f"https://api.mapbox.com/geocoding/v5/mapbox.places/{lon},{lat}.json"
+                          f"?access_token={MB}" + (("&" + q) if q else ""), timeout=20)
+        except Exception:
+            with _lock:
+                _mb_dead["ts"] = time.time()
+            data = None
+    if data is None:
+        # Nominatim: kullanım politikası 1 istek/sn -> global kısıtlayıcı (önbellek zaten çoğunu yer)
+        # Adres(ler) config'ten: kendi Nominatim'imiz kurulunca json'a "nominatim_urls" yaz, yeter.
+        with _lock:
+            bekle = 1.1 - (time.time() - _nom_last["ts"])
+            if bekle > 0:
+                time.sleep(bekle)
+            _nom_last["ts"] = time.time()
+        try:
+            _zoom = 3 if "types=country" in qs else 14        # ülke sorgusu (activity-detect) desteği
+            raw = None
+            for _nu in (_kaynaklar().get("nominatim_urls") or ["https://nominatim.openstreetmap.org"]):
+                try:
+                    raw = json.loads(_fetch(
+                        f"{_nu.rstrip('/')}/reverse?lat={lat}&lon={lon}"
+                        f"&format=jsonv2&zoom={_zoom}&accept-language=en", timeout=15).decode())
+                    break
+                except Exception:
+                    raw = None
+            if raw is None:
+                raise RuntimeError("nominatim erişilemedi")
+            ad = raw.get("address", {})
+            if _zoom == 3:                                     # ülke: tek alan yeter
+                _co = ad.get("country", "")
+                data = json.dumps({"features": ([{"text": _co, "context": []}] if _co else [])}).encode()
+                raise StopIteration                            # aşağıdaki mahalle/şehir yolunu atla
+            
+            loc = (ad.get("neighbourhood") or ad.get("suburb") or ad.get("quarter")
+                   or ad.get("village") or ad.get("hamlet") or ad.get("town") or "")
+            city = (ad.get("city") or ad.get("town") or ad.get("province")
+                    or ad.get("state") or "")
+            feat = {"features": ([{"text": loc or city,
+                                   "context": [{"id": "place.1", "text": city}] if city else []}]
+                                 if (loc or city) else [])}
+            data = json.dumps(feat).encode()
+        except StopIteration:
+            pass                                               # ülke cevabı hazır (data dolu)
+        except Exception:
+            data = b'{"features":[]}'
+    try:
+        open(cp, "wb").write(data)
+    except Exception:
+        pass
+    return data
+
+
+RX = re.compile(r"^/styles/v1/mapbox/([a-z0-9-]+)/static/(-?[\d.]+),(-?[\d.]+),([\d.]+)(?:,[-\d.]+)?/(\d+)x(\d+)(@2x)?")
+# BBOX biçimi: /static/[minlon,minlat,maxlon,maxlat]/{w}x{h}@2x  (route_gen TEK MOZAİK)
+RXB = re.compile(r"^/styles/v1/mapbox/([a-z0-9-]+)/static/%5B|^/styles/v1/mapbox/([a-z0-9-]+)/static/\[")
+RXB2 = re.compile(r"^/styles/v1/mapbox/([a-z0-9-]+)/static/[\[%5B]+(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)[\]%5D]+/(\d+)x(\d+)(@2x)?", re.I)
+
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):   # erişim logu sessiz (saatte binlerce karo olabilir)
+        pass
+
+    def _send(self, data, ctype="image/jpeg", code=200):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/saglik"):
+            src = "mapbox" if _mapbox_ok() else "esri"
+            try:
+                kt = open("/opt/matrix/harita-cache/.aktif-katman").read().strip()
+            except Exception:
+                kt = "premium"
+            self._send(json.dumps({"ok": True, "kaynak": src, "katman": kt}).encode(), "application/json")
+            return
+        x = re.match(r"^/xyz/(sat|str)/(\d+)/(\d+)/(\d+)\.jpg", self.path)
+        if x:
+            # APP HARİTASI (2026-08-09, Barış: "harita sunucudan değişsin, sürüm gerekmesin"):
+            # ham XYZ karo — Android osmdroid buradan çeker. Zincir _tile ile aynı
+            # (önbellek -> hooder z<=14 -> esri). 256px, agresif client-cache başlığı.
+            kind, z, tx, ty = x.group(1), int(x.group(2)), int(x.group(3)), int(x.group(4))
+            # ULTRA AYRIMI (2026-08-10, Barış): ?k=ultra|premium. Ultra en yüksek zoom (z19) alır,
+            # Premium z17'de kapanır -> Ultra videoda yere belirgin daha yakın/net detay görür.
+            # Parametre YOKSA eski davranış (z19) — app/osmdroid ve diğer tüketiciler etkilenmez.
+            _q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            _kt = "ultra" if "k=ultra" in _q else ("premium" if "k=premium" in _q else None)
+            _tavan = 17 if _kt == "premium" else 19
+            img = _tile(kind, min(z, _tavan), tx, ty, katman=_kt)
+            b = io.BytesIO(); img.save(b, "JPEG", quality=85)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "public, max-age=2592000")
+            self.send_header("Content-Length", str(b.getbuffer().nbytes))
+            self.end_headers(); self.wfile.write(b.getvalue())
+            return
+        v = re.match(r"^/mvt/(\d+)/(\d+)/(\d+)\.(?:mvt|pbf)", self.path)
+        if v:
+            # VEKTÖR KARO (2026-08-10): kendi Protomaps arşivimizden HAM MVT.
+            # Tüketici: MapLibre GL (RunPod 3D worker) -> fill-extrusion ile 3B binalar.
+            # Rasterleştirmeden ham geçer (raster uç /xyz ayrı; taktik motor onu kullanır, DOKUNULMADI).
+            # ⚠️ 404 DÖNDÜRMEZ: eksik karoda 204 -> CrowdSec http-probing (10 adet 404/10sn) tetiklenmez,
+            #    MapLibre de boş karoyu sorunsuz yutar. Bir render binlerce karo çeker; ban = render ölür.
+            z, tx, ty = int(v.group(1)), int(v.group(2)), int(v.group(3))
+            ham = None
+            try:
+                import pmtiles_okuyucu as _pm
+                ham = _pm.karo_oku(z, tx, ty)
+            except Exception:
+                ham = None
+            if not ham:
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.mapbox-vector-tile")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "public, max-age=2592000")
+            self.send_header("Content-Length", str(len(ham)))
+            self.end_headers(); self.wfile.write(ham)
+            return
+        if self.path.startswith("/tatbikat/"):
+            # TATBİKAT: Mapbox'ı N saniyeliğine ölü say (uçtan uca Esri provası için). /tatbikat/0 = bitir.
+            try:
+                sn = int(self.path.split("/")[2])
+            except Exception:
+                sn = 0
+            with _lock:
+                _mb_dead["ts"] = (time.time() + sn - 600) if sn > 0 else 0.0
+            self._send(json.dumps({"tatbikat_sn": sn}).encode(), "application/json")
+            return
+        mm = re.match(r"^/matching/v5/mapbox/driving/([^?]+)", self.path)
+        if mm:
+            # YOLA OTURTMA (road-snap): Mapbox Matching passthrough; ölmüşse OSRM (aynı API ailesi,
+            # matchings[0].geometry/confidence alanları birebir). Önbellek: aynı rota dilimi bedava.
+            coords = mm.group(1)
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            import hashlib as _h
+            cp = _cpath("static", "match/" + _h.sha1((coords + qs).encode()).hexdigest()[:20] + ".json")
+            if os.path.exists(cp):
+                self._send(open(cp, "rb").read(), "application/json")
+                return
+            data = None
+            if _mapbox_ok():
+                try:
+                    q = re.sub(r"access_token=[^&]*", "", qs).strip("&")
+                    data = _fetch(f"https://api.mapbox.com/matching/v5/mapbox/driving/{coords}"
+                                  f"?access_token={MB}" + (("&" + q) if q else ""), timeout=30)
+                except Exception:
+                    with _lock:
+                        _mb_dead["ts"] = time.time()
+                    data = None
+            if data is None:
+                # 🔴 YOLA OTURTMA — `match` DEĞİL `route` (10.08 v2, Barış "bir anda dönüyor" dedi):
+                # public OSRM `match` >10 noktada TooBig veriyor; parçalayınca her dilim BAĞIMSIZ
+                # eşleşiyor, dilim sınırında başka yola oturup yol SIÇRIYOR -> kamera ani dönüyor
+                # (ölçüldü: 13 sıçrama, 14 adet >90° dönüş, 180°'ye varan geri dönüşler).
+                # `route` servisi TEK istekte 200 ara noktayı kabul ediyor ve çıktı SÜREKLİ.
+                # Ölçüm: 200 nokta -> 1519 geometri, tek çağrı. Sınır aşılırsa 200'lük dilim +
+                # 1 ORTAK nokta ile eklenir (ortak nokta = birebir süreklilik, kopuş imkansız).
+                q = re.sub(r"access_token=[^&]*", "", qs).strip("&")
+                q = re.sub(r"radiuses=[^&]*&?", "", q).strip("&")
+                q = "geometries=geojson&overview=full&continue_straight=true"
+                _cs = coords.split(";")
+                _DILIM = 200
+                _hep = []
+                for _ou in (_kaynaklar().get("osrm_urls") or ["https://router.project-osrm.org"]):
+                    _hep = []
+                    _i = 0
+                    _iyi = True
+                    while _i < len(_cs) - 1:
+                        _par = _cs[_i:_i + _DILIM]
+                        if len(_par) < 2:
+                            break
+                        try:
+                            _r = json.loads(_fetch(f"{_ou.rstrip('/')}/route/v1/driving/"
+                                                   + ";".join(_par) + "?" + q, timeout=45).decode())
+                            _rt = _r.get("routes") or []
+                            if not _rt:
+                                _iyi = False
+                                break
+                            _g = _rt[0].get("geometry", {}).get("coordinates") or []
+                            if _hep and _g:
+                                _g = _g[1:]          # ortak nokta tekrarlanmasın
+                            _hep.extend(_g)
+                        except Exception:
+                            _iyi = False
+                            break
+                        _i += _DILIM - 1             # SON nokta yeni dilimin İLK noktası
+                        time.sleep(0.12)
+                    if _iyi and _hep:
+                        break
+                if _hep:
+                    # 🎥 EŞİT ARALIKLI YENİDEN ÖRNEKLEME (Barış 10.08: "yumuşak takip yok, bir anda
+                    # dönüyor"). Yol geometrisi DÜZENSİZ: virajda 5 m, düz otoyolda 3 km'de bir nokta.
+                    # Motorun kamera yumuşatıcısı SABİT PENCERE (WINs=4 nokta) kullanıyor -> seyrek
+                    # bölgede pencere kilometrelerce yayılıyor, kamera tek noktada birden dönüyor.
+                    # Çözüm: çizgiyi ~20 m'de bir yeniden örnekle -> pencere her yerde aynı mesafeyi
+                    # kapsar, dönüşler kademeli olur. Şekil ve GPS sadakati DEĞİŞMEZ (ara nokta ekler).
+                    _ADIM = 0.00018          # ~20 m (derece)
+                    _re = [_hep[0]]
+                    for _k in range(1, len(_hep)):
+                        _ax, _ay = _re[-1] if _k == 1 else _hep[_k - 1]
+                        _bx, _by = _hep[_k]
+                        _dx, _dy = _bx - _ax, _by - _ay
+                        _uz = (_dx * _dx + _dy * _dy) ** 0.5
+                        if _uz > _ADIM * 1.5:
+                            _n = min(400, int(_uz / _ADIM))
+                            for _t in range(1, _n):
+                                _re.append([_ax + _dx * _t / _n, _ay + _dy * _t / _n])
+                        _re.append([_bx, _by])
+                    _hep = _re
+                    data = json.dumps({"matchings": [{"confidence": 0.9,
+                                                      "geometry": {"type": "LineString",
+                                                                   "coordinates": _hep}}]}).encode()
+                    print(f"yola-oturtma: {len(_cs)} nokta -> {len(_hep)} geometri (route+eşit aralık)", flush=True)
+                else:
+                    data = b'{"matchings":[]}'
+            try:
+                open(cp, "wb").write(data)
+            except Exception:
+                pass
+            self._send(data, "application/json")
+            return
+        g = re.match(r"^/geocoding/v5/mapbox\.places/(-?[\d.]+),(-?[\d.]+)\.json", self.path)
+        if g:
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            self._send(_geocode(float(g.group(1)), float(g.group(2)), qs), "application/json")
+            return
+        mb = RXB2.match(self.path)
+        if mb:                                    # BBOX biçimi (route_gen TEK MOZAİK)
+            _cache_tavani()
+            stil, a0, b0, a1, b1, w, h, _x2 = mb.groups()
+            kind = "strm" if stil.startswith("streets") else "sat"   # bbox: ÖLÇÜM yolu
+            lon0, lat0, lon1, lat1 = float(a0), float(b0), float(a1), float(b1)
+            w, h = int(w), int(h)
+            key = f"{kind}/bbox_{lon0:.5f}_{lat0:.5f}_{lon1:.5f}_{lat1:.5f}_{w}x{h}.jpg"
+            cp = _cpath("static", key)
+            if os.path.exists(cp):
+                self._send(open(cp, "rb").read())
+                return
+            try:
+                im = _stitch_bbox(kind, lon0, lat0, lon1, lat1, w, h)
+            except Exception as e:
+                print("bbox hata:", str(e)[:120], flush=True)
+                self._send(b"bbox uretilemedi", "text/plain", 500)
+                return
+            buf = io.BytesIO(); im.save(buf, "JPEG", quality=92)
+            veri = buf.getvalue()
+            try:
+                open(cp, "wb").write(veri)
+            except Exception:
+                pass
+            self._send(veri)
+            return
+        m = RX.match(self.path)
+        if not m:
+            self._send(b"yol taninmadi", "text/plain", 404)
+            return
+        _cache_tavani()
+        stil, lon, lat, z, w, h, at2x = m.groups()
+        kind = "strm" if stil.startswith("streets") else "sat"   # statik: ÖLÇÜM yolu (soluk pmtiles)
+        lon, lat, z, w, h = float(lon), float(lat), float(z), int(w), int(h)
+        key = f"{kind}/{z:.2f}/{lon:.5f}_{lat:.5f}_{w}x{h}.jpg"
+        cp = _cpath("static", key)
+        if os.path.exists(cp):
+            self._send(open(cp, "rb").read())
+            return
+        data = None
+        if _mapbox_ok():
+            # PASSTHROUGH: Mapbox yaşıyorken görüntü birebir bugünkü (logo/attribution=false aynen)
+            try:
+                q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                q = re.sub(r"access_token=[^&]*", "", q).strip("&")
+                url = ("https://api.mapbox.com" + self.path.split("?", 1)[0] +
+                       f"?access_token={MB}" + (("&" + q) if q else ""))
+                data = _fetch(url, timeout=45)
+            except Exception:
+                with _lock:
+                    _mb_dead["ts"] = time.time()      # 10 dk Esri'ye geç, sonra tekrar dene
+                data = None
+        if data is None:
+            img = _stitch(kind, lon, lat, z, w, h)
+            b = io.BytesIO()
+            img.save(b, "JPEG", quality=87)
+            data = b.getvalue()
+        try:
+            open(cp, "wb").write(data)
+        except Exception:
+            pass
+        self._send(data)
+
+
+_temiz_son = {"ts": 0.0}
+
+def _cache_tavani():
+    """Önbellek LRU tavanı (cache_gb): küçük diskli sunucuda arşiv sonsuz büyümesin.
+    10 dk'da bir kontrol; aşımda EN ESKİ ERİŞİLEN dosyalar silinir. Sık kullanılan bölge
+    sıcak kalır, nadir bölge tekrar akıştan gelir (Barış 2026-08-09: depolama az, akıştan render)."""
+    if time.time() - _temiz_son["ts"] < 600:
+        return
+    _temiz_son["ts"] = time.time()
+    try:
+        tavan = float(_kaynaklar().get("cache_gb", 15)) * (1024 ** 3)
+        dosyalar = []
+        toplam = 0
+        for kok, _, adlar in os.walk(CACHE):
+            for ad in adlar:
+                fp = os.path.join(kok, ad)
+                try:
+                    st = os.stat(fp)
+                    dosyalar.append((st.st_atime, st.st_size, fp))
+                    toplam += st.st_size
+                except OSError:
+                    pass
+        if toplam <= tavan:
+            return
+        dosyalar.sort()                                   # en eski erişilen önce
+        for _, boyut, fp in dosyalar:
+            try:
+                os.remove(fp)
+                toplam -= boyut
+            except OSError:
+                pass
+            if toplam <= tavan * 0.9:
+                break
+        print(f"önbellek LRU: tavana indirildi ({toplam/1e9:.1f}GB)", flush=True)
+    except Exception as e:
+        print("önbellek temizlik hata:", str(e)[:80], flush=True)
+
+
+if __name__ == "__main__":
+    os.makedirs(CACHE, exist_ok=True)
+    ThreadingHTTPServer(("127.0.0.1", 8890), H).serve_forever()

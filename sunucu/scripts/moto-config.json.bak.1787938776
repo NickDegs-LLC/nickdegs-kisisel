@@ -1,0 +1,16 @@
+{
+  "home_lat": 40.978605,
+  "home_lon": 37.923993,
+  "home_radius_m": 180,
+  "notify_after_hour": 20,
+  "summary_hour": 21,
+  "stop_minutes": 5,
+  "stop_radius_m": 60,
+  "gap_minutes": 15,
+  "auto_video": true,
+  "video_speed": "medium",
+  "video_mode": "flyover",
+  "video_aspect": "16:9",
+  "video_dot_color": "#ff3b30",
+  "video_line_color": "#00e5ff"
+}

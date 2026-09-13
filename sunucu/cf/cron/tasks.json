@@ -1,0 +1,762 @@
+{
+  "_meta": {
+    "olusturma": "2026-08-30",
+    "kaynak": "/etc/systemd/system/*.timer + .service ExecStart + scriptlerin kendisi (satır satır okundu)",
+    "sunucu_tz": "CEST (UTC+2) — timedatectl ile ölçüldü; OnCalendar yerel saatleri UTC'ye çevrildi. Cloudflare Cron UTC çalışır; DST notları interval_note'ta.",
+    "cron_sinir": "Cron Triggers: Worker başına 5 ifade. Çözüm: movelog-cron worker 3 ifade kullanır — '* * * * *' (dakikalık), '*/10 * * * *' (10dk), '0 * * * *' (saatlik). Görev tablosundaki tetik_grubu alanı hangi ifadeye bağlandığını söyler; grup içinde dakika/saat eşleşmesiyle (modulo) seçilir. DİKKAT (2026-08-30 itiraz düzeltmesi): 10dk ifadesi yalnız :00/:10/:20/:30/:40/:50 tetikler — dakikası 10'a bölünmeyen işler (5,35 · 3,18,33,48 · */12) 10dk grubundan ASLA seçilemez, bunlar dakikalık gruba bağlandı. Saatlik ifade yalnız :00 tetikler — dakikası 0 olmayan günlük işler (15:45/15:40/18:15/15:30) ya saat başına yuvarlanır (notlardaki öneri) ya da dakikalık gruba alınır; karar Faz 3'te.",
+    "oncelik_skalasi": [
+      "kritik",
+      "yüksek",
+      "orta",
+      "düşük"
+    ],
+    "tasinmayanlar": [
+      "movelog-adminnum-sync",
+      "movelog-routes-sync",
+      "movelog-tacclean",
+      "movelog-optimize",
+      "movelog-yenisurum-hatirlatma",
+      "traccar-gpx",
+      "matrix-movelog-review-watch"
+    ],
+    "unit_durum_olcum": "2026-08-30 systemctl is-enabled/is-active ile ölçüldü: 6 birim DISABLED/inactive — movelog-adminnum-sync, movelog-routes-sync, movelog-optimize, movelog-yenisurum-hatirlatma, movelog-review-state-watch, matrix-movelog-review-watch. Kalan 21 timer enabled+aktif (27-6=21; 2026-08-30 ikinci itirazda tek tek is-enabled/is-active ile yeniden sayıldı — önceki '20' sayım hatasıydı). movelog-cloud.service ve movelog-ptt.service timer DEĞİL kalıcı daemon — bu cron tablosuna girmez, göç planında ayrı ele alınır."
+  },
+  "tasks": [
+    {
+      "name": "activity-detect",
+      "cron": "* * * * *",
+      "interval_note": "OnUnitActiveSec=30s -> DAKİKAYA YUVARLANDI (CF cron min 1dk). Biten aktivitenin yakalanması en kötü ~90sn gecikir; kabul edilebilir (SETTLE zaten dakikalar mertebesinde).",
+      "source": "activity-detect.timer -> flock activity-detect.lock + /opt/matrix/scripts/activity-detect.py (746 satır)",
+      "summary": "Günün Traccar GPS'ini cihaz başına segmentlere böler, hız+nabızla tip atar (yürüyüş/koşu/bisiklet/motor/araba) ve biten aktiviteyi backend'e ride olarak kaydedip oto-video dispatch eder (RunPod 3B / tac_dispatch taktik / .bulut-kapali bayrağında telefon). Ayrıca R2 kontrolüyle takılan oto-videoları yeniden POST'lar/yeniden dispatch eder, TCX'i Element'e yükler ve kullanıcıya push atar (satır 100-110 fan-out, 355-360 register-ride, 389-484 dispatch, 559-610 retry).",
+      "reads": [
+        "Traccar /api/devices + /api/positions (127.0.0.1:8084)",
+        "social.json: profiles (trackerId->user eşleme, satır 128)",
+        "moto-config.json (auto_video, eşikler)",
+        "/opt/movelog/data/genreq + summaryreq kuyrukları",
+        "R2 videos/ (head, retry kontrolü)",
+        "/opt/matrix/routes/.bulut-kapali bayrağı",
+        ".sent-activities durum dosyaları"
+      ],
+      "writes": [
+        "backend POST /api/internal/register-ride -> social.json detected_rides",
+        "backend POST /api/internal/render-done (R2'de hazır videoyu land'ler)",
+        "/opt/matrix/routes/*.tcx + sent_act/",
+        "/opt/movelog/data/free-push-sayac.json",
+        "genreq/auto_*.json (telefon yedek yolu)",
+        "tacwork/job_*.json (taktik)"
+      ],
+      "external": [
+        "RunPod api.runpod.ai/v2/.../run (satır 454)",
+        "APNs/FCM (push.py)",
+        "Matrix HS 127.0.0.1:8008 (TCX -> Element)",
+        "harita-proxy 127.0.0.1:8890 geocoding (_country_of, satır 30)",
+        "gcloud pubsub (ölü Cloud Run yolu, satır 472/517)"
+      ],
+      "server_deps": [
+        "Traccar (yerel 8084)",
+        "harita-proxy 8890 SABİT URL",
+        "yerel disk (routes/, tacwork/)",
+        "tac_dispatch.py subprocess",
+        "push.py subprocess",
+        "flock kilidi",
+        "Matrix Synapse (kişisel TCX ayağı)"
+      ],
+      "cf_plan": "ÇEKİRDEK TAŞINIR (en büyük iş): positions D1'den okunur (movelog-gps worker ingest), segment/tip algoritması TS'e portlanır, register-ride D1'e doğrudan yazılır, oto-video dispatch Queue movelog-render'a düşer (movelog-dispatch RunPod'a iletir), retry mantığı R2 binding + D1 pending ile cron'da kalır, .bulut-kapali bayrağı KV anahtarı olur, geocoding K0 sonrası ortak katmanın public URL'ine döner. TAŞINMAYAN parça: Barış'ın kişisel TCX->Element ayağı (Matrix sunucuda; kapsam dışı) — CF tarafında ride kaydı+video herkes için çalışır, TCX ayağı sunucuda küçük bir script olarak kalır ya da emekli edilir. gcloud pubsub yolu zaten ölü, portlanmaz.",
+      "priority": "kritik",
+      "port_effort": "yüksek",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-pending-reconcile",
+      "cron": "* * * * *",
+      "interval_note": "Timer açıklaması '3 dakika' der ama OnUnitActiveSec=60 (ölçüldü) -> gerçek tempo ~1dk; CF'de birebir * * * * *.",
+      "source": "movelog-pending-reconcile.timer -> /opt/matrix/scripts/movelog-pending-reconcile.py (114 satır)",
+      "summary": "Takılı 'Hazırlanıyor' videolarını iyileştirir: R2'de dosyası olan pending'i render-done ile finalize eder, videosuz+prosessiz+90dk'dan eskiyi render-failed ile temizler (satır 88-107). Ayrıca yetim süpürmesi: R2'de olup cloud_videos'ta kaydı olmayan videoyu detected_rides metadata'sıyla içeriden render-done'lar (satır 52-70, Semra vakası).",
+      "reads": [
+        "social.json: pending_videos, cloud_videos, detected_rides",
+        "R2 list_objects videos/ + head_object",
+        "pgrep render_job.py (lokal render süreci var mı)",
+        "tacwork/job_*.json (aspect/type)"
+      ],
+      "writes": [
+        "backend POST /api/internal/render-done",
+        "backend POST /api/internal/render-failed"
+      ],
+      "external": [
+        "R2 S3 API (boto3)"
+      ],
+      "server_deps": [
+        "secrets movelog-backend.conf (RENDER_DONE_SECRET) + movelog-r2.conf",
+        "pgrep (lokal süreç kontrolü)",
+        "backend 127.0.0.1:8780"
+      ],
+      "cf_plan": "TAŞINIR (temiz aday): cron worker 1dk; pending_videos/cloud_videos D1'de, R2 binding ile list/head, render-done/failed movelog-api'nin internal fonksiyonu olur (HTTP yerine doğrudan D1 transaction -> bugünkü oku-değiştir-yaz yarışının kökü de kapanır). pgrep yerine RunPod job status sorgusu (dispatch worker job id'yi D1'e yazar). Sırlar wrangler secret.",
+      "priority": "kritik",
+      "port_effort": "orta",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-render-bekci",
+      "cron": "*/10 * * * *",
+      "interval_note": "OnUnitActiveSec=10min -> birebir */10.",
+      "source": "movelog-render-bekci.timer -> /opt/matrix/scripts/movelog-render-bekci.py (204 satır)",
+      "summary": "RunPod render hattının bekçisi: workersMax=0 görürse kendisi 15'e açar, bakiye eşik altındaysa Barış'a bildirir, bakiye $0.50 altına inince .bulut-kapali bayrağı bırakıp Premium işleri telefona yönlendirir, kuyruk 25dk ilerlemiyorsa ve genreq'te 30dk+ bekleyen iş varsa alarm verir (satır 89-188). Sadece Barış'a yazar, son kullanıcıya asla.",
+      "reads": [
+        "RunPod REST /endpoints (workersMax)",
+        "RunPod /health (kuyruk/worker)",
+        "RunPod GraphQL clientBalance (User-Agent ŞART, satır 105-111)",
+        "genreq dizinleri x2 (bekleyen iş yaşı)",
+        "render-bekci.json durum"
+      ],
+      "writes": [
+        "RunPod PATCH workersMax",
+        "/opt/matrix/routes/.bulut-kapali bayrağı (koy/kaldır)",
+        "render-bekci.json (retry sayaçları, sessizlik damgaları)"
+      ],
+      "external": [
+        "RunPod REST + api.runpod.ai + GraphQL",
+        "notify-admin.sh (Telegram+WhatsApp)"
+      ],
+      "server_deps": [
+        "api-env.sh get RUNPOD_KEY",
+        "fcntl dosya kilidi",
+        "yerel genreq dizinleri"
+      ],
+      "cf_plan": "TAŞINIR: cron worker 10dk; RunPod çağrıları fetch ile aynen, durum+sessizlik sayaçları KV, .bulut-kapali bayrağı KV anahtarı (activity-detect ve dispatch worker aynı anahtarı okur), genreq yaş kontrolü D1 render kuyruğu tablosundan, bildirim Telegram Bot API fetch. RUNPOD_KEY wrangler secret.",
+      "priority": "kritik",
+      "port_effort": "düşük",
+      "tetik_grubu": "10dk"
+    },
+    {
+      "name": "movelog-broadcast",
+      "cron": "* * * * *",
+      "interval_note": "Timer açıklaması 'her dakika' der ama OnUnitActiveSec=20 (ölçüldü, 20 SANİYE) -> DAKİKAYA YUVARLANDI. Canlı-takip sessiz push'unda +40sn gecikme demek; CF'de doğrusu cron değil olay-güdümlü (aşağıda).",
+      "source": "movelog-broadcast.timer -> /opt/matrix/scripts/movelog-broadcast.py (79 satır)",
+      "summary": "Üç kuyruğu boşaltır: pushq/ (hedefli push — arkadaşlık, canlı-takip sessiz uyandırma; ptt_* dosyalarına DOKUNMAZ, onlar movelog-ptt'de), adminq/ (satın alım vb. -> Barış'a Telegram+WhatsApp) ve broadcast/ (apns'li TÜM kullanıcılara, kişi başına tek dilde) (satır 10-75).",
+      "reads": [
+        "/opt/movelog/data/pushq/*.json",
+        "adminq/*.json",
+        "broadcast/*.json",
+        "social.json: profiles (apns, lang)"
+      ],
+      "writes": [
+        "işlenen kuyruk dosyalarını siler"
+      ],
+      "external": [
+        "APNs/FCM (push.py subprocess)",
+        "notify-admin.sh"
+      ],
+      "server_deps": [
+        "push.py",
+        "notify-admin.sh",
+        "yerel kuyruk dizinleri"
+      ],
+      "cf_plan": "TAŞINIR ama BİÇİM DEĞİŞİR: dosya kuyruğu ölür — movelog-api push'u doğrudan Queue'ya (veya push tablosuna) yazar, tüketici Queue consumer olur -> 20sn tempo yerine SANİYELER (canlı takip için bugünden iyi). APNs/FCM imzalama Worker'da WebCrypto (Faz 3 planında var). Cron sadece emniyet süpürgesi olarak dakikalık kalır. adminq -> Telegram Bot API fetch.",
+      "priority": "yüksek",
+      "port_effort": "orta",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-genreq",
+      "cron": "*/2 * * * *",
+      "interval_note": "OnUnitActiveSec=2min -> birebir */2.",
+      "source": "movelog-genreq.timer -> flock claude-shared.lock + /opt/matrix/scripts/movelog-genreq.py (49 satır)",
+      "summary": "Manuel video üretim kuyruğu: genreq/*.json isteklerini çekip flat/flyover modları için LOKAL route-video.py render'ı başlatır, bitince kullanıcıya 'Videon hazır' push'u atar. tactical/3d isteklerini SİLMEDEN atlar — onları movelog-cloud.service alır (yarış notu satır 12-20).",
+      "reads": [
+        "/opt/movelog/data/genreq/*.json",
+        "ridephotos/<dir> (anı fotoğrafları + music.m4a)",
+        "/opt/matrix/assets/music/*.mp3 (stok müzik)"
+      ],
+      "writes": [
+        "/opt/matrix/routes/genreq (yerel kuyruk)",
+        "route-video.py çıktı videoları (yerel disk)",
+        "işlenen isteği siler"
+      ],
+      "external": [
+        "APNs (push.py)"
+      ],
+      "server_deps": [
+        "route-video.py LOKAL RENDER (PIL/ffmpeg — Worker'da ÇALIŞMAZ)",
+        "flock claude-shared.lock",
+        "yerel müzik/foto dosyaları"
+      ],
+      "cf_plan": "KUYRUK TAŞINIR, RENDER TAŞINMAZ: istek alma movelog-api'ye, sıraya koyma Queue movelog-render'a geçer; flat/flyover render'ı Worker'da imkânsız (PIL/ffmpeg) -> Faz T deseniyle RunPod motoruna gider (motor route-video modlarını zaten biliyor) veya telefonda LocalRouteVideo. Fotoğraf/müzik R2'ye alınır (uploaded ridephotos zaten kullanıcı verisi). Kuyruk yarışı (genreq vs movelog-cloud) Queue'da tek tüketiciyle kökten çözülür.",
+      "priority": "yüksek",
+      "port_effort": "yüksek",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-rangereq",
+      "cron": "* * * * *",
+      "interval_note": "OnUnitActiveSec=30s -> DAKİKAYA YUVARLANDI. Kullanıcı Özet sekmesinde bekler; +30sn hissedilir ama kabul edilebilir. CF'de doğrusu: istek anında API worker'da işlenir, cron'a hiç gerek kalmaz.",
+      "source": "movelog-rangereq.timer -> flock claude-shared.lock + /opt/matrix/scripts/movelog-rangereq.py (85 satır)",
+      "summary": "Uygulamanın 'tarih+saat aralığı özeti' isteklerini işler: Traccar'dan pozisyonları çekip km/süre/ort-max hız/aktivite tahmini hesaplar, sent_act/<etiket>_<user>_ozet.txt yazar (sahip eki ZORUNLU — gizlilik vakası satır 70-73) ve kullanıcıya push atar. Sonda routes-sync'i tetikler.",
+      "reads": [
+        "/opt/movelog/data/rangereq/*.json",
+        "Traccar /api/devices + /api/positions"
+      ],
+      "writes": [
+        "/opt/matrix/routes/sent_act/*_ozet.txt",
+        "işlenen isteği siler",
+        "systemctl start movelog-routes-sync"
+      ],
+      "external": [
+        "APNs (push.py)"
+      ],
+      "server_deps": [
+        "Traccar 8084",
+        "yerel sent_act dizini",
+        "systemctl"
+      ],
+      "cf_plan": "TAŞINIR ve SADELEŞİR: /api/rangereq ucu movelog-api'de senkron/queue işlenir — pozisyonlar D1 positions'tan sorgulanır, özet D1 activities tablosuna yazılır (/api/activities zaten oradan okur), push anında. Dosya kuyruğu + rsync zinciri + cron tamamen ölür. Tek şart: GPS geçmişinin D1'de olması (movelog-gps Faz 1). (Doğrulama 2026-08-30: satır 85 hâlâ 'systemctl start movelog-routes-sync' çağırıyor; routes-sync timer'ı disabled ama start ile yine koşar — CF'de bu tetik zaten tamamen kalkıyor.)",
+      "priority": "yüksek",
+      "port_effort": "düşük",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-grupsurus",
+      "cron": "*/10 * * * *",
+      "interval_note": "OnCalendar=*:0/10 -> birebir */10.",
+      "source": "movelog-grupsurus.timer -> /opt/matrix/scripts/movelog-grupsurus.py (296 satır)",
+      "summary": "Arkadaş/kulüp çiftlerinin birlikte sürüşünü algılar: günün Traccar izlerini 30sn ızgarada örnekleyip <=300m yakın + hareketli koşuları bulur, çiftleri N-kişilik kümelere birleştirir ve en az biri Premium/Ultra ise RunPod'a ortak 3D video işi dispatch eder (satır 157-165, 276-287); hepsi free ise günde 1 upsell push'u kuyruklar.",
+      "reads": [
+        "social.json: profiles (trackerId, premium/ultra, group_video, lang), friends, clubs",
+        "Traccar /api/devices + /api/positions (gün penceresi)",
+        ".grupsurus_sent.json"
+      ],
+      "writes": [
+        ".grupsurus_sent.json (tekilleştirme)",
+        "pushq/grup_upsell_*.json"
+      ],
+      "external": [
+        "RunPod api.runpod.ai/v2/.../run"
+      ],
+      "server_deps": [
+        "Traccar 8084",
+        "secrets runpod.conf",
+        "yerel durum dosyası"
+      ],
+      "cf_plan": "TAŞINIR: cron 10dk; iz örnekleme/yakınlık algoritması TS'e portlanır, veri D1 positions + D1 friends/clubs'tan; dispatch Queue üzerinden movelog-dispatch'e; sent durumu KV/D1. Dikkat: 30sn ızgara sorguları D1'de gün başına cihaz çifti x ~2900 örnek — sorgu pencereli yapılmalı (tek SELECT ile aralık çek, bellekte örnekle; bugünkü script de öyle yapıyor).",
+      "priority": "orta",
+      "port_effort": "yüksek",
+      "tetik_grubu": "10dk"
+    },
+    {
+      "name": "movelog-rearm",
+      "cron": "5,35 * * * *",
+      "interval_note": "OnCalendar=*:5/30 -> birebir 5,35. DÜZELTME (2026-08-30 itiraz): 10dk grubu :0/:10/...:50 tetikler, dakika==5|35 oradan HİÇ seçilemezdi — dakikalık gruba alındı (dakika==5|35 kontrolüyle), takvim birebir korunur.",
+      "source": "movelog-rearm.timer -> /opt/matrix/scripts/movelog-rearm-watchdog.py (51 satır)",
+      "summary": "Güncelleme sonrası ölü kalan iOS oto-takibi diriltir: apns'li kullanıcının Traccar cihazı 2-48 saattir sessizse sessiz push atar, app arka planda uyanıp SLC+BGTask tetiklerini yeniden kurar. Kullanıcı başına 2 saatte 1 (marker, satır 42-45).",
+      "reads": [
+        "social.json: profiles (apns, trackerId)",
+        "Traccar /api/devices (lastUpdate)",
+        ".rearm/ marker'ları"
+      ],
+      "writes": [
+        ".rearm/<user> marker"
+      ],
+      "external": [
+        "APNs sessiz push (push.py --silent)"
+      ],
+      "server_deps": [
+        "Traccar 8084",
+        "push.py",
+        "yerel marker dizini"
+      ],
+      "cf_plan": "TAŞINIR: cron 30dk; lastUpdate yerine D1 positions'taki son fix zamanı, marker KV (TTL 2 saat — kendi kendine temizlenir), sessiz push Worker APNs'i. movelog-rearm.timer oto-takip zincirinin bekçisi olduğu için Faz 3'te activity-detect ile birlikte gelmeli.",
+      "priority": "yüksek",
+      "port_effort": "düşük",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-integrity-auto",
+      "cron": "*/30 * * * *",
+      "interval_note": "OnUnitActiveSec=30min -> */30. 10dk grubunda dakika%30==0 kontrolüyle.",
+      "source": "movelog-integrity-auto.timer -> flock movelog-integrity.lock + /opt/matrix/scripts/movelog-integrity-auto.py (216 satır)",
+      "summary": "Cihaz doğrulamayı (Play Integrity/App Attest) ölçerek platform başına açar: 24 saatte >=50 deneme ve >=%98 geçme varsa enforce'u açar; açıkken gerçek istemcilere (okhttp/CFNetwork) 30dk'da %3+ 403 görürse OTOMATİK geri alır (satır 157-205). Şüphede KAPALI tarafta kalır (Hooder 17/22 vakası, başlık yorumu).",
+      "reads": [
+        "integrity_stats.db (sqlite)",
+        "/opt/movelog/backend/config.env (mevcut enforce)",
+        "/var/log/nginx/access.log son 3MB (403 oranı)"
+      ],
+      "writes": [
+        "config.env (INTEGRITY_ENFORCE/APPATTEST_ENFORCE)",
+        "docker compose restart movelog-api",
+        "/var/lib/movelog/integrity_auto_state"
+      ],
+      "external": [
+        "reply.sh (Barış'a bildirim)",
+        "curl localhost health"
+      ],
+      "server_deps": [
+        "sqlite DB",
+        "nginx access.log",
+        "docker compose restart",
+        "config.env dosyası"
+      ],
+      "cf_plan": "TAŞINIR ama YENİDEN TASARLANIR: enforce bayrağı KV'ye geçer (Worker her istekte okur -> restart kavramı tamamen ölür), integrity_stats D1 tablosu olur (movelog-api geçme/kalma sayacını kendisi yazar), 403 ölçümü nginx log yerine Worker'ın kendi tuttuğu D1/Analytics Engine sayacından. Karar mantığı (eşikler) birebir portlanır. nginx-log ve docker-restart parçalarının CF karşılığı YOK ve gerekmez.",
+      "priority": "orta",
+      "port_effort": "yüksek",
+      "tetik_grubu": "10dk"
+    },
+    {
+      "name": "movelog-olay-watch",
+      "cron": "3-59/15 * * * *",
+      "interval_note": "OnCalendar=*:3/15 -> 3,18,33,48. DÜZELTME (2026-08-30 itiraz): 10dk grubu :0/:10/...:50 tetikler, 3/18/33/48 dakikaları oradan HİÇ seçilemezdi (önceki '10/20dk olur' notu da muğlaktı) — dakikalık gruba alındı (dakika in {3,18,33,48}), 15dk takvim birebir korunur.",
+      "source": "movelog-olay-watch.timer -> /opt/matrix/scripts/movelog-olay-watch.py (52 satır)",
+      "summary": "adminq'nun kapsamadığı olayları tarayıp Barış'a bildirir: yeni hediye (tadımlık) video (.gift_* marker), yeni kulüp kurulumu ve ilk grup videosu (satır 26-44). Durum dosyasıyla tekilleştirir.",
+      "reads": [
+        "/opt/matrix/routes/.gift_* marker'ları",
+        "social.json: clubs, cloud_videos, profiles",
+        ".movelog_olay_state.json"
+      ],
+      "writes": [
+        ".movelog_olay_state.json"
+      ],
+      "external": [
+        "notify-admin.sh (Telegram+WhatsApp)"
+      ],
+      "server_deps": [
+        "yerel .gift_* marker'ları (movelog-cloud yazar)",
+        "notify-admin.sh"
+      ],
+      "cf_plan": "TAŞINIR: gift/club/grupvideo olayları D1'de zaten satır olarak duracak — cron yerine olayların yazıldığı yerde (movelog-api) doğrudan Telegram bildirimi atmak daha doğru; cron sadece süpürge olarak 15dk kalabilir. Görülen-durum KV.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "dakikalık"
+    },
+    {
+      "name": "movelog-video-kontrol",
+      "cron": "0 */6 * * *",
+      "interval_note": "OnUnitActiveSec=6h -> saatlik grupta saat%6==0.",
+      "source": "movelog-video-kontrol.timer -> /opt/matrix/scripts/movelog-video-kontrol.py (205 satır)",
+      "summary": "Son 48 saatin en yeni 5 videosunu KULLANICI GİBİ sınar: R2'de var mı/boyut/Content-Type, teslim ucundan kullanıcının kendi JWT'si + Range ile ilk 256KB inebiliyor mu, ftyp+moov başta mı (faststart), ffprobe çözebiliyor mu (satır 86-148). Bozuksa sadece Barış'a bildirir (302/AVPlayer vakası, 2026-08-28).",
+      "reads": [
+        "social.json: cloud_videos, profiles",
+        "R2 head_object",
+        "backend /api/rides/<rid>/video (Range GET)"
+      ],
+      "writes": [
+        "video-kontrol.json (durum/sessizlik)"
+      ],
+      "external": [
+        "R2 S3 API",
+        "notify-admin.sh"
+      ],
+      "server_deps": [
+        "docker exec make_jwt (kullanıcı token üretimi)",
+        "ffprobe",
+        "fcntl kilit"
+      ],
+      "cf_plan": "BÜYÜK ORANDA TAŞINIR: cron 6h; R2 binding head, teslim GET'i movelog-api'nin public URL'ine (Worker kendi make_jwt eşleniğiyle token imzalar — docker exec gerekmez), ftyp/moov bayt kontrolü TS'te trivial. TAŞINMAYAN adım: ffprobe (Worker'da subprocess yok) — bayt kontrolü + süre alanı yeterli sinyal; istenirse derin kontrol RunPod'da küçük bir QA job'ı olur.",
+      "priority": "orta",
+      "port_effort": "orta",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-gunluk-rapor",
+      "cron": "0 6 * * *",
+      "interval_note": "OnCalendar UTC sabit (06:00 UTC = 09:00 TR) -> birebir, DST derdi yok.",
+      "source": "movelog-gunluk-rapor.timer -> /opt/matrix/scripts/movelog-gunluk-rapor.py (49 satır)",
+      "summary": "Günlük büyüme raporu: gerçek üye sayısı (demo/appreview hariç), 24s aktif, push izinli, sürüş/video hareketi ve satın alımları sayar; SADECE yeni satın alım varsa Barış'a bildirir (2026-08-26 kuralı, satır 41-44). Dünle kıyas için durum dosyası tutar.",
+      "reads": [
+        "social.json: profiles, seen, iap_used, cloud_videos, detected_rides"
+      ],
+      "writes": [
+        ".movelog_rapor_state.json"
+      ],
+      "external": [
+        "notify-admin.sh"
+      ],
+      "server_deps": [
+        "yerel durum dosyası"
+      ],
+      "cf_plan": "TAŞINIR (kolay): cron 06:00 UTC; sayımlar D1 COUNT sorguları, durum KV, bildirim Telegram Bot API fetch.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-hava",
+      "cron": "45 15 * * *",
+      "interval_note": "OnCalendar 17:45 YEREL(CEST)=15:45 UTC=18:45 TR. Kışın CET'e dönünce sunucu 16:45 UTC'ye kayar — CF'de UTC sabitlenir, saat başına yuvarlanıp saatlik gruba alınabilir (16:00 UTC önerisi).",
+      "source": "movelog-hava.timer -> /opt/matrix/scripts/movelog-hava.py (92 satır)",
+      "summary": "Sürüş havası asistanı: her kullanıcının son Traccar konumuna Open-Meteo'dan yarının tahminini çeker; 08-20 arası yağışsız+15-32°C+rüzgar<30 en az 4 saatlik pencere varsa kendi dilinde 'yarın mükemmel sürüş havası' push'u atar (satır 59-88). Kullanıcı başına haftada en çok 3 (marker sayacı).",
+      "reads": [
+        "social.json: profiles (apns, trackerId, lang)",
+        "Traccar /api/devices + /api/positions (son konum)",
+        ".hava/ marker'ları"
+      ],
+      "writes": [
+        ".hava/<user>_<ts> marker"
+      ],
+      "external": [
+        "api.open-meteo.com (ücretsiz, anahtar yok)",
+        "APNs (push.py)"
+      ],
+      "server_deps": [
+        "Traccar 8084",
+        "yerel marker dizini"
+      ],
+      "cf_plan": "TAŞINIR: cron günlük; son konum D1 positions'tan (MAX(t) per device), Open-Meteo fetch aynen, haftalık sayaç KV (TTL 7 gün), push Worker APNs.",
+      "priority": "orta",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-ilkvideo-nudge",
+      "cron": "40 15 * * *",
+      "interval_note": "OnCalendar 17:40 YEREL(CEST)=15:40 UTC=18:40 TR (service açıklamasıyla tutarlı, ölçüldü). DST kayması hava ile aynı; saatlik gruba 16:00 UTC yuvarlaması önerilir.",
+      "source": "movelog-ilkvideo-nudge.timer -> /opt/matrix/scripts/movelog-ilkvideo-nudge.py --live (123 satır)",
+      "summary": "Sürüş kaydı olan ama hiç video üretmemiş kullanıcıya ÖMÜR BOYU 1 kez, günde en çok 5 kişiye 'sürüşünü videoya çevir' daveti kuyruklar (satır 74-114). Son 14 günde >=2km sürüşü olmayan, push token'sız, admin/demo hesaplar elenir.",
+      "reads": [
+        "social.json: profiles, render_counts",
+        "ilkvideo-nudge.json (ömür boyu durum)",
+        "Traccar /api/devices + /reports/summary (km)"
+      ],
+      "writes": [
+        "pushq/ilkvideo_*.json",
+        "ilkvideo-nudge.json"
+      ],
+      "external": [
+        "(dolaylı APNs — broadcast worker gönderir)"
+      ],
+      "server_deps": [
+        "Traccar 8084 + reports/summary",
+        "yerel durum dosyası"
+      ],
+      "cf_plan": "TAŞINIR: cron günlük; render_counts/profiles D1, km özeti D1 positions'tan hesaplanır (Traccar reports/summary'nin eşleniği basit SUM(mesafe) sorgusu), ömür-boyu durum D1 tek tablo, push doğrudan Queue'ya.",
+      "priority": "düşük",
+      "port_effort": "orta",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-rozet",
+      "cron": "15 18 * * *",
+      "interval_note": "OnCalendar 20:15 YEREL(CEST)=18:15 UTC. Saatlik gruba 18:00 UTC yuvarlaması önerilir.",
+      "source": "movelog-rozet.timer -> /opt/matrix/scripts/movelog-rozet.py (64 satır)",
+      "summary": "detected_rides geçmişinden kullanıcı başına rozet hesaplar (first/km1000/km5000/longride/night/cities5/streak7/social) ve YENİ rozet varsa backend /api/internal/badges'e POST'lar; yeni rozette kullanıcıya kendi dilinde push'u backend atar (satır 36-58).",
+      "reads": [
+        "social.json: detected_rides, cloud_videos (group), profiles.badges"
+      ],
+      "writes": [
+        "backend POST /api/internal/badges (REG_SECRET ile)"
+      ],
+      "external": [
+        "(dolaylı APNs — backend atar)"
+      ],
+      "server_deps": [
+        "backend 127.0.0.1:8780",
+        "REG_SECRET script içinde SABİT (sır envanterine girmeli!)"
+      ],
+      "cf_plan": "TAŞINIR (kolay): cron günlük; hesap D1 detected_rides üzerinden, badges movelog-api internal fonksiyonuna (HTTP+secret yerine doğrudan çağrı). Koddaki gömülü REG_SECRET portta wrangler secret'a taşınmalı ve rotate edilmeli.",
+      "priority": "orta",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-kulup-karne",
+      "cron": "30 15 * * 0",
+      "interval_note": "OnCalendar Sun 17:30 YEREL(CEST)=15:30 UTC. Saatlik gruba Paz 16:00 UTC yuvarlaması önerilir (weekly-recap ile aynı saat olur — sıra: karne önce/recap sonra farkı önemsiz).",
+      "source": "movelog-kulup-karne.timer -> /opt/matrix/scripts/movelog-kulup-karne.py (60 satır)",
+      "summary": "Pazar akşamı her kulübe haftalık karne: son 7 günün detected_rides'ından toplam km, sürüş sayısı, lider ve en uzun sürüşü hesaplar, tüm üyelere kendi dilinde push atar. 0 km (sessiz) kulüp atlanır (satır 45).",
+      "reads": [
+        "social.json: detected_rides, clubs, profiles"
+      ],
+      "writes": [],
+      "external": [
+        "APNs (push.py)"
+      ],
+      "server_deps": [
+        "push.py"
+      ],
+      "cf_plan": "TAŞINIR (kolay): cron haftalık; D1 GROUP BY sorguları + Worker APNs.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-weekly-recap",
+      "cron": "0 16 * * 0",
+      "interval_note": "OnCalendar UTC sabit (Paz 16:00 UTC = 19:00 TR) -> birebir, DST derdi yok.",
+      "source": "movelog-weekly-recap.timer -> /opt/matrix/scripts/movelog-weekly-recap.py --live (85 satır)",
+      "summary": "Haftalık recap push (CANLI, Barış onaylı 2026-07-26): son 7 günün detected_rides'ından kullanıcı başına sürüş sayısı, aktif gün, toplam süre ve ardışık-gün serisini hesaplayıp 12 dilde push atar (streak>=2 ise seri satırı + CTA).",
+      "reads": [
+        "social.json: detected_rides, profiles (apns/fcm, lang)"
+      ],
+      "writes": [],
+      "external": [
+        "APNs/FCM (push.py)"
+      ],
+      "server_deps": [
+        "push.py"
+      ],
+      "cf_plan": "TAŞINIR (kolay): cron haftalık; D1 sorguları + Worker APNs/FCM. Şablonlar TS sabitine taşınır.",
+      "priority": "orta",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-wrapped",
+      "cron": "0 15 20 12 *",
+      "interval_note": "OnCalendar *-12-20 16:00 YEREL — Aralık'ta sunucu CET(UTC+1) olur -> 15:00 UTC (CEST değil, dikkat).",
+      "source": "movelog-wrapped.timer -> /opt/matrix/scripts/movelog-wrapped.py (36 satır)",
+      "summary": "Yılda 1 kez (20 Aralık) tüm apns'li kullanıcılara kendi dilinde 'Ride Wrapped hazır' duyurusu atar; içerik app'teki /api/wrapped ekranında.",
+      "reads": [
+        "social.json: profiles (apns, lang)"
+      ],
+      "writes": [],
+      "external": [
+        "APNs (push.py)"
+      ],
+      "server_deps": [
+        "push.py"
+      ],
+      "cf_plan": "TAŞINIR (en kolay): cron yıllık; profiles D1 + Worker APNs.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "saatlik"
+    },
+    {
+      "name": "movelog-yorum-watch",
+      "cron": "*/30 * * * *",
+      "interval_note": "OnUnitActiveSec=30min -> */30; 10dk grubunda dakika%30==0.",
+      "source": "movelog-yorum-watch.timer -> /opt/matrix/scripts/movelog-yorum-watch.py (51 satır)",
+      "summary": "ASC yeni mağaza yorumu bildirmediği için biz izliyoruz: 30dk'da bir customerReviews çeker, görülmemiş yorumu yıldız/ülke/metinle Barış'a bildirir. İlk koşuda mevcutları sessizce tohumlar (satır 29-31).",
+      "reads": [
+        "App Store Connect API customerReviews (asc.py, ES256 JWT)",
+        ".movelog_yorum_seen.json"
+      ],
+      "writes": [
+        ".movelog_yorum_seen.json"
+      ],
+      "external": [
+        "api.appstoreconnect.apple.com",
+        "notify-admin.sh"
+      ],
+      "server_deps": [
+        "/opt/matrix/kisisel-app/asc.py + ASC .p8 anahtarı"
+      ],
+      "cf_plan": "TAŞINIR: ES256 JWT WebCrypto ile imzalanır (Faz 3 APNs'inkiyle aynı yöntem), görülen-id seti KV, bildirim Telegram fetch. ASC .p8 wrangler secret. Admin aracı olduğu için istenirse sunucuda da bırakılabilir; ama sunucu emekliliği (Faz 4) hedefse taşınmalı.",
+      "priority": "düşük",
+      "port_effort": "orta",
+      "tetik_grubu": "10dk"
+    },
+    {
+      "name": "movelog-review-state-watch",
+      "cron": "*/12 * * * *",
+      "interval_note": "OnUnitActiveSec=12min. DÜZELTME (2026-08-30 itiraz): önceki not '10dk grubunda fiilen 10dk olur' diyordu ama 10dk grubu :0/:10/...:50 tetikler, dakika%12==0 oradan yalnız :00'da tutar (fiilen SAATLİK olurdu) — dakikalık gruba alındı (dakika%12==0 -> :0,:12,:24,:36,:48), 12dk takvim birebir korunur.",
+      "source": "movelog-review-state-watch.timer -> /opt/matrix/scripts/movelog-review-state-watch.py (23 satır)",
+      "summary": "iOS review submission durumunu izler: appStoreVersions'ın appStoreState'i değişince (WAITING->IN_REVIEW->onay/red) Telegram'a bildirir. Durum tek satırlık dosyada.",
+      "reads": [
+        "ASC API /v1/apps/<id>/appStoreVersions",
+        ".movelog_review_state"
+      ],
+      "writes": [
+        ".movelog_review_state"
+      ],
+      "external": [
+        "api.appstoreconnect.apple.com",
+        "tg-notify.sh"
+      ],
+      "server_deps": [
+        "/opt/matrix/kisisel-app/asc.py + .p8"
+      ],
+      "cf_plan": "TAŞINIR: yorum-watch ile aynı desen (WebCrypto ES256 + KV durum + Telegram fetch); ikisi tek göreve birleştirilebilir. NOT (2026-08-30): timer sunucuda şu an DISABLED — port önceliği düşürülebilir.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "dakikalık",
+      "unit_durum": "⚠️ DISABLED/inactive (ölçüldü 2026-08-30) — 1.57 süreci bittiği için kapatılmış görünüyor; tabloda TAŞINIR yazsa da göçte varsayılan KAPALI portlanmalı ya da yorum-watch ile birleşik tek görevde bayrakla açılmalı, karar Barış'a"
+    },
+    {
+      "name": "movelog-adminnum-sync",
+      "cron": "*/3 * * * *",
+      "interval_note": "OnUnitActiveSec=180 -> */3 olurdu ama TAŞINMAZ.",
+      "source": "movelog-adminnum-sync.timer -> rsync /opt/cloudflare-shared/admin-numbers.conf root@10.99.0.2:/opt/movelog/data/",
+      "summary": "admin-numbers.conf dosyasını 3dk'da bir 10.99.0.2'ye (eski NickDegs2 wireguard hedefi) rsync'ler. Salt dosya senkronu; iki makine mimarisinin kalıntısı.",
+      "reads": [
+        "/opt/cloudflare-shared/admin-numbers.conf"
+      ],
+      "writes": [
+        "10.99.0.2:/opt/movelog/data/admin-numbers.conf (rsync)"
+      ],
+      "external": [
+        "ssh/rsync 10.99.0.2"
+      ],
+      "server_deps": [
+        "wireguard 10.99.0.x",
+        "rsync/ssh anahtarı"
+      ],
+      "cf_plan": "TAŞINMAZ — görev kavramen ölür: admin-numbers içeriği Faz 2'de bir kez KV'ye alınır (movelog-api oradan okur), sunucular arası dosya senkronuna gerek kalmaz. Cron karşılığı yazılmayacak.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-",
+      "unit_durum": "DISABLED/inactive (ölçüldü 2026-08-30) — 10.99.0.2/NickDegs2 mimarisi zaten ölü, timer kapatılmış"
+    },
+    {
+      "name": "movelog-routes-sync",
+      "cron": "*/10 * * * *",
+      "interval_note": "OnUnitActiveSec=10min ama TAŞINMAZ.",
+      "source": "movelog-routes-sync.timer -> rsync -a --exclude bak/part /opt/matrix/routes/ 10.99.0.2:/opt/movelog/routes/",
+      "summary": "Üretilen route videoları/özet dosyalarını 10dk'da bir 10.99.0.2'ye rsync'ler; rangereq de işi bitince bunu elle tetikler. İki dizin/iki rol mimarisinin köprüsü.",
+      "reads": [
+        "/opt/matrix/routes/"
+      ],
+      "writes": [
+        "10.99.0.2:/opt/movelog/routes/ (rsync)"
+      ],
+      "external": [
+        "ssh/rsync 10.99.0.2"
+      ],
+      "server_deps": [
+        "wireguard",
+        "yerel routes dizini"
+      ],
+      "cf_plan": "TAŞINMAZ — CF mimarisinde videolar R2'de, özetler D1'de doğar; 'iki dizini eşitle' kavramının karşılığı yok. rangereq'in sondaki tetiği de D1 yazımıyla birlikte ortadan kalkar.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-",
+      "unit_durum": "DISABLED/inactive (ölçüldü 2026-08-30) — timer kapalı; yalnız rangereq'in elle 'systemctl start' tetiğiyle koşabilir"
+    },
+    {
+      "name": "movelog-tacclean",
+      "cron": "*/20 * * * *",
+      "interval_note": "OnUnitActiveSec=20min ama TAŞINMAZ.",
+      "source": "movelog-tacclean.timer -> /opt/matrix/scripts/movelog-tacclean.py (67 satır)",
+      "summary": "Disk güvenlik ağı: 90dk'dan eski, aktif render'a ait olmayan tacwork dizinlerini siler (KILL/çökmede finally çalışmaz); BÜYÜK HARFLİ test dizinlerine 24 saat dokunmaz (satır 35). İkinci ağ: /opt/movelog/routes/tacwork'teki eski frame'leri süpürür.",
+      "reads": [
+        "/opt/matrix/routes/tacwork",
+        "pgrep render_job.py"
+      ],
+      "writes": [
+        "tacwork içi silme",
+        "/opt/movelog/routes/tacwork silme"
+      ],
+      "external": [],
+      "server_deps": [
+        "yerel disk",
+        "pgrep"
+      ],
+      "cf_plan": "TAŞINMAZ — sunucu disk hijyeni; CF'de disk yok. Faz T'de taktik hat RunPod'a geçince work-dir RunPod worker'ının geçici diskinde yaşar (job bitince yok olur), R2'de de 1 günlük lifecycle zaten var. Sunucu emekli olana kadar timer sunucuda kalır.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-"
+    },
+    {
+      "name": "movelog-optimize",
+      "cron": "0 7 * * *",
+      "interval_note": "OnCalendar 09:00 YEREL(CEST)=07:00 UTC ama TAŞINMAZ (kapsam dışı).",
+      "source": "movelog-optimize.timer -> /opt/payment/movelog_optimize.py (126 satır)",
+      "summary": "Meta reklam bütçe optimizatörü: ASC salesReports'tan dil başına indirmeyi, Graph API'den tık/harcamayı çekip günlük bütçeyi kazanan dillere kaydırır (floor ₺47/cap ₺150), tutmayan dilleri durdurur. Sonucu Telegram'a raporlar.",
+      "reads": [
+        "Meta Graph API campaigns/adsets/insights",
+        "ASC salesReports (gzip TSV)",
+        "/opt/payment/admay-ads-token.conf",
+        "/opt/appstore-connect/config.conf + .p8"
+      ],
+      "writes": [
+        "Meta adset daily_budget/status (fb_post)"
+      ],
+      "external": [
+        "graph.facebook.com",
+        "api.appstoreconnect.apple.com",
+        "tg-notify.sh"
+      ],
+      "server_deps": [
+        "/opt/payment sırları",
+        "PyJWT"
+      ],
+      "cf_plan": "TAŞINMAZ (bu göç kapsamında) — Move Log backend'inin değil reklam yönetiminin parçası; app'in çalışması buna bağlı değil. Sunucu emekliliğinde ya server oturumunun altyapısına devredilir ya da ayrı küçük bir worker yapılır (teknik engel yok: fetch+WebCrypto yeter) — karar Barış'a bırakıldı.",
+      "priority": "düşük",
+      "port_effort": "orta",
+      "tetik_grubu": "-",
+      "unit_durum": "DISABLED/inactive (ölçüldü 2026-08-30) — reklam optimizasyonu şu an sunucuda da koşmuyor; 'taşınmaz' kararını güçlendirir"
+    },
+    {
+      "name": "movelog-yenisurum-hatirlatma",
+      "cron": "*/30 * * * *",
+      "interval_note": "OnUnitActiveSec=30min ama TAŞINMAZ (tek atımlık).",
+      "source": "movelog-yenisurum-hatirlatma.timer -> /opt/claude-bridge/movelog-yenisurum-hatirlatma.py (68 satır)",
+      "summary": "v1.9 (İnterkom) READY_FOR_SALE olunca PAUSED kurulu TR kampanyasını (campaign+adset+ad) ACTIVE eder, Barış'a bildirir ve FLAG yazıp KENDİ TIMER'INI DISABLE eder (satır 13-14, 64-65). Yani ömrü v1.9 onayıyla bitecek geçici bir iş.",
+      "reads": [
+        "ASC appStoreVersions",
+        "/opt/payment/planlar/movelog_interkom_tr.json",
+        "admay-ads-token.conf",
+        ".movelog_yenisurum_hatirlatildi FLAG"
+      ],
+      "writes": [
+        "Meta campaign/adset/ad status=ACTIVE",
+        "FLAG dosyası",
+        "systemctl disable --now (kendini kapatır)"
+      ],
+      "external": [
+        "api.appstoreconnect.apple.com",
+        "graph.facebook.com",
+        "tg-notify.sh + wa_reply.sh"
+      ],
+      "server_deps": [
+        "asc.py",
+        "/opt/payment planı",
+        "systemctl"
+      ],
+      "cf_plan": "TAŞINMAZ — tek-seferlik tetik; v1.9 onaylandığında kendini imha ediyor. Göç bitmeden büyük olasılıkla ömrünü tamamlamış olacak; taşımaya değmez. (Göç günü hâlâ yaşıyorsa sunucuda bırakılır, o kadar.) ÖLÇÜM 2026-08-30: FLAG dosyası var ve timer disabled — ömrünü zaten tamamlamış, göç günü sorusu kapandı.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-",
+      "unit_durum": "DISABLED/inactive + FLAG /opt/claude-bridge/.movelog_yenisurum_hatirlatildi MEVCUT (ölçüldü 2026-08-30) — iş kendini tamamlayıp kapatmış, 'taşınmaz' kararı KESİNLEŞTİ"
+    },
+    {
+      "name": "traccar-gpx",
+      "cron": "35 22 * * *",
+      "interval_note": "OnCalendar 00:35 YEREL(CEST) = önceki gün 22:35 UTC ama TAŞINMAZ (kişisel akış).",
+      "source": "traccar-gpx.timer -> flock claude-shared.lock + /opt/matrix/scripts/traccar-gpx.py (55 satır)",
+      "summary": "Barış'ın kişisel günlük rota yedeği: DEVICE=1'in dünkü tüm Traccar pozisyonlarını GPX yapıp Matrix Element 'Genel' odasına dosya olarak gönderir. Move Log kullanıcılarıyla hiçbir ilgisi yok.",
+      "reads": [
+        "Traccar /api/positions deviceId=1 (dün)"
+      ],
+      "writes": [
+        "/opt/matrix/routes/<gün>.gpx",
+        "Element odasına m.file + m.text"
+      ],
+      "external": [
+        "Matrix Synapse 127.0.0.1:8008 (bot token)"
+      ],
+      "server_deps": [
+        "Traccar",
+        "Synapse",
+        "yerel routes dizini"
+      ],
+      "cf_plan": "TAŞINMAZ — Barış'ın kişisel Traccar->Element GPX akışı; Matrix/Synapse zaten bu sunucuda kalıyor ve Traccar Faz 1'de 2 hafta paralel yaşayacak. Move Log göçünün kapsamı dışında; sunucu emekli edilirse bile bu akış Matrix'in kaderiyle birlikte ayrıca kararlaştırılır.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-"
+    },
+    {
+      "name": "matrix-movelog-review-watch",
+      "cron": "0 * * * *",
+      "interval_note": "OnUnitActiveSec=1h. İLK TARAMADA EKSİKTİ, 2026-08-30 itirazında eklendi.",
+      "source": "matrix-movelog-review-watch.timer -> /opt/matrix/scripts/movelog-review-watch.py (65 satır)",
+      "summary": "movelog-review-state-watch'ın ÖNCÜLÜ/dublörü: aynı appStoreState değişimini saatlik izler ama bildirimi WhatsApp'tan (wa-send.sh) atar, durum /opt/matrix/scripts/.movelog-review-state dosyasında (satır 6-14, 41-57). Telegram'lı yeni sürüm (movelog-review-state-watch, 12dk) yazılınca bu kapatılmış.",
+      "reads": [
+        "ASC API appStoreVersions (asc.py, APP_ID 6780779399)",
+        "/opt/matrix/scripts/.movelog-review-state"
+      ],
+      "writes": [
+        "/opt/matrix/scripts/.movelog-review-state"
+      ],
+      "external": [
+        "api.appstoreconnect.apple.com",
+        "wa-send.sh (WhatsApp)"
+      ],
+      "server_deps": [
+        "/opt/matrix/kisisel-app/asc.py + .p8",
+        "/opt/claude-bridge/wa-send.sh"
+      ],
+      "cf_plan": "TAŞINMAZ — movelog-review-state-watch'ın eski kopyası; ikisi de şu an DISABLED. Göçte emekli edilir; review izleme gerekirse tek görev (yorum-watch deseni) yeter.",
+      "priority": "düşük",
+      "port_effort": "düşük",
+      "tetik_grubu": "-",
+      "unit_durum": "DISABLED/inactive (ölçüldü 2026-08-30)"
+    }
+  ]
+}

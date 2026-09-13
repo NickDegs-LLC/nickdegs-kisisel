@@ -1,0 +1,25 @@
+name = "movelog-gps"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# routes: Faz 4'te eklenecek (nickdegs.com'a şimdilik trafik YOK)
+
+[observability]
+enabled = true
+
+[vars]
+ORTAM = "golge"
+[[d1_databases]]
+binding = "DB"
+database_name = "movelog-db"
+database_id = "84d8e0a0-cc9b-45ec-b355-d1cc08a90dd9"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "fd5db982178f49c589858c525755fba7"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "movelog"
+

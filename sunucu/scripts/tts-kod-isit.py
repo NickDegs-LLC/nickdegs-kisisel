@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""AÇILIŞ TELSİZ KODU ÖNBELLEK ISITICI (Barış onayı 2026-08-10).
+SORUN: pool.draw() her videoda RASTGELE 4 haneli kod üretiyor -> açılış satırı
+("Nine One Three Two, this is Actual. How copy?") önbelleğe hiç takılmıyor ->
+bu CPU'da (AMD EPYC, AVX2 YOK) satır başına ~17,5 dk -> her taktik videoya +17 dk.
+ÇÖZÜM: sabit bir kod havuzunu ÖNCEDEN üret; pool.py bu havuzdan seçsin -> üretim 0 sn.
+Depolama: satır başına ~282 KB (24 kombinasyon ~7 MB) — sorun değil, maliyet CPU zamanı.
+Bu yüzden TEK TEK, düşük öncelikle, sistem boşken çalışır."""
+import os, sys, time, json, subprocess
+
+# 🚦 CPU FRENİ (Barış 2026-08-10: "TTS çok pis sunucu yükledi, düzelt")
+# Sorun: torch varsayılan olarak TÜM çekirdekleri alıyordu — 46 thread, %434 CPU (4,3 çekirdek),
+# load 27. nice YETMEZ: nice sadece öncelik verir, çekirdek SAYISINI sınırlamaz. Ayrıca aşağıdaki
+# yük kontrolü yalnız parçalar ARASINDA çalışıyor; tek sentez ~17 dk sürdüğü için o süre boyunca
+# makine doluydu (Hooder %80 öncelikli olmasına rağmen).
+# Çözüm: thread sayısı 2'ye sabit (env torch import'undan ÖNCE ayarlanmalı) + en düşük öncelik.
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "TORCH_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")
+try:
+    os.nice(19)
+except Exception:
+    pass
+sys.path.insert(0, "/opt/matrix/kisisel-app/tactical")
+HAVUZ = "/opt/matrix/kisisel-app/tactical/voices/kod_havuzu.json"
+KILIT = "/var/lock/tts-kod-isit.lock"
+
+# Deterministik havuz (rastgele DEĞİL — hep aynı 24 kombinasyon üretilir/kullanılır)
+KOMB = [(9,1,3,2),(4,7,0,5),(2,8,6,1),(5,0,9,4),(7,3,1,8),(1,6,4,0),
+        (8,2,5,7),(3,9,0,6),(6,4,8,2),(0,5,7,3),(9,7,2,1),(4,1,6,8),
+        (2,3,9,5),(5,8,0,7),(7,6,3,4),(1,0,2,9),(8,5,4,3),(3,2,7,0),
+        (6,9,1,5),(0,4,3,8),(9,0,6,7),(4,3,5,2),(2,7,8,4),(5,1,0,6)]
+DIGITS = ["Zero","One","Two","Three","Four","Five","Six","Seven","Eight","Nine"]
+
+
+def main():
+    import fcntl
+    f = open(KILIT, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("zaten çalışıyor, çıkılıyor"); return
+    try:
+        import torch as _t; _t.set_num_threads(2)   # kesin sınır (env'i yutan sürümler için)
+    except Exception:
+        pass
+    import tts
+    hazir = []
+    if os.path.exists(HAVUZ):
+        hazir = json.load(open(HAVUZ))
+    for k in KOMB:
+        kelime = " ".join(DIGITS[d] for d in k)
+        metin = f"{kelime}, this is Actual. How copy?"
+        # sistem yoğunsa bekle (diğer oturumları yorma — paylaşılan makine)
+        while os.getloadavg()[0] > 4.0:   # Hooder %80 öncelik (Barış 11.08) — makineyi yormamak için düşük eşik
+            time.sleep(120)
+        t = time.time()
+        try:
+            tts.line(metin, "female")
+        except Exception as e:
+            print(f"HATA {kelime}: {str(e)[:120]}", flush=True); continue
+        if list(k) not in [list(x) for x in hazir]:
+            hazir.append(list(k))
+            json.dump(hazir, open(HAVUZ, "w"))
+        print(f"{kelime}: {time.time()-t:.0f} sn ({len(hazir)}/{len(KOMB)})", flush=True)
+    print("ISITMA TAMAM:", len(hazir), "kombinasyon hazır", flush=True)
+
+
+if __name__ == "__main__":
+    main()

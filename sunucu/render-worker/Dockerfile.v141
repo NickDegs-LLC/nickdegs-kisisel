@@ -1,0 +1,26 @@
+# v141 — STATİK MOZAİK MOTORA TAŞINDI (2026-08-31, "sunucu kapansa da harita çalışsın")
+#
+# SORUN: `route-video.py:685` düz/flyover taban haritasını Mapbox-static biçiminde
+# `HARITA_UC` üzerinden çekiyordu. O uç sunucudaki harita-proxy.py'ye (PIL) iniyordu ->
+# sunucu kapanınca 502 (ölçüldü 31.08: statik 502 · app harita 502 · karo 502).
+#
+# ÇÖZÜM: mozaik dikişi konteynerin İÇİNE alındı (harita_yan.py + mvt_raster.py).
+#   · `_stitch` / `_stitch_bbox` / RX / RXB2  -> harita-proxy.py'den KARAKTER KARAKTER kopya
+#     (kanıt: `python3 harita_yan.py --muhur /opt/matrix/scripts/harita-proxy.py` -> 4/4 BİREBİR)
+#   · karo kaynağı: Esri World_Imagery (public, anahtarsız) -> EOX s2cloudless -> CF /xyz
+#   · Pillow zaten imajda; WASM/Worker yolu 128 MB sınırında elenmişti.
+#
+# 🔒 route-video.py'ye DOKUNULMADI. Yönlendirme env ile: template'te `HARITA_UC` artık
+#    http://127.0.0.1:8890 (yan-servis). render3d.js'in HARITA_TABAN'ı DEĞİŞMEZ — /xyz, /mvt,
+#    /yukseklik ham uçlar, PIL gerektirmez, Cloudflare katmanından gelirler.
+#
+# PİKSEL KANITI (RunPod'suz, $0): canlı harita-proxy._stitch ↔ harita_yan._stitch aynı karo
+# baytlarıyla koşuldu; gerçek üretim koordinatlarında maks fark 0/255 (test_statik_parite.py A).
+ARG BASE=ghcr.io/nickdegs/movelog-render:v140
+FROM ${BASE}
+COPY harita_yan.py /app/harita_yan.py
+COPY mvt_raster.py /app/mvt_raster.py
+COPY basla.sh /app/basla.sh
+RUN chmod +x /app/basla.sh
+# Yan-servis önce kalkar, sonra handler PID 1 olarak exec edilir (sinyal/timeout bozulmaz).
+CMD ["/bin/sh", "/app/basla.sh"]

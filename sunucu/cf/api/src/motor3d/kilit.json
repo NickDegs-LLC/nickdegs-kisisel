@@ -1,0 +1,17 @@
+{
+  "uretim": "2026-09-04T21:21:04.944Z",
+  "kaynak": {
+    "render3d.js": "3521c651f58780aab22fa4c04dc7053f4f476e8c661e1a40c386b40fa7d4e15b",
+    "telefon-html.js": "93ffdf0e4a57909739d0f819ecaaa721e931da05161d275270a241945059e2dd",
+    "vendor/maplibre-gl.js": "b5a34e6930ff937dbbb9eec8892cffb80ba473cce88ae5ca8c4654432f5f0ebc",
+    "vendor/maplibre-gl.css": "792ac997dcf6ae6f643eb4e2dee4630c85e7056526bd8fb85ffe83c67d6c41b4"
+  },
+  "boyut": {
+    "mljs": 939038,
+    "mlcss": 69422
+  },
+  "r2": {
+    "js": "motor3d/maplibre-gl.b5a34e6930ff.js",
+    "css": "motor3d/maplibre-gl.792ac997dcf6.css"
+  }
+}

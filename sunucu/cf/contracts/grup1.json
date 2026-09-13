@@ -1,0 +1,754 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/rides",
+    "fn": "rides",
+    "line": 840,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "rides": "dizi; her öğe: {id:str '{gün}_{ts}' veya 3 parçalı vid, date:str, ts:int, to:int, type:str(moto|car|bike|run|walk|''), emoji:str, mode:str, speed:str, aspect:str, size:int, video_url:str '/api/rides/{id}/video', file:str, done:int, added:int, cloud?:bool, rendering?:bool, failed?:bool, error?:str, novideo?:bool}",
+      "siralama": "ts azalan (satır 403)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "msg": "token yok / token geçersiz-süresi dolmuş (auth_user, satır 183-198)"
+      }
+    ],
+    "reads": [
+      "social.json: ride_types (260)",
+      "deleted_rides (261)",
+      "cloud_videos (262)",
+      "detected_rides (263)",
+      "pending_videos (332)",
+      "failed_videos (364)",
+      "profiles.alias + profiles.tv (auth_user 193 / _token_versions 137)"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "ROUTES_DIR glob rota_*.mp4 (277, sadece BARIS_UID görür)",
+      "ROUTES_DIR *_{day}_*.tcx tip tahmini (211)",
+      "ROUTES_DIR rota_{day}_{ts}.json yan meta (222)"
+    ],
+    "cf_mapping": "D1: rides/videos/pending/failed tabloları tek SELECT+birleştirme; yerel ROUTES_DIR dosyaları (Barış'ın Traccar render'ları) ya R2'ye tek seferlik taşınır ya da cloud_videos kaydına çevrilir; yan meta json → D1 rides kolonları",
+    "notes": "ÖRNEK İÇERİK (267-270): BARIS_UID dışı ve hiç kendi kaydı olmayan kullanıcı ORNEK_UID='appreview' verisini görür; ilk kendi kaydında örnekler düşer. Etiketsiz user (None/'') → BARIS_UID sahiplenir (256-257). id başına EN YENİ (mtime/done) sürüm kazanır (287, 312). pending kartı SÜRE FİLTRESİZ — yalnız render-done/failed kaldırır (341-343). failed kartı, sonradan üretilmiş/üretilen video varsa gösterilmez (370). detected yalnız by_id'de yoksa eklenir (388). added=_mt (401). ÖRNEK yönlendirme YALNIZ cloud_videos+detected_rides koleksiyonlarında (_sahip 268-272); pending/failed sahiplik filtresi user ile (339, 367) → örnek-gören kullanıcı appreview'in pending/failed kartlarını GÖRMEZ.",
+    "cf_port": "TAMAM 2026-08-30 — yerel ROUTES_DIR/tcx/yan-meta dalları kalktı (import videos'a çevirir); D1 videos/rides/pending/failed + overrides/deleted"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/rides/{ride_id}",
+    "fn": "delete_ride",
+    "line": 845,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "ride_id",
+        "in": "path",
+        "type": "str",
+        "required": true
+      }
+    ],
+    "body": [],
+    "response": {
+      "ok": "bool (true)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 404,
+        "msg": "rota bulunamadi — sahip değilse (IDOR koruması, satır 849)"
+      }
+    ],
+    "reads": [
+      "social.json: cloud_videos/detected_rides/pending_videos/failed_videos (_ride_owner 418-425)"
+    ],
+    "writes": [
+      "deleted_rides (listeye append, 851-853)",
+      "failed_videos (pop ride_id, 854)"
+    ],
+    "external": [],
+    "server_deps": [
+      "social.json flock+atomik _save (1362-1386)"
+    ],
+    "cf_mapping": "D1: deleted_rides tablosu (veya rides.deleted flag) + failed_videos DELETE; tek transaction",
+    "notes": "Yumuşak sil: dosya/R2 nesnesi SİLİNMEZ, sadece listeden gizlenir (routes-sync geri getirmez). Örnek içerik silinemez (sahibi 'appreview' ≠ user → 404). Etiketsiz/yerel kayıt sahibi BARIS_UID (425).",
+    "cf_port": "TAMAM 2026-08-30 — deleted_rides INSERT OR IGNORE + failed DELETE tek batch"
+  },
+  {
+    "method": "GET",
+    "path": "/api/rides/{ride_id}/video",
+    "fn": "ride_video",
+    "line": 1012,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "ride_id",
+        "in": "path",
+        "type": "str",
+        "required": true
+      },
+      {
+        "name": "Range",
+        "in": "header",
+        "type": "str",
+        "required": false,
+        "default": null
+      }
+    ],
+    "body": [],
+    "response": {
+      "content_type": "video/mp4 akış; 200 (tam) veya 206 (Content-Range) — StreamingResponse/FileResponse",
+      "headers": "Accept-Ranges: bytes, Content-Length, Cache-Control: private max-age=3600 (1003-1008)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 404,
+        "msg": "video bulunamadı — sahiplik başarısız ve örnek değil (1015-1016); R2 istemcisi yok (981); R2 get_object hatası (989); hiçbir kaynak yok (1028)"
+      }
+    ],
+    "reads": [
+      "social.json: cloud_videos[ride_id].key/done (1018)",
+      "_ride_owner koleksiyonları (1015)"
+    ],
+    "writes": [],
+    "external": [
+      "R2 S3 get_object (boto3, 256KB parçalı akış, 987-1001)"
+    ],
+    "server_deps": [
+      "ROUTES_DIR glob rota_{day}_{ts}_*.mp4 en yeni mtime (_ride_path 407-415)",
+      "config.env R2_ENDPOINT/KEY/SECRET/BUCKET (86-89)"
+    ],
+    "cf_mapping": "Worker: R2 binding .get(key, {range}) ile doğrudan akış (boto3 gerekmez); yerel dosya dalı kalkar (Barış videoları R2'ye taşınır). Range desteği ŞART — AVPlayer önce moov atomunu küçük Range ile ister (978).",
+    "notes": "302/presigned YOK — BİLİNÇLİ (967-978): AVPlayer Authorization header'ını redirect sonrasına taşıyor, presigned R2 + Authorization = 400 InvalidRequest; 1.57 kullanıcıları hiç video açamıyordu. Sunucudan akıtmak her app sürümünü çalıştırır. Örnek içerik ('appreview') herkese izlenebilir (1015). Bulut sürümü yerelden yeniyse (done >= mtime) R2 kazanır (1021).",
+    "cf_port": "TAMAM 2026-08-30 — R2 binding Range akışı (200/206); yerel dosya dalı kalktı"
+  },
+  {
+    "method": "GET",
+    "path": "/api/rides/{ride_id}/videourl",
+    "fn": "ride_video_url",
+    "line": 1031,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "ride_id",
+        "in": "path",
+        "type": "str",
+        "required": true
+      }
+    ],
+    "body": [],
+    "response": {
+      "url": "str — presigned R2 URL (6 saat, r2_presigned secs=21600, satır 106) VEYA göreli '/api/rides/{id}/video' (yerel yedek, 1045)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 404,
+        "msg": "video bulunamadı — sahiplik/örnek değil (1036) veya kayıt-dosya yok (1046)"
+      }
+    ],
+    "reads": [
+      "social.json: cloud_videos[ride_id] (1038)",
+      "_ride_owner koleksiyonları (1036)"
+    ],
+    "writes": [],
+    "external": [
+      "R2 presigned URL üretimi (boto3 imza — ağ çağrısı yok)"
+    ],
+    "server_deps": [
+      "ROUTES_DIR _ride_path yerel yedek (1043)",
+      "R2 kimlikleri config.env"
+    ],
+    "cf_mapping": "Worker: aws4 presign WebCrypto ile (veya R2 signed URL); yerel-yedek dalı kalkar. presign başarısızsa yerel dala düşme sırası korunmalı.",
+    "notes": "App URL'yi auth'lu alır, sonra HEADER'SIZ doğrudan oynatır — 302'de Authorization sızması böyle çözülür (1033-1034). cv var ama key/presign boşsa yerel dala düşer; ikisi de yoksa 404. Örnek içerik açık.",
+    "cf_port": "TAMAM 2026-08-30 — SigV4 presign (opsiyonel R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY secret'ları); secret yoksa göreli /video URL'i döner"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/music",
+    "fn": "add_ride_music",
+    "line": 2055,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "name": "session",
+        "type": "number→str(int)",
+        "required": true,
+        "default": 0,
+        "aciklama": "gezi başlangıç epoch'u"
+      },
+      {
+        "name": "data",
+        "type": "str data-URI 'data:audio...;base64,...'",
+        "required": true,
+        "default": ""
+      }
+    ],
+    "response": {
+      "ok": "bool (true)"
+    },
+    "errors": [
+      {
+        "code": 400,
+        "msg": "geçersiz ses — session boş veya data 'data:audio' ile başlamıyor (2060)"
+      },
+      {
+        "code": 413,
+        "msg": "ses çok büyük — ham > 20MB (2063)"
+      },
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 500,
+        "msg": "YAKALANMAYAN: bozuk base64 → binascii hatası (2062); sayıya çevrilemeyen session → ValueError (2058)"
+      }
+    ],
+    "reads": [],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "DATA_DIR/ridephotos/{user}_{session}/music.m4a (2065-2067)",
+      "DATA_DIR/usermusic/{user}/active.m4a — GLOBAL aktif müzik (2068)"
+    ],
+    "cf_mapping": "R2: music/{user}/{session}.m4a + music/{user}/active.m4a (iki nesne). data-URI base64 Worker'da atob/Buffer ile; 20MB sınırı korunur.",
+    "notes": "TUZAK: session=0/eksik → str(int(float(0)))='0' truthy geçer, '{user}_0' klasörü oluşur (2058-2060). Global active.m4a her yüklemede EZİLİR (son yükleme = tüm modların müziği, bkz. reference_movelog_music). social.json'a hiç dokunmaz.",
+    "cf_port": "TAMAM 2026-08-30 — R2 ridephotos/{user}_{session}/music.m4a + usermusic/{user}/active.m4a (grup3/grup4 okuyucularıyla önek uyumu; bu kayıttaki 'music/{user}/...' anahtarı yerine)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/photo",
+    "fn": "add_ride_photo",
+    "line": 2204,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "name": "session",
+        "type": "number→str(int)",
+        "required": true,
+        "default": 0
+      },
+      {
+        "name": "data",
+        "type": "str data-URI 'data:image...;base64,...'",
+        "required": true,
+        "default": ""
+      },
+      {
+        "name": "lat",
+        "type": "float",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "lon",
+        "type": "float",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "ts",
+        "type": "float",
+        "required": false,
+        "default": "time.time()"
+      }
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "count": "int — photos.json'daki toplam kayıt (2225)"
+    },
+    "errors": [
+      {
+        "code": 400,
+        "msg": "geçersiz (2211)"
+      },
+      {
+        "code": 413,
+        "msg": "görsel çok büyük — ham > 4MB (2213)"
+      },
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 500,
+        "msg": "YAKALANMAYAN: bozuk base64 (2212), sayıya çevrilemeyen session → ValueError (2208) veya sayıya çevrilemeyen lat/lon (2219)"
+      }
+    ],
+    "reads": [],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "DATA_DIR/ridephotos/{user}_{session}/{N}.jpg — N = klasördeki .jpg sayısı (2217)",
+      "aynı klasörde photos.json meta dizisi [{file,lat,lon,ts}] (2220-2224)"
+    ],
+    "cf_mapping": "R2: photos/{user}_{session}/{N}.jpg + meta D1'e (photos tablosu: session,user,file,lat,lon,ts) — count = D1 COUNT; dosya-sayarak-adlandırma yarışı D1 autoincrement ile çözülür.",
+    "notes": "TUZAKLAR: N ve photos.json okuma-yazma atomik değil — eşzamanlı iki fotoğraf aynı N'i alabilir / meta kaybolabilir. session=0 tuzağı music ile aynı. Video üretiminde rota o noktaya gelince fotoğraf bindirilir (photodir='{user}_{from}' — generate 2582, session=from olmalı ki eşleşsin).",
+    "cf_port": "TAMAM 2026-08-30 — D1 'photos' tablosu şemada YOK; meta orijinaldeki gibi R2 ridephotos/{user}_{session}/photos.json (count=dizi uzunluğu, davranış birebir)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/{ride_id}/type",
+    "fn": "set_ride_type",
+    "line": 2228,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "ride_id",
+        "in": "path",
+        "type": "str",
+        "required": true
+      }
+    ],
+    "body": [
+      {
+        "name": "type",
+        "type": "str enum moto|car|bike|run|walk",
+        "required": true,
+        "default": ""
+      }
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "type": "str — kaydedilen tip"
+    },
+    "errors": [
+      {
+        "code": 400,
+        "msg": "geçersiz tip (2232)"
+      },
+      {
+        "code": 404,
+        "msg": "rota bulunamadi — sahip değilse (IDOR, 2235)"
+      },
+      {
+        "code": 401,
+        "msg": "token"
+      }
+    ],
+    "reads": [
+      "social.json: _ride_owner koleksiyonları (2235)"
+    ],
+    "writes": [
+      "ride_types[ride_id] = type (2237)"
+    ],
+    "external": [],
+    "server_deps": [
+      "social.json flock+atomik _save"
+    ],
+    "cf_mapping": "D1: ride_types tablosu (rid PK, type) veya rides.type_override kolonu; UPSERT",
+    "notes": "Override list_rides'ta cv.type ve tcx-tahmininden ÖNCE gelir (289, 319, 391). Örnek içerik tipi değiştirilemez (sahibi appreview → 404).",
+    "cf_port": "TAMAM 2026-08-30 — ride_type_overrides UPSERT"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/upload",
+    "fn": "upload_route",
+    "line": 2435,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "name": "(ham gövde)",
+        "type": "bytes — GPX veya TCX XML, multipart DEĞİL (2443; python-multipart bağımlılığı bilinçli yok)",
+        "required": true
+      }
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "ride_id": "str 'up_{şimdiEpoch}_{frm}' (2450)",
+      "from": "int — izin ilk noktası",
+      "to": "int — izin son noktası",
+      "points": "int (≤5000; 2428-2431 örnekleme)",
+      "km": "float 1 ondalık"
+    },
+    "errors": [
+      {
+        "code": 402,
+        "msg": "GPX/TCX yükleme premium özelliğidir (2441-2442)"
+      },
+      {
+        "code": 413,
+        "msg": "dosya çok büyük (en fazla 100MB) (2444-2445)"
+      },
+      {
+        "code": 400,
+        "msg": "dosya okunamadı (geçerli GPX/TCX değil) (2373)"
+      },
+      {
+        "code": 400,
+        "msg": "yetersiz konum noktası — dosyada GPS izi bulunamadı (<3 nokta, 2411-2412)"
+      },
+      {
+        "code": 401,
+        "msg": "token"
+      }
+    ],
+    "reads": [
+      "social.json: profiles[user].premium (2441)"
+    ],
+    "writes": [
+      "uploaded_tracks[str(frm)] = track dizisi [{t,lat,lon,spd,alt,hr}] (2451)",
+      "detected_rides['up_{now}_{frm}'] = {date,ts,to,type:'bike',user,uploaded:true} (2452-2453)"
+    ],
+    "external": [],
+    "server_deps": [
+      "social.json (754KB — uploaded_tracks tek başına 649KB, plan §4)"
+    ],
+    "cf_mapping": "İz R2'ye: tracks/{frm}.json (plan §4: uploaded_tracks D1'e DEĞİL R2'ye); detected_rides → D1. Worker ham 100MB gövdeyi belleğe almamalı — büyük dosyada R2 direct-upload/multipart veya stream-parse düşün (Worker bellek 128MB).",
+    "notes": "TUZAKLAR: (1) uploaded_tracks anahtarı SADECE frm — kullanıcı yok; iki kullanıcı aynı başlangıç saniyesini yüklerse İKİNCİ birincinin izini EZER; sahiplik detected_rides.uploaded+ts üzerinden dolaylı çözülür (/api/track 864-871 bunu yapar). (2) Tip sabit 'bike'. (3) Zaman etiketi yoksa sentetik 1sn aralık atanır (2413-2416). (4) spd>200 km/h GPS sıçraması sıfırlanır (2424). (5) rid 'up_' önekli → list_rides'ta rid.split('_')[0] tarihe denk gelmez ama detected.date alanı kullanıldığından sorun çıkmaz (393).",
+    "cf_port": "TAMAM 2026-08-30 — regex tabanlı GPX/TCX parser (Worker'da ET yok); iz R2 tracks/{frm}.json + rides satırı (uploaded=1, track_key)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/generate",
+    "fn": "generate_ride",
+    "line": 2512,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "Accept-Language",
+        "in": "header",
+        "type": "str",
+        "required": false,
+        "aciklama": "SV limit mesajının dili (12 dil, _req_lang 2500-2509; yoksa en)"
+      }
+    ],
+    "body": [
+      {
+        "name": "from",
+        "type": "float epoch",
+        "required": true,
+        "default": 0
+      },
+      {
+        "name": "to",
+        "type": "float epoch",
+        "required": false,
+        "default": "time.time()"
+      },
+      {
+        "name": "type",
+        "type": "str",
+        "required": false,
+        "default": "moto"
+      },
+      {
+        "name": "mode",
+        "type": "str (flyover|flat|3d|tactical|...)",
+        "required": false,
+        "default": "flyover"
+      },
+      {
+        "name": "aspect",
+        "type": "str — '4:5' YALNIZ tactical'da; '9:16' (tactical'da zorunlu); yoksa '16:9' (2568-2569)",
+        "required": false,
+        "default": "16:9"
+      },
+      {
+        "name": "speed",
+        "type": "str enum fast|medium|slow|auto",
+        "required": false,
+        "default": "medium"
+      },
+      {
+        "name": "premium",
+        "type": "bool — true=1080p/filigransız",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "music",
+        "type": "str ''|'active'|'lib:<id>'|'upload'|'stock:<ad>' — ALAN YOKSA 'active' (varsa aktif müzik), ALAN VARSA boş dahi AYNEN korunur (2572-2573 BUG FİX)",
+        "required": false
+      },
+      {
+        "name": "line",
+        "type": "str renk",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "dot",
+        "type": "str renk",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "camdist",
+        "type": "str enum yakin|orta|uzak",
+        "required": false,
+        "default": "orta"
+      },
+      {
+        "name": "theme",
+        "type": "str enum thermal|night|day|auto; başkası → 'default'",
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "callsign",
+        "type": "str ≤16, [A-Z0-9 -] süzülür (2578)",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "reel",
+        "type": "bool — ~15sn dikey teaser",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "cam",
+        "type": "str enum chase|pacman — YALNIZ ultra/admin, değilse '' (2580)",
+        "required": false,
+        "default": ""
+      }
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "queued": "str '{user}_{ts}.json' kuyruk dosya adı",
+      "vid": "str '{gün}_{from}_{üretimTs}' — benzersiz video id (2606)"
+    },
+    "errors": [
+      {
+        "code": 401,
+        "msg": "token"
+      },
+      {
+        "code": 402,
+        "msg": "video premium özelliği — premium yok VE video_hak≤0 (2536)"
+      },
+      {
+        "code": 402,
+        "msg": "Tactical, Ultra aboneliğine özeldir — 2 dal: paketli-ama-tactical (2538) ve premium-ama-ultra-değil (2541)"
+      },
+      {
+        "code": 400,
+        "msg": "SV uzunluk reddi — YALNIZ cam=pacman'da (2491 erken dönüş); 12 dilde nazik mesaj {km}/{mx}; km>100 veya iz yokken süre>4saat (2489-2497)"
+      },
+      {
+        "code": 400,
+        "msg": "önce takip aç (cihaz yok) — trackerId yok ve iz yüklenmemiş (2549)"
+      },
+      {
+        "code": 503,
+        "msg": "cihaz Traccar'da bulunamadı (2561)"
+      },
+      {
+        "code": 503,
+        "msg": "Sokak görünümü şu anda bakımda 🛠️... — cam=pacman + sv-kapali dosyası varsa, SAYAÇ HARCANMADAN (2589-2590)"
+      },
+      {
+        "code": 429,
+        "msg": "butce: 'Bu ayki üretim payını doldurdun...' (2594); sv: 'Sokak videosu hakkın kalmadı...' (2596); auto/3d/total: günlük limit mesajları (2598-2601)"
+      }
+    ],
+    "reads": [
+      "profiles[user]: premium/ultra/admin/attest_key/trackerId/name/lang/video_hak (2517-2581; name 2564, lang 2576, cam/ultra kapısı 2580-2581) + sokak_hak (_bump_daily_cap içinde 2315)",
+      "free_tactical_enabled (kill-switch, def true) + free_tactical_devices (2522-2524)",
+      "uploaded_tracks[str(int(from))] (2543)",
+      "render_counts[user] (_bump_daily_cap 2277-2337)"
+    ],
+    "writes": [
+      "profiles.free_tactical_used=true + free_tactical_devices append (2526-2527)",
+      "profiles.video_hak -= 1 (paketli üretim, 2539)",
+      "profiles.sokak_hak -= 1 (sv, 2315-2316)",
+      "profiles.video_line/video_dot (2584 / 2340-2344)",
+      "render_counts: günlük sayaçlar + 'ay_YYYY-MM' bütçe (2273-2337; 'boost_{gün}' çarpanı burada yalnız OKUNUR 2310 — IAP satın alımı yazar)",
+      "pending_videos[vid] = {ts,to,date,type,mode,queued,user} (2611-2613)",
+      "failed_videos.pop(vid) (2614)"
+    ],
+    "external": [
+      "Traccar GET {TRACCAR_URL}/api/devices?uniqueId= (basic auth, 2554) — iz yüklenmemişse cihaz id çözümü"
+    ],
+    "server_deps": [
+      "DATA_DIR/genreq/{user}_{ts}.json kuyruk dosyası — atomik .tmp+os.replace (2616-2618; rsync yarım dosya fix'i); movelog-cloud.py bu dizini poll'lar",
+      "/opt/movelog/data/sv-kapali bayrak dosyası (2589; silinince Sokak açılır, deploy gerekmez)",
+      "usermusic/{user}/active.m4a varlık kontrolü (music varsayılanı, 2572)",
+      "TRACCAR_URL 127.0.0.1:8084 + kimlikler config.env"
+    ],
+    "cf_mapping": "genreq dosyası → Queue movelog-render'a mesaj (req JSON aynen; tüketici movelog-dispatch → RunPod). pending/failed/render_counts/profiles → D1 (tek transaction). sv-kapali → KV bayrak 'sv_kapali'. Traccar lookup → gölge modda fetch ile Traccar'a; Faz 1 sonrası D1 positions/devices. active.m4a varlığı → R2 head. Bütçe/limitler D1'de atomik UPDATE (yarış: bugünkü kod read-modify-write).",
+    "notes": "req sözleşmesi (Queue mesajı, 2562-2583): {device,user,name,from,to,type,mode,aspect,speed,premium,music,ts,kabartma:false(MÜHÜRLÜ 2026-08-11),line,dot,camdist,lang(profilden),theme,callsign,reel,cam,ultra,photodir:'{user}_{from}',vid,track?}. BEDAVA TAKTİK: kill-switch + hesap başına 1 + App Attest cihazı başına 1 (2520-2527); hak ayrılınca sonraki _save kalıcı yazar ama 429/503'te de yazılmış olur mu? — HAYIR: free_tactical_used ataması bellekte, _save 2615'te; araya giren HTTPException (400/503/429) atarsa KAYBOLUR = hak yanmaz (doğru davranış, dikkatle taşı). SV hakkı bütçeden DÜŞMEZ (2318, kullanıcı ödedi). Admin: limitsiz, sayaçsız (2278-2279). IDOR NOTU: uploaded_tracks sahiplik kontrolü YOK — frm'i bilen premium kullanıcı başkasının yüklediği izden video üretebilir (generate 2543 ve regenerate 2654; /api/track'teki 864-871 kontrolünün eşi burada yok). vid benzersiz → üzerine yazma/abuse yok (2602-2606).",
+    "cf_port": "TAMAM 2026-08-30 — tüm D1 yazımları ertelenip tek batch (_save eşleniği, erken HTTPException'da hak yanmaz); Queue req aynen, >120KB ise R2 genreq/ + işaretçi mesaj; Traccar opsiyonel TRACCAR_* secret (yoksa 503 dalı); sv-kapali=KV sv_kapali"
+  },
+  {
+    "method": "POST",
+    "path": "/api/rides/{ride_id}/regenerate",
+    "fn": "regenerate_ride",
+    "line": 2636,
+    "auth": "auth_user",
+    "params": [
+      {
+        "name": "ride_id",
+        "in": "path",
+        "type": "str '{gün}_{ts}' veya vid '{gün}_{from}_{üretimTs}'",
+        "required": true
+      },
+      {
+        "name": "Accept-Language",
+        "in": "header",
+        "type": "str",
+        "required": false
+      }
+    ],
+    "body": [
+      {
+        "name": "type",
+        "type": "str",
+        "required": false,
+        "default": "yan meta type veya 'moto' (2672)"
+      },
+      {
+        "name": "mode",
+        "type": "str",
+        "required": false,
+        "default": "flyover"
+      },
+      {
+        "name": "aspect",
+        "type": "str — SADECE '9:16' veya '16:9'; generate'teki 4:5-tactical dalı BURADA YOK (2674)",
+        "required": false,
+        "default": "16:9"
+      },
+      {
+        "name": "speed",
+        "type": "str enum fast|medium|slow|auto",
+        "required": false,
+        "default": "medium"
+      },
+      {
+        "name": "premium",
+        "type": "bool",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "music",
+        "type": "str — alan yok=active-varsa-active; alan var=aynen (2677, generate ile aynı fix)",
+        "required": false
+      },
+      {
+        "name": "line",
+        "type": "str",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "dot",
+        "type": "str",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "camdist",
+        "type": "str enum yakin|orta|uzak",
+        "required": false,
+        "default": "orta"
+      },
+      {
+        "name": "theme",
+        "type": "str enum thermal|night|day|auto → yoksa 'default'",
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "callsign",
+        "type": "str ≤16 süzülmüş",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "reel",
+        "type": "bool",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "cam",
+        "type": "str chase|pacman (ultra/admin şartlı)",
+        "required": false,
+        "default": ""
+      }
+    ],
+    "response": {
+      "ok": "bool (true)",
+      "queued": "str '{user}_{ts}.json'",
+      "vid": "str '{gün}_{from}_{üretimTs}' (2709)"
+    },
+    "errors": [
+      {
+        "code": 400,
+        "msg": "geçersiz id — '_' ile <2 parça (2642-2643)"
+      },
+      {
+        "code": 402,
+        "msg": "video premium özelliği (2650-2651) — video_hak paket dalı YOK, yalnız premium"
+      },
+      {
+        "code": 400,
+        "msg": "SV uzunluk reddi (yalnız cam=pacman; 12 dil, 2659)"
+      },
+      {
+        "code": 400,
+        "msg": "cihaz yok (2664)"
+      },
+      {
+        "code": 503,
+        "msg": "cihaz Traccar'da bulunamadı (2667)"
+      },
+      {
+        "code": 503,
+        "msg": "Sokak bakımda (sv-kapali, 2694-2695)"
+      },
+      {
+        "code": 429,
+        "msg": "butce/sv/auto/3d/total — generate ile aynı 5 mesaj (2698-2706)"
+      },
+      {
+        "code": 401,
+        "msg": "token"
+      }
+    ],
+    "reads": [
+      "cloud_videos[ride_id].ts/to — pencere kaynağı 1 (2646-2649)",
+      "uploaded_tracks[str(int(frm))] (2654)",
+      "profiles: premium/trackerId/name/lang/ultra/admin",
+      "render_counts (_bump_daily_cap)"
+    ],
+    "writes": [
+      "pending_videos[vid] (2713-2715)",
+      "failed_videos.pop(vid) (2716)",
+      "profiles.video_line/video_dot (2689)",
+      "render_counts günlük+aylık (2696)"
+    ],
+    "external": [
+      "Traccar GET /api/devices?uniqueId (_traccar_id_for 2622-2633)"
+    ],
+    "server_deps": [
+      "ROUTES_DIR rota_{day}_{ts}.json yan meta — pencere kaynağı 2 (2647, _ride_meta 219-224)",
+      "DATA_DIR/genreq/{user}_{ts}.json atomik kuyruk (2718-2720)",
+      "/opt/movelog/data/sv-kapali bayrağı",
+      "usermusic/{user}/active.m4a varlık kontrolü"
+    ],
+    "cf_mapping": "generate ile aynı: Queue movelog-render + D1 pending/counts/profiles + KV sv-bayrak; yan meta json → D1 rides.from/to kolonları (dosya bağımlılığı kalkar)",
+    "notes": "Pencere çözümü: src.ts→meta.from→base_ts; to: src.to→meta.to→frm+2saat (2648-2649). GPX FIX 2026-07-06: +2saat varsayılana düşülmüş VE yüklü izin son t'si varsa to=iz sonu (2655-2658; 900km rota 8.5km'de bitiyordu). ⚠️ SAHİPLİK KONTROLÜ YOK: _ride_owner çağrılmıyor — başkasının ride_id'siyle pencere/iz çözülebilir (iz kullanıcının kendi Traccar'ından gelmezse global uploaded_tracks'ten gelir); CF portunda IDOR kontrolü EKLENMELİ (gölge diff'te davranış farkı olarak işaretle). ⚠️ Free-tactical ve video_hak paket mantığı YOK; tactical-Ultra kapısı da YOK — premium (Ultra olmayan) kullanıcı regenerate ile mode=tactical kuyruklayabilir (generate 2540-2541'deki kapı burada eksik; cam kapısı duruyor). kabartma sabit false (mühürlü). Yeniden deneme failed kartını pending'e çevirir (2716).",
+    "cf_port": "TAMAM 2026-08-30 — sözleşme notunun emriyle IDOR sahiplik kontrolü EKLENDİ (404 'rota bulunamadi', gölge-diff işaretli); yan meta = rides satırı; kalanı generate ile aynı"
+  }
+]

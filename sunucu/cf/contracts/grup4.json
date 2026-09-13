@@ -1,0 +1,516 @@
+[
+ {
+  "method": "GET",
+  "path": "/api/profile",
+  "fn": "get_profile",
+  "line": 1410,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "profil": "_profile_of (1389-1407): {username:str, name:str (yoksa username), handle:str, avatar:{type:emoji|initials|photo, value?}, premium:bool, ultra:bool (ultra||admin), sv_off:bool, sokak_hak:int, video_hak:int, sokak_hediye:false (SABİT — eski sürüm uyumluluğu, 1400-1405), free_tactical:bool (kill-switch+hesap-1+cihaz-1 formülü 1406), admin:bool}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz (auth_user 183-198)"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user] (1414, 1417)",
+   "Accept-Language başlığı → _req_lang (1416, tanım 2500)",
+   "social.json: free_tactical_enabled + free_tactical_devices (_profile_of 1406)"
+  ],
+  "writes": [
+   "social.json: profiles[user].lang — cihaz dili değiştiyse yazılır (1417-1419); hata sessiz yutulur (1420-1421)"
+  ],
+  "external": [],
+  "server_deps": [
+   "os.path.exists('/opt/movelog/data/sv-kapali') — Street View kill-switch dosyası (_profile_of 1398); dosya silinince özellik otomatik geri gelir"
+  ],
+  "cf_mapping": "D1: users/profiles tek SELECT; lang yazımı D1 UPDATE (yalnız değişince — mevcut davranış zaten öyle); sv-kapali dosyası → KV bayrağı (movelog-kv 'sv_off'), admin panelden yazılır; free_tactical_devices → D1 tablosu",
+  "notes": "GET olduğu halde YAZAR (lang yakalama, 1412-1421) — Worker'da da korunmalı, bildirim lokalizasyonu buna dayanır. sokak_hediye HER ZAMAN false döner ama alan kaldırılamaz (eski sürümler kırılır, 1400-1405)."
+ },
+ {
+  "method": "PUT",
+  "path": "/api/profile",
+  "fn": "put_profile",
+  "line": 2780,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   "name?: str — 40 karaktere kırpılır (2784-2785)",
+   "avatar?: {type:'emoji'|'initials', value:str≤8} — sadece bu iki tip kabul (2786-2789); type:'photo' BURADAN set edilemez (o /api/profile/photo işi)"
+  ],
+  "response": {
+   "profil": "_profile_of(db, user) — GET /api/profile ile aynı şekil (2791)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user] (2782-2783)"
+  ],
+  "writes": [
+   "social.json: profiles[user].name ve/veya profiles[user].avatar (2784-2790)"
+  ],
+  "external": [],
+  "server_deps": [
+   "sv-kapali dosya kontrolü _profile_of içinde (1398) — yanıt üretirken dosya sistemi okunur"
+  ],
+  "cf_mapping": "D1: profiles UPDATE (name, avatar_type, avatar_value); yanıt için GET ile aynı profil SELECT'i; sv_off KV'den",
+  "notes": "Doğrulama gevşek: bilinmeyen alanlar sessizce yok sayılır; avatar geçersiz tipse hiç yazılmaz (hata da dönmez)."
+ },
+ {
+  "method": "POST",
+  "path": "/api/profile/photo",
+  "fn": "post_photo",
+  "line": 2896,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   "data: str — 'data:image...' base64 data-URI zorunlu (2898-2899); ham boyut ≤ 3 MB (2903)"
+  ],
+  "response": {
+   "url": "'/api/profile/photo/{user}?v={ts}' (2910)"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "msg": "geçersiz görsel — data:image ile başlamıyor (2900)"
+   },
+   {
+    "code": 413,
+    "msg": "görsel çok büyük — >3 MB (2904)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: _load (2907) — avatar alanını güncellemek için oku-değiştir-yaz"
+  ],
+  "writes": [
+   "DATA_DIR/avatars/{user}.jpg — ham bayt diske (2905-2906; _AVA tanımı 1330)",
+   "social.json: profiles[user].avatar = {type:'photo', value:'/api/profile/photo/{user}?v={ts}'} (2907-2909)"
+  ],
+  "external": [],
+  "server_deps": [
+   "DATA_DIR/avatars dizini — avatar dosyaları yerel diskte; RunPod motoru da avatarı /api'den çeker"
+  ],
+  "cf_mapping": "R2: avatars/{user}.jpg PUT (base64 çözümü Worker'da; 3 MB sınırı Workers body limiti içinde rahat) + D1 profiles.avatar güncelle; ?v= cache-bust parametresi aynen korunur",
+  "notes": "İçerik doğrulaması yok (magic-byte bakılmıyor) — data:image öneki yeterli; dosya uzantısı her zaman .jpg, gelen PNG bile olsa."
+ },
+ {
+  "method": "GET",
+  "path": "/api/profile/photo/{u}",
+  "fn": "get_photo",
+  "line": 2913,
+  "auth": "yok",
+  "params": [
+   "u: path — kullanıcı id; os.path.basename ile temizlenir (2915)"
+  ],
+  "body": [],
+  "response": {
+   "dosya": "FileResponse image/jpeg — DATA_DIR/avatars/{u}.jpg (2918)"
+  },
+  "errors": [
+   {
+    "code": 404,
+    "msg": "yok — dosya bulunamadı (2916-2917)"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/avatars/{basename(u)}.jpg (2915)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "avatars dizini yerel diskte — RunPod render motoru ve arkadaş listesi UI bu ucu ANONİM çeker"
+  ],
+  "cf_mapping": "R2: avatars/{u}.jpg GET → Worker stream (veya R2 public/custom-domain). DİKKAT: auth YOK ve tasarım gereği yok (motor + arkadaş avatarları token'sız çekiliyor) — Worker'da da açık kalmalı; u değeri path-traversal'a karşı basename'lenmiş, Worker'da da anahtar temizliği yapılmalı",
+  "notes": "110 uç içinde auth'suz nadir uçlardan (health, mapconfig gibi). Enumerasyonla avatar çekilebilir — bilinçli tercih, Faz 2'de aynen taşınır."
+ },
+ {
+  "method": "GET",
+  "path": "/api/music",
+  "fn": "music_list",
+  "line": 2050,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "stock": "sabit 5'li liste STOCK_MUSIC (1973-1977): [{id:'chill',name:'Chill'},{epic},{upbeat},{lofi},{cinematic}]"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "yalnız modül sabiti STOCK_MUSIC (1973) — dosya/DB okunmaz"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "Worker içinde sabit dizi — D1/KV gerekmez. (Ses dosyalarının kendisi stockmusic/ dizininde, /api/music/file stock:<id> ile servis eder — o dosyalar R2'ye taşınır.)",
+  "notes": "En basit uç; auth_user bağımlılığı yüzünden yine de social.json okur (alias çözümü, auth_user 192-196)."
+ },
+ {
+  "method": "GET",
+  "path": "/api/music/library",
+  "fn": "music_library",
+  "line": 2076,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "tracks": "[{id:str(10 hex), name:str}] — names.json'da olup .m4a dosyası MEVCUT olanlar (2083-2084)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/usermusic/{user}/names.json (2080; _music_dir 2073-2074 — dizini yoksa OLUŞTURUR)",
+   "DATA_DIR/usermusic/{user}/{mid}.m4a varlık kontrolü (2084)"
+  ],
+  "writes": [
+   "yan etki: _music_dir makedirs (2074) — okuma ucunda dizin yaratır"
+  ],
+  "external": [],
+  "server_deps": [
+   "usermusic/ dizini yerel diskte; names.json ↔ m4a dosyaları arası tutarlılık dosya-varlık kontrolüyle sağlanıyor"
+  ],
+  "cf_mapping": "D1: music_library tablosu (user, mid, name, ts) tek SELECT — dosya-varlık kontrolü gerekmez çünkü R2 PUT + D1 INSERT aynı istekte atomik yakın yapılır; m4a'lar R2 usermusic/{user}/{mid}.m4a",
+  "notes": "names.json bozuksa sessizce boş kütüphane döner (2081-2082)."
+ },
+ {
+  "method": "POST",
+  "path": "/api/music/library",
+  "fn": "music_library_add",
+  "line": 2087,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   "data: str — 'data:audio...' base64 data-URI zorunlu (2090)",
+   "name?: str — varsayılan 'Müzik', 40 karaktere kırpılır (2089)"
+  ],
+  "response": {
+   "ok": true,
+   "id": "10 hex (_secrets.token_hex(5), 2096)",
+   "name": "kaydedilen ad"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "msg": "geçersiz ses — data:audio değil (2091)"
+   },
+   {
+    "code": 413,
+    "msg": "ses çok büyük (max 20 MB) — ham bayt (2094)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/usermusic/{user}/names.json (2100)"
+  ],
+  "writes": [
+   "DATA_DIR/usermusic/{user}/{mid}.m4a (2097)",
+   "DATA_DIR/usermusic/{user}/active.m4a — AYNI bayt kopyası: son yüklenen = global aktif müzik, tactical/premium/ultra tüm modlar kullanır (2098)",
+   "DATA_DIR/usermusic/{user}/names.json — names[mid]=name (2099-2103)"
+  ],
+  "external": [],
+  "server_deps": [
+   "usermusic/ diski — RunPod/Cloud Run motoru bu dosyayı /api/internal/music (2138, RENDER_DONE_SECRET korumalı) üzerinden çeker; app 1.61+ /api/music/file ile çeker"
+  ],
+  "cf_mapping": "R2: usermusic/{user}/{mid}.m4a PUT + usermusic/{user}/active.m4a PUT (kopya yerine D1'de active_mid işaretçisi DAHA DOĞRU — çift depolama biter) + D1 music_library INSERT. 20 MB base64 body (~27 MB istek) Workers limitine sığar ama CPU'da base64 çözümü maliyetli — Faz 2'de aynen, ileride presigned-PUT iyileştirmesi",
+  "notes": "active.m4a işaretçileşirse /api/music/file ve internal/music 'active' çözümü de D1 işaretçisinden okumalı (_muzik_coz 2117-2135 taşınırken birlikte değişir)."
+ },
+ {
+  "method": "DELETE",
+  "path": "/api/music/library/{mid}",
+  "fn": "music_library_del",
+  "line": 2106,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   "mid: path — alfanümerik olmayan karakterler süzülür (2108)"
+  ],
+  "body": [],
+  "response": {
+   "ok": true
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/usermusic/{user}/names.json (2113)"
+  ],
+  "writes": [
+   "DATA_DIR/usermusic/{user}/{mid}.m4a silinir (2109-2110; yoksa sessiz geç)",
+   "names.json'dan mid düşülür (2113)"
+  ],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "R2 DELETE usermusic/{user}/{mid}.m4a + D1 music_library DELETE. Dikkat: active.m4a silinen parçanın kopyası olsa bile DOKUNULMUYOR (mevcut davranış) — silinen müzik aktif kalmaya devam eder; Worker'da aynı davranış korunur",
+  "notes": "Hep {ok:true} döner — dosya yoksa da başarı (idempotent silme)."
+ },
+ {
+  "method": "GET",
+  "path": "/api/music/file",
+  "fn": "music_file",
+  "line": 2150,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   "ref: query — '' | 'active' (global aktif) | 'lib:<id>' | 'upload' (session ile per-ride) | 'stock:<ad>' (2151; çözüm _muzik_coz 2117-2135)",
+   "session: query — ref='upload' iken gezi başlangıç ts'i (2127-2131)"
+  ],
+  "body": [],
+  "response": {
+   "dosya": "FileResponse audio/mp4 (2157)"
+  },
+  "errors": [
+   {
+    "code": 404,
+    "msg": "müzik yok — hiçbir ref çözülemedi (2155-2156)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/usermusic/{user}/active.m4a veya {libid}.m4a (2121-2126)",
+   "DATA_DIR/ridephotos/{user}_{session}/music.m4a — ref='upload' (2129-2130)",
+   "DATA_DIR/stockmusic/{ad}.m4a — ref='stock:' (2132-2134)"
+  ],
+  "writes": [
+   "yan etki: _music_dir makedirs (2120→2074)"
+  ],
+  "external": [],
+  "server_deps": [
+   "1.61 CİHAZDA ÜRETİM hattının parçası (2152-2153, Barış 2026-08-26 'masrafsız'): app müziği indirip TELEFONDA miksler — kesintisi cihaz-render videolarını müziksiz bırakır",
+   "stockmusic/ dizini sunucuda (5 stok parça)"
+  ],
+  "cf_mapping": "R2 GET (usermusic/ridephotos/stockmusic önekleri R2'ye taşınır) → Worker stream; kullanıcı yalnız KENDİ user'ının anahtarlarına erişir (token'dan) — internal/music'in secret'lı ikizi ayrı uçta (grup3). 'upload' dalındaki ridephotos yolu, rides/photo taşımasıyla aynı R2 önekini paylaşmalı",
+  "notes": "internal_music (2138) ile AYNI _muzik_coz çözümü; tek fark auth (kullanıcı token'ı vs RENDER_DONE_SECRET). _muzik_coz taşınırken iki uç birlikte test edilmeli."
+ },
+ {
+  "method": "POST",
+  "path": "/api/ptt/send",
+  "fn": "ptt_send",
+  "line": 3396,
+  "auth": "auth_user + Ultra zorunlu (_is_ultra 3400-3401; tanım 3124-3126 — SADECE profiles[u].ultra bakar, ADMIN BYPASS YOK) + kulüp üyeliği zorunlu (3402-3404)",
+  "params": [
+   "club: query — kulüp id (3398)"
+  ],
+  "body": [
+   "HAM gövde: m4a ses baytları (JSON DEĞİL); 500 B - 800 KB (~10 sn tavan, 3405-3407)"
+  ],
+  "response": {
+   "ok": true,
+   "id": "pid 'p{ts}{8hex}' (3408)",
+   "sent": "push kuyruğuna yazılan üye sayısı (gönderen hariç, 3421-3426)"
+  },
+  "errors": [
+   {
+    "code": 402,
+    "msg": "Ultra gerekli (3401)"
+   },
+   {
+    "code": 404,
+    "msg": "kulüp yok / üye değil (3404)"
+   },
+   {
+    "code": 400,
+    "msg": "geçersiz ses boyutu (3407)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: profiles (ultra), clubs[cid].members (3400-3403)"
+  ],
+  "writes": [
+   "DATA_DIR/ptt/{pid}.m4a (3409-3410)",
+   "social.json: ptt_acl[pid]={club:cid} — klibi sadece kulüp üyeleri dinler (3411)",
+   "DATA_DIR/pushq/ptt_{üye}_{pid}.json — her üyeye sessiz 'ptt:<pid>:<ad>' push kaydı (3420-3426)",
+   "yan etki: ptt/ altında 24 saatten eski TÜM klipler silinir (3413-3418)"
+  ],
+  "external": [],
+  "server_deps": [
+   "pushq/ dizini — ayrı push.py timer'ı dosyaları okuyup APNs/FCM'e gönderir; uç kendisi push ATMAZ, kuyruğa yazar",
+   "ptt/ disk deposu + istek-içi 24 saat glob temizliği"
+  ],
+  "cf_mapping": "R2: ptt/{pid}.m4a PUT + D1 ptt_acl INSERT; push → Worker'dan doğrudan APNs/FCM (WebCrypto, plan §3) veya Queue; 24h temizlik istek-içinden ÇIKAR → movelog-cron görevi veya R2 lifecycle kuralı (1 gün TTL — mevcut R2 video 1-gün kuralıyla aynı kalıp)",
+  "notes": "Gövde ham bayt (await request.body(), 3405) — Hono'da c.req.arrayBuffer(). 'sent' sayısı push TESLİMİ değil kuyruğa yazım sayısıdır. ⚠️ TUZAK: _is_ultra (3124-3126) admin'i ULTRA SAYMAZ ama _profile_of'un 'ultra' alanı ultra||admin döner (1395) — admin-ama-ultra-olmayan hesap app'te Ultra görünür, bu uçtan 402 yer. Worker'a AYNEN taşı (profildeki ultra||admin formülünü kullanma), fark bilinçli karar gerektirir."
+ },
+ {
+  "method": "POST",
+  "path": "/api/ptt/send-user",
+  "fn": "ptt_send_user",
+  "line": 3433,
+  "auth": "auth_user + karşılıklı arkadaşlık zorunlu (3438-3439); Ultra ŞARTI YOK (bilinçli — 3431)",
+  "params": [
+   "user: query — hedef kullanıcı (handle/alias; _resolve_user 3435)"
+  ],
+  "body": [
+   "HAM gövde: m4a ses baytları; 500 B - 800 KB (3440-3442)"
+  ],
+  "response": {
+   "ok": true,
+   "id": "pid",
+   "sent": 1
+  },
+  "errors": [
+   {
+    "code": 404,
+    "msg": "kullanıcı bulunamadı / kendine gönderme (3436-3437)"
+   },
+   {
+    "code": 403,
+    "msg": "sadece arkadaşına (3439)"
+   },
+   {
+    "code": 400,
+    "msg": "geçersiz ses boyutu (3442)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: friends[user], profiles (ad + hedef dili 3438, 3452, 3464)"
+  ],
+  "writes": [
+   "DATA_DIR/voicemsg/{pid}.m4a — KALICI sesli mesaj, 30 gün (3444-3446)",
+   "DATA_DIR/pushq/ptt_{target}_{pid}.json — sessiz telsiz push (3453-3456)",
+   "_pushq: görünür bildirim, 12 dil lokalizeli, route='voice:...' (3458-3466)",
+   "social.json: dm[pair] listesine {type:'voice', media:pid} baloncuğu (3467-3470)",
+   "social.json: ptt_acl[pid]={users:[gönderen,alıcı]} (3471)",
+   "yan etki: voicemsg/ altında 30 günden eski klipler silinir (3447-3451)"
+  ],
+  "external": [],
+  "server_deps": [
+   "pushq/ kuyruğu — push.py timer'ı gönderir (hem sessiz hem görünür bildirim)",
+   "voicemsg/ disk deposu + istek-içi 30 gün temizliği"
+  ],
+  "cf_mapping": "R2: voicemsg/{pid}.m4a (lifecycle 30 gün) + D1: messages(dm) INSERT + ptt_acl INSERT; iki push (sessiz + görünür lokalize) Worker'dan APNs/FCM; temizlik → R2 lifecycle. DM baloncuğu grup5 chat uçlarının D1 messages şemasıyla AYNI tabloda olmalı",
+  "notes": "Tek istekte 5 ayrı yazma + 2 push — Worker'da D1 batch + waitUntil(push) deseni. Sohbet baloncuğu sunucu kararı (3467-3468): app kapalıyken bile mesaj sohbette kalır."
+ },
+ {
+  "method": "POST",
+  "path": "/api/ptt/busy",
+  "fn": "ptt_busy_set",
+  "line": 3578,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   "user: str — hedef arkadaş (handle/alias, _resolve_user 3581)",
+   "on: bool — basılı tutma başladı/bitti (3582)"
+  ],
+  "response": {
+   "ok": true
+  },
+  "errors": [
+   {
+    "code": 404,
+    "msg": "kullanıcı yok / kendine (3583-3584)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: profiles (çözüm + gönderen adı 3581, 3586)"
+  ],
+  "writes": [
+   "social.json: profiles[target].ptt_busy = {from, name, until: now+25} (on=true, 3587-3588); on=false ise SADECE kendi koyduğu kaydı temizler (3590-3591)"
+  ],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "KV İDEAL: key ptt_busy:{target}, value {from,name}, expirationTtl=25 — until alanı ve manuel temizlik kendiliğinden çözülür; D1'e yazmaya değmez (25 sn ömürlü sinyal). DİKKAT: arkadaşlık kontrolü YOK (mevcut davranış — herhangi bir kullanıcıya busy konabilir), Worker'a aynen taşınır, Faz 2 notu olarak işaretli",
+  "notes": "PTT çakışma kilidi (3577): A basılı tutarken B'nin butonu pasifleşir. until=now+25 — app 25 sn'de bir tazeler."
+ },
+ {
+  "method": "GET",
+  "path": "/api/ptt/busy/{username}",
+  "fn": "ptt_busy_get",
+  "line": 3596,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [
+   "username: path — arkadaş handle/alias (3600)"
+  ],
+  "body": [],
+  "response": {
+   "busy": "bool — KENDİ profilimdeki ptt_busy kaydı {username}'den mi ve süresi geçmemiş mi (3601-3602)",
+   "name": "str|null — busy ise konuşanın adı (3603)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "social.json: profiles[user].ptt_busy + _resolve_user çözümü (3599-3601)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [],
+  "cf_mapping": "KV GET ptt_busy:{user} → from=={username}? karşılaştırması; TTL süre kontrolünü kendiliğinden yapar (until alanı gereksizleşir)",
+  "notes": "Yön dikkat: sorgulanan, BENİM profilime yazılmış busy kaydı — '{username} şu an bana konuşuyor mu' (3598)."
+ },
+ {
+  "method": "GET",
+  "path": "/api/ptt/{pid}",
+  "fn": "ptt_get",
+  "line": 3606,
+  "auth": "auth_user + ptt_acl yetkisi (users listesi veya kulüp üyeliği; acl kaydı YOKSA herkese açık — eski klipler, 3614-3619)",
+  "params": [
+   "pid: path — klip id; [^a-z0-9] süzülür (3608)"
+  ],
+  "body": [],
+  "response": {
+   "dosya": "FileResponse audio/mp4 — önce ptt/ (24 saat), yoksa voicemsg/ (30 gün) (3609-3611, 3620)"
+  },
+  "errors": [
+   {
+    "code": 404,
+    "msg": "klip yok — dosya yok VEYA acl reddi (yetkisizlik de 404 döner — bilgi sızdırmaz; 3613, 3617, 3619)"
+   },
+   {
+    "code": 401,
+    "msg": "token yok / geçersiz"
+   }
+  ],
+  "reads": [
+   "DATA_DIR/ptt/{pid}.m4a → yoksa DATA_DIR/voicemsg/{pid}.m4a (3609-3611)",
+   "social.json: ptt_acl[pid] (3614); kulüp dalında clubs[cid].members — _load() İKİNCİ KEZ çağrılır (3618)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "ptt/ + voicemsg/ disk depoları (yazanlar: /api/ptt/send, /api/ptt/send-user)"
+  ],
+  "cf_mapping": "R2 GET (ptt/ önce, voicemsg/ sonra — iki önek denemesi) + D1 ptt_acl SELECT (+ gerekirse clubs üyelik JOIN'i tek sorguda — mevcut çifte _load verimsizliği kalkar); acl'siz eski klip = açık erişim davranışı korunur ama Faz 2'de tüm yeni kliplerin acl'i zaten yazılıyor",
+  "notes": "Yetkisiz erişim de 404 (403 değil) — klip varlığını sızdırmama tercihi, Worker'da korunmalı."
+ }
+]

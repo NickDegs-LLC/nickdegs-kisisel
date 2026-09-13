@@ -1,0 +1,12 @@
+# v140 — VİDEO MOTORU 12 DİL (2026-08-28, Barış: "bütün dillerde yap")
+# Videonun üstüne çizilen metinler kullanıcının dilinde: aktivite adı + tarih (ay kısaltması
+# ve o dilin tarih düzeni: "Aug 28, 2026" / "28 Ağu 2026" / "2026年8月28日").
+# YAZI TİPİ: DejaVu'da CJK/Arapça glif yok (kutu çıkıyordu) -> Noto Sans CJK + Noto Naskh Arabic
+# imaja gömüldü. Arapça bitiştirme/yön işini PIL'in libraqm'i yapıyor (raqm=True).
+# Bu yazı tiplerinde ▸ ◷ ▲ ❤ sembolleri ve (Arapça'da) Latin "km/m" yok -> sembol düşürülüyor,
+# birim o dilin kısaltmasına çevriliyor (ar: كم / م).
+ARG BASE=ghcr.io/nickdegs/movelog-render:v139
+FROM ${BASE}
+COPY fonts/ /usr/share/fonts/truetype/movelog/
+COPY scripts/route-video.py /app/scripts/route-video.py
+COPY rp_handler.py /app/rp_handler.py

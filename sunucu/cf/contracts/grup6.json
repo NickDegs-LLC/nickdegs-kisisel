@@ -1,0 +1,835 @@
+[
+ {
+  "method": "POST",
+  "path": "/api/iap/verify",
+  "fn": "iap_verify",
+  "line": 1530,
+  "auth": "auth_user (Bearer JWT, satır 183-198; alias çözümü dahil)",
+  "params": [],
+  "body": [
+   {
+    "ad": "jws",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "StoreKit2 jwsRepresentation; SUNUCUDA imza doğrulanır (_verify_storekit_jws satır 1490-1527, pinli Apple Root CA G3 satır 1486)"
+   }
+  ],
+  "response": {
+   "abonelik (pid in SUB_IDS)": {
+    "ok": "bool",
+    "premium": "bool (true)"
+   },
+   "sokak (pid in SOKAK_IDS)": {
+    "ok": "bool",
+    "sokak": "int (toplam hak)",
+    "already": "bool (yalnız tekrar işlemde)"
+   },
+   "video (pid in VIDEO_IDS)": {
+    "ok": "bool",
+    "video": "int (toplam hak)",
+    "already": "bool (yalnız tekrar işlemde)"
+   },
+   "boost (pid == BOOST_2X_ID)": {
+    "ok": "bool",
+    "boost_mult": "int (1 + bugünkü boost sayısı)",
+    "already": "bool (yalnız tekrar işlemde)"
+   }
+  },
+  "errors": [
+   {
+    "code": 400,
+    "detail": "geçersiz veya doğrulanamayan işlem",
+    "kosul": "JWS doğrulanamadı VEYA bundleId != IAP_BUNDLE_ID (satır 1535)"
+   },
+   {
+    "code": 400,
+    "detail": "eksik işlem",
+    "kosul": "productId veya transactionId boş (satır 1538)"
+   },
+   {
+    "code": 400,
+    "detail": "bilinmeyen ürün",
+    "kosul": "pid hiçbir ürün kümesinde değil (satır 1591)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [
+   "profiles.{user} (name — bildirim metni)",
+   "profiles.* (abone sayımı, satır 1553-1554)",
+   "iap_used.{transactionId}"
+  ],
+  "writes": [
+   "profiles.{user}.premium",
+   "profiles.{user}.ultra",
+   "profiles.{user}.premium_until (expiresDate//1000)",
+   "profiles.{user}.sokak_hak",
+   "profiles.{user}.video_hak",
+   "iap_used.{transactionId} = {user,pid,ts}",
+   "render_counts.{user}.boost_YYYY-MM-DD (BOOST dalı)"
+  ],
+  "external": [
+   "_adminq: DATA_DIR/adminq/*.json dosya kuyruğu → ana sunucu worker Telegram/WhatsApp iletir (satır 2957-2964)"
+  ],
+  "server_deps": [
+   "social.json (_STORE, flock+_save)",
+   "adminq dizini (dosya kuyruğu)",
+   "python cryptography kütüphanesi (x509 zincir + ES256 doğrulama)",
+   "pinli Apple Root CA G3 DER (koda gömülü, satır 1486)"
+  ],
+  "cf_mapping": "D1: profiles + iap_used + render_counts tabloları. JWS doğrulama Workers'ta WebCrypto ES256 + elle x5c zincir parse (zor) — ALTERNATİF: Apple App Store Server API'ye fetch ile doğrulat. adminq → Queue veya doğrudan Telegram fetch. Ürün ID sabitleri (SUB_IDS/ULTRA_IDS/SOKAK_IDS/VIDEO_IDS/BOOST_2X_ID satır 1470-1482) koda taşınır.",
+  "notes": "İdempotent: transactionId iap_used'da varsa consumable ÇİFT SAYILMAZ (already:true döner); abonelikte tid tekrar gelse premium yine set edilir ama admin bildirimi yalnız İLK işlemde (satır 1549). Boost üst üste alınabilir: her alım +1 kat (satır 1588). BOOST tarih anahtarı time.localtime — ÖLÇÜLDÜ (2026-08-30): kod movelog-api container'ında koşuyor, TZ env YOK, container saati UTC (docker exec date; host Europe/Berlin ama kod container'da) → localtime fiilen UTC. Workers da UTC → gün sınırı KAYMAZ, port riski yok. offerType varsa bildirimde '(deneme/tanıtım teklifi)' notu.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/iap/google",
+  "fn": "iap_google",
+  "line": 1614,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "token",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "Play Billing purchase token (abonelik)"
+   }
+  ],
+  "response": {
+   "ok": "bool (true)",
+   "premium": "bool (true)",
+   "ultra": "bool (lineItems productId'lerinden herhangi biri 'ultra' içeriyorsa)"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "detail": "eksik satın alma",
+    "kosul": "token boş (satır 1619)"
+   },
+   {
+    "code": 503,
+    "detail": "doğrulama servisi hazır değil",
+    "kosul": "Google SA erişim token'ı alınamadı (satır 1622)"
+   },
+   {
+    "code": 400,
+    "detail": "satın alma doğrulanamadı",
+    "kosul": "androidpublisher subscriptionsv2 != 200 (satır 1627)"
+   },
+   {
+    "code": 409,
+    "detail": "bu satin alma baska hesaba ait",
+    "kosul": "token iap_used'da BAŞKA user'a kayıtlı — replay/IDOR koruması (satır 1633-1634)"
+   },
+   {
+    "code": 400,
+    "detail": "abonelik aktif değil ({state})",
+    "kosul": "subscriptionState ACTIVE/IN_GRACE_PERIOD değil (satır 1650)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [
+   "iap_used.{token}",
+   "profiles.* (abone sayımı, yalnız ilk doğrulamada)"
+  ],
+  "writes": [
+   "iap_used.{token} = {user, pid:'google-sub', ts}",
+   "profiles.{user}.premium = true",
+   "profiles.{user}.ultra"
+  ],
+  "external": [
+   "POST https://oauth2.googleapis.com/token (SA JWT RS256, satır 1597-1611)",
+   "GET https://androidpublisher.googleapis.com/.../subscriptionsv2/tokens/{token} (satır 1623-1625)",
+   "_adminq dosya kuyruğu (yalnız ilk doğrulamada)"
+  ],
+  "server_deps": [
+   "/opt/movelog/backend/google-play-admin.json (SA anahtarı, satır 1594)",
+   "python jwt kütüphanesi (RS256)",
+   "social.json",
+   "adminq dizini"
+  ],
+  "cf_mapping": "SA anahtarı → wrangler secret; RS256 SA JWT'yi WebCrypto (SubtleCrypto RSASSA-PKCS1-v1_5) ile imzala + fetch. D1: iap_used, profiles. adminq → Queue/fetch. Access token'ı KV'de ~55 dk cache'lemek mantıklı (her istekte OAuth turu pahalı).",
+  "notes": "App her açılışta yeniden doğrulayabilir → admin bildirimi SADECE token ilk kez görüldüğünde (satır 1635). premium_until YAZILMAZ (iOS'tan farklı) — expiry yalnız bildirim metninde. Ultra tespiti productId'de 'ultra' alt-dizesi ile (satır 1638-1639). expiryTime lineItems[0]'dan; lineItems boşsa '?' (çökmez).",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/iap/google/boost",
+  "fn": "iap_google_boost",
+  "line": 1656,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "token",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "Play Billing purchase token (consumable)"
+   },
+   {
+    "ad": "sku",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "boost_daily2x",
+    "not": "_ANDROID_BOOST_SKU satır 1653"
+   }
+  ],
+  "response": {
+   "ok": "bool (true)",
+   "boost_mult": "int (1 + bugünkü boost)",
+   "already": "bool (yalnız tekrar işlemde, boost_mult olmadan)",
+   "sokak": "int (yalnız sokak_* sku; kullanıcının yeni toplam sokak hakkı)",
+   "video": "int (yalnız video_* sku; kullanıcının yeni toplam video hakkı)"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "detail": "eksik satın alma",
+    "kosul": "token boş"
+   },
+   {
+    "code": 503,
+    "detail": "doğrulama servisi hazır değil",
+    "kosul": "SA erişim token'ı alınamadı"
+   },
+   {
+    "code": 400,
+    "detail": "satın alma doğrulanamadı",
+    "kosul": "androidpublisher products != 200 (satır 1669)"
+   },
+   {
+    "code": 400,
+    "detail": "satın alma tamamlanmadı",
+    "kosul": "purchaseState != 0 (satır 1672)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   },
+   {
+    "code": 400,
+    "detail": "bilinmeyen ürün",
+    "kosul": "sku beyaz listede değil (1.61 eki)"
+   }
+  ],
+  "reads": [
+   "iap_used.{orderId}"
+  ],
+  "writes": [
+   "iap_used.{orderId} = {user, sku, ts} (orderId yoksa token anahtar, satır 1676)",
+   "render_counts.{user}.boost_YYYY-MM-DD",
+   "users.{user}.sokak_hak / users.{user}.video_hak (1.61 eki, tüketilebilir paketler)"
+  ],
+  "external": [
+   "POST https://oauth2.googleapis.com/token (SA JWT)",
+   "GET https://androidpublisher.googleapis.com/.../purchases/products/{sku}/tokens/{token}"
+  ],
+  "server_deps": [
+   "google-play-admin.json SA dosyası",
+   "python jwt",
+   "social.json"
+  ],
+  "cf_mapping": "iOS boost dalıyla aynı D1 tabloları (iap_used, render_counts). SA → secret + WebCrypto RS256 + fetch.",
+  "notes": "İdempotensi anahtarı orderId (token değil) — Google consumable yeniden-tüketimde farklı orderId verebilir. sku istemciden geliyor ve doğrulama URL'sine giriyor; sahte sku 400 ile düşer ama URL enjeksiyonuna karşı CF portunda encodeURIComponent şart. Gün anahtarı localtime — ÖLÇÜLDÜ: movelog-api container'ı UTC (TZ env yok) → Workers UTC ile AYNI, gün sınırı kaymaz. Admin bildirimi YOK (iOS boost dalında var, satır 1585). | 1.61 EKİ (2026-08-31, main.py PARİTESİ DIŞI): sku beyaz listeye alındı (boost_daily2x | sokak_tek/sokak_uclu | video_uclu/video_besli; bilinmeyen sku -> 400 'bilinmeyen ürün'). Sokak/video sku'sunda boost yerine users.sokak_hak / users.video_hak artırılır ve {ok,sokak} veya {ok,video} döner + adminq bildirimi gider (Apple /api/iap/verify dalıyla simetrik). 1.60 istemcisi sku GÖNDERMEZ -> varsayılan boost, davranış değişmez.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/integrity/nonce",
+  "fn": "integrity_nonce",
+  "line": 1746,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "nonce": "str (secrets.token_urlsafe(24))"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "(social.json'a YAZMAZ) _integrity_nonces[user] = (nonce, ts) — süreç-içi RAM dict (tanım satır 1715, yazım satır 1750)"
+  ],
+  "external": [],
+  "server_deps": [
+   "in-memory dict (tek uvicorn süreci varsayımı)"
+  ],
+  "cf_mapping": "KV: integrity_nonce:{user} → nonce, TTL 600 sn (POST /api/integrity 600 sn penceresi ile uyumlu). İzole Worker instance'ları arasında RAM paylaşılamaz — KV/DO ŞART.",
+  "notes": "Kullanıcı başına TEK nonce saklanır; ikinci istek öncekini ezer. Restart'ta tüm nonce'lar uçar — POST /api/integrity bunu tolere eder (saved yoksa nonce_ok=True kalır).",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/integrity",
+  "fn": "integrity_check",
+  "line": 1754,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "token",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "Play Integrity token; boşsa 'no-token' yolu (hile sayılmaz)"
+   }
+  ],
+  "response": {
+   "token yok": {
+    "ok": "bool (INTEGRITY_ENFORCE değilse true)",
+    "reason": "'no-token'"
+   },
+   "decode başarısız": {
+    "ok": "bool (hep true — FAIL-OPEN)",
+    "reason": "'unavailable'"
+   },
+   "decode başarılı": {
+    "ok": "bool (good VEYA enforce kapalı)",
+    "enforced": "bool",
+    "verdict": {
+     "app": "str appRecognitionVerdict",
+     "lic": "str appLicensingVerdict",
+     "device": "list deviceRecognitionVerdict",
+     "nonce_ok": "bool"
+    }
+   }
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [
+   "(social.json'dan) yok; _integrity_nonces[user] RAM'den"
+  ],
+  "writes": [
+   "(social.json'a YAZMAZ) sqlite integrity_stats.db: (gun,plat,sonuc)→adet sayacı (_att_stat satır 1695-1708; hata daima yutulur)"
+  ],
+  "external": [
+   "POST https://oauth2.googleapis.com/token (playintegrity scope, satır 1717-1728)",
+   "POST https://playintegrity.googleapis.com/v1/{pkg}:decodeIntegrityToken (satır 1736-1737)"
+  ],
+  "server_deps": [
+   "google-play-admin.json SA dosyası",
+   "DATA_DIR/integrity_stats.db (sqlite)",
+   "INTEGRITY_ENFORCE config bayrağı (satır 1714; movelog-integrity-auto.py yönetir)",
+   "in-memory nonce dict"
+  ],
+  "cf_mapping": "D1: integrity_stats(gun,plat,sonuc,adet) UPSERT. Nonce → KV. SA → secret + WebCrypto. INTEGRITY_ENFORCE → KV bayrağı (env yerine; otomasyon scripti değiştirebilmeli). Google çağrıları fetch.",
+  "notes": "FAIL-OPEN felsefesi KRİTİK (Hooder olayı, satır 1687-1692: 22 beta testçinin 17'si gerçek cihazda bloklandı): decode edilemiyorsa DAİMA ok=true; yalnız KESİN kötü verdict + enforce açıkken engelle. good = PLAY_RECOGNIZED && lic in (LICENSED,UNEVALUATED) && nonce_ok — cihaz integrity ŞART DEĞİL (rootlu cihaz bloklanmaz). Nonce yalnız hem kayıtlı hem yanıtta varsa kontrol edilir, penceresi 600 sn. Enforce ancak ölçüm eşiği tutunca (>=50 deneme VE >=%98 geçme) otomatik açılır.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/attest/challenge",
+  "fn": "attest_challenge",
+  "line": 1822,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "challenge": "str (secrets.token_urlsafe(24))"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "(social.json'a YAZMAZ) _attest_challenges[user] = (challenge, ts) — RAM dict (satır 1790)"
+  ],
+  "external": [],
+  "server_deps": [
+   "in-memory dict"
+  ],
+  "cf_mapping": "KV: attest_challenge:{user}, TTL 600 sn (POST /api/attest'in 600 sn penceresiyle uyumlu).",
+  "notes": "integrity_nonce ile aynı desen; kullanıcı başına tek challenge, yenisi eskisini ezer.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/attest",
+  "fn": "attest_verify",
+  "line": 1830,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "attestation",
+    "tip": "str (base64)",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "Apple App Attest CBOR nesnesi (b64); boşsa 'no-attestation' yolu"
+   }
+  ],
+  "response": {
+   "attestation/challenge yok": {
+    "ok": "bool (hep true)",
+    "reason": "'no-attestation'",
+    "enforced": "bool"
+   },
+   "istisna": {
+    "ok": "bool (hep true)",
+    "reason": "'unavailable'",
+    "enforced": "bool"
+   },
+   "doğrulandı/başarısız": {
+    "ok": "bool (ok VEYA enforce kapalı)",
+    "enforced": "bool"
+   }
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [
+   "_attest_challenges[user] RAM'den (600 sn penceresi, satır 1839)"
+  ],
+  "writes": [
+   "profiles.{user}.attested = int(ts) (yalnız doğrulama BAŞARILIYSA, satır 1853-1854)",
+   "profiles.{user}.attest_key = keyId (YALNIZ _key_id boş değilse, satır 1855; cihaz-benzersiz; bedava-aksiyon cihaz dedup — _profile_of.free_tactical satır 1406 bunu okur)",
+   "sqlite integrity_stats.db (ios sayaçları)"
+  ],
+  "external": [],
+  "server_deps": [
+   "python cbor2 + cryptography (CBOR parse, x509 zincir, ECDSA)",
+   "pinli Apple App Attest Root CA DER (koda gömülü, satır 1784-1785)",
+   "_APPATTEST_APPID = CONF.get('APPATTEST_APPID', 'SZF4T3P583.' + IAP_BUNDLE_ID) — config ile ezilebilir (satır 1786)",
+   "APPATTEST_ENFORCE config bayrağı (varsayılan KAPALI, satır 1789)",
+   "integrity_stats.db",
+   "in-memory challenge dict",
+   "social.json"
+  ],
+  "cf_mapping": "En zor kripto ucu: CBOR decode + x509 zincir + OID 1.2.840.113635.100.8.2 ekstensiyon nonce kontrolü Workers'ta elle yazılmalı (cbor kütüphanesi bundle'a girer, x509 parse için @peculiar/x509 gibi paket). Challenge → KV. Sayaçlar → D1. profiles.attest_key → D1. APPATTEST_ENFORCE → KV bayrağı.",
+  "notes": "FAIL-OPEN, integrity'den de agresif: attestation yok / challenge süresi geçmiş / HERHANGİ istisna → DAİMA ok=true (satır 1834-1836 docstring: istemci aksaklığı hile değildir). Enforce=1 olsa bile yalnız KESİN doğrulama başarısızlığında ok=false. Doğrulama başarılıysa attest_key yazılır — free_tactical (tek seferlik bedava taktik video) cihaz-dedup'u buna dayanır; CF portunda bu alan korunmazsa bedava hak suistimale açılır. rpid kontrolü auth_data[0:32] == sha256(APPID).",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/local-renders",
+  "fn": "local_renders",
+  "line": 2166,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "pending": "list — activity-detect'in yazdığı iş nesneleri: {from:int epoch, to:int epoch, type:str, mode:str(flat|flyover|3d), speed:str, aspect:str, line:str, dot:str, ride_id:str, ts:float, camdist?, music?} (activity-detect.py satır 425-426; üretici aynı from'u iki kez EKLEMEZ ve kuyruğu en yeni 10 işle sınırlar, satır 424-427)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [
+   "profiles.{user}.yerel_son"
+  ],
+  "writes": [
+   "profiles.{user}.yerel_son = int(ts) — saatte en çok 1 kez damga (satır 2174-2175); activity-detect bu damgaya bakarak kullanıcının 1.61+ olup olmadığına karar verir (7 gün penceresi)"
+  ],
+  "external": [],
+  "server_deps": [
+   "/opt/movelog/data/yerelq/{user}.json dosya kuyruğu (_YERELQ sabit yol, satır 2163) — ÜRETİCİSİ sunucudaki activity-detect.py",
+   "social.json"
+  ],
+  "cf_mapping": "yerelq → D1 tablosu local_renders(user, from_ts, job JSON) veya KV list. ⚠️ Kuyruğun ÜRETİCİSİ sunucu tarafı (activity-detect) — gölge modda sunucu yazmaya devam eder; ya activity-detect CF'ye POST atacak bir ingest ucu açılır ya da senkron script kurulur. yerel_son damgası D1 profiles'a.",
+  "notes": "7 günden eski işler yanıtta filtrelenir (satır 2182-2183) ama DOSYAYA GERİ YAZILMAZ — bayat kayıtlar dosyada kalır, sadece servis edilmez. yerel_son damgası I/O tasarrufu için saatte bir; try/except ile sarılı, damga yazılamasa da liste döner. SÜRÜM İŞARETİ mekanizması: bu ucu yalnız app 1.61+ çağırır.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/local-renders/done",
+  "fn": "local_render_done",
+  "line": 2187,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "from",
+    "tip": "int (float kabul edilir, int'e çevrilir)",
+    "zorunlu": false,
+    "varsayilan": 0,
+    "not": "tamamlanan işin sürüş başlangıç epoch'u — kuyruk anahtarı"
+   }
+  ],
+  "response": {
+   "ok": "bool (hep true)"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil (Body(...))"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "(social.json'a değil) /opt/movelog/data/yerelq/{user}.json — from==frm olan kayıtlar SİLİNİR, dosya geri yazılır (satır 2195-2199)"
+  ],
+  "external": [],
+  "server_deps": [
+   "yerelq dizini (dosya sistemi; yazma hatası sessizce yutulur)"
+  ],
+  "cf_mapping": "D1: DELETE FROM local_renders WHERE user=? AND from_ts=? (veya KV list güncelle). GET ile aynı depo.",
+  "notes": "from=0 gönderilirse from'u 0 olan kayıtlar silinir (pratikte olmaz). Dosya yoksa boş liste ile başlar, yine ok:true döner — idempotent. Kullanıcı yalnız KENDİ kuyruğuna dokunur (dosya adı user'dan) — IDOR yok.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/groupvideo",
+  "fn": "get_groupvideo",
+  "line": 2879,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "pref": "str: both | group | solo (varsayılan 'both')"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [
+   "profiles.{user}.group_video"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1: profiles.group_video kolonu (veya profiles JSON blob'unda alan).",
+  "notes": "Anlamlar (satır 2875-2878): both=ortak+kendi videosu; group=birlikte sürüşte yalnız ortak video; solo=çift algılamasına hiç girmez. Bu tercihi sunucudaki grup-sürüş eşleştirme timer'ı da okur.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "PUT",
+  "path": "/api/groupvideo",
+  "fn": "put_groupvideo",
+  "line": 2885,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "pref",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": null,
+    "not": "yalnız both | group | solo"
+   }
+  ],
+  "response": {
+   "pref": "str (kaydedilen değer)"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "detail": "pref both|group|solo olmalı",
+    "kosul": "geçersiz değer (satır 2888)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [],
+  "writes": [
+   "profiles.{user}.group_video"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1 UPDATE profiles.group_video.",
+  "notes": "Basit whitelist doğrulaması; boş/eksik pref de 400'e düşer.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/safety",
+  "fn": "get_safety",
+  "line": 3019,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "buddy": "str (internal user id, '' olabilir)",
+   "arrive": "bool (varsayılan true)",
+   "longstop": "bool (varsayılan true — kaynak alan safety_stop)",
+   "buddy_profile": "obj (_profile_of çıktısı; YALNIZ buddy doluysa): {username,name,handle,avatar,premium,ultra,sv_off,sokak_hak,video_hak,sokak_hediye:false,free_tactical,admin}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [
+   "profiles.{user}.safety_buddy",
+   "profiles.{user}.safety_arrive",
+   "profiles.{user}.safety_stop",
+   "profiles.{buddy} (_profile_of)",
+   "free_tactical_enabled + free_tactical_devices (üst düzey; _profile_of.free_tactical satır 1406)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "social.json",
+   "/opt/movelog/data/sv-kapali bayrak dosyası (_profile_of.sv_off satır 1398 — varlık kontrolü)"
+  ],
+  "cf_mapping": "D1 profiles. sv-kapali bayrak dosyası → KV bayrağı (sv_off). buddy_profile için _profile_of eşleniği CF'de ortak yardımcı olmalı (birçok grup kullanıyor).",
+  "notes": "Yanıt anahtarı 'longstop' ama saklanan alan 'safety_stop' — PUT tarafı da 'longstop' adıyla alır; isim eşlemesine dikkat. Bildirimlerin kendisi sunucu tarafında activity-detect atar (satır 3018) — bu uçlar yalnız tercih CRUD'u.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "PUT",
+  "path": "/api/safety",
+  "fn": "put_safety",
+  "line": 3030,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "buddy",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "internal user id; '' göndermek buddy'yi TEMİZLER; dolu değer arkadaş listesinde olmalı"
+   },
+   {
+    "ad": "arrive",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "yalnız anahtar body'de varsa yazılır"
+   },
+   {
+    "ad": "longstop",
+    "tip": "bool",
+    "zorunlu": false,
+    "varsayilan": null,
+    "not": "profiles.safety_stop alanına yazılır"
+   }
+  ],
+  "response": {
+   "ok": "bool (hep true)"
+  },
+  "errors": [
+   {
+    "code": 400,
+    "detail": "güvenlik kişisi arkadaş listenden olmalı",
+    "kosul": "buddy dolu VE friends.{user} listesinde değil (satır 3035-3036)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "friends.{user} (buddy doğrulaması)"
+  ],
+  "writes": [
+   "profiles.{user}.safety_buddy",
+   "profiles.{user}.safety_arrive",
+   "profiles.{user}.safety_stop"
+  ],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1 profiles + friends. Kısmi güncelleme semantiği ('anahtar varsa yaz') CF portunda korunmalı — PATCH mantığı.",
+  "notes": "Kısmi PUT: yalnız body'de bulunan anahtarlar yazılır; buddy='' temizleme geçerli (friends kontrolüne girmez çünkü b falsy). arrive/longstop bool()'a zorlanır.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "POST",
+  "path": "/api/routes/share",
+  "fn": "share_route",
+  "line": 3045,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [
+   {
+    "ad": "ride_id",
+    "tip": "str",
+    "zorunlu": true,
+    "varsayilan": "",
+    "not": "cloud_videos veya detected_rides anahtarı; sahibi user olmalı (IDOR)"
+   },
+   {
+    "ad": "to_user",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "hedef arkadaş internal id"
+   },
+   {
+    "ad": "to_club",
+    "tip": "str",
+    "zorunlu": false,
+    "varsayilan": "",
+    "not": "kulüp id; user üye olmalı; İKİSİ DE verilirse kulüp KAZANIR (targets ezilir, satır 3059-3064)"
+   }
+  ],
+  "response": {
+   "ok": "bool (true)",
+   "id": "str paylaşım id ('sr'+epoch+hex6, satır 3068)",
+   "sent": "int (hedef sayısı)"
+  },
+  "errors": [
+   {
+    "code": 404,
+    "detail": "rota bulunamadı",
+    "kosul": "kayıt yok VEYA src.user != user — IDOR: sahiplik ihlali 404'e gizlenir (satır 3050-3052)"
+   },
+   {
+    "code": 400,
+    "detail": "sadece arkadaşına paylaşabilirsin",
+    "kosul": "to_user friends.{user} listesinde değil (satır 3056-3057)"
+   },
+   {
+    "code": 404,
+    "detail": "kulüp bulunamadı",
+    "kosul": "kulüp yok VEYA user üyesi değil (satır 3062-3063)"
+   },
+   {
+    "code": 400,
+    "detail": "hedef yok",
+    "kosul": "ne to_user ne to_club sonuç verdi (satır 3065-3066)"
+   },
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   },
+   {
+    "code": 422,
+    "detail": "FastAPI validation error",
+    "kosul": "body JSON değil"
+   }
+  ],
+  "reads": [
+   "cloud_videos.{ride_id} (user, km, date, ts, to)",
+   "detected_rides.{ride_id} (fallback kaynak)",
+   "friends.{user}",
+   "clubs.{to_club}.members",
+   "profiles.{hedef}.lang (push dili)",
+   "profiles.{user} (_profile_of — gönderen adı)"
+  ],
+  "writes": [
+   "shared_routes.{sid} = {from, ride_id, to:[hedefler], ts, km, date, rideref:{ts,to_t}} (satır 3069-3072)"
+  ],
+  "external": [
+   "_pushq: DATA_DIR/pushq/*.json dosya kuyruğu → ana sunucu broadcast worker'ı APNs/FCM push atar (satır 2986-2997; hedef başına 1 dosya, 13 dilde lokalize metin satır 3074-3080)"
+  ],
+  "server_deps": [
+   "social.json",
+   "pushq dizini (dosya kuyruğu)"
+  ],
+  "cf_mapping": "D1: shared_routes tablosu + cloud_videos/detected_rides/friends/clubs okumaları. pushq → CF Queue (consumer Worker APNs/FCM'e fetch ile gider; APNs için ES256 JWT WebCrypto ile üretilir) veya gölge modda sunucudaki pushq'ya HTTP ile geri yaz.",
+  "notes": "IDOR koruması: başkasının rotası 403 değil 404 döner (varlık sızdırmaz). Kulüp paylaşımında gönderen hariç TÜM üyeler hedef. Push metni hedefin diline göre (profiles.lang, yoksa en). rideref.to_t kaynak kaydın 'to' alanından — video/rota yeniden üretimi için zaman aralığı referansı. sid çakışma ihtimali düşük (epoch+3 bayt hex).",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ },
+ {
+  "method": "GET",
+  "path": "/api/routes/shared",
+  "fn": "shared_inbox",
+  "line": 3087,
+  "auth": "auth_user (Bearer JWT)",
+  "params": [],
+  "body": [],
+  "response": {
+   "routes": "list (en yeni önce, MAX 50): {id:str, from_name:str, from:str, km:num|null, date:str|null, ts:int|null, ride_id:str, ridden:bool (shared_routes.{sid}.ridden.{user} — yazan uç GRUP 3: POST /api/internal/register-ride satır 1049, yazma satır 1091)}"
+  },
+  "errors": [
+   {
+    "code": 401,
+    "detail": "token yok / token geçersiz/süresi dolmuş",
+    "kosul": "auth_user"
+   }
+  ],
+  "reads": [
+   "shared_routes.* (TÜM kayıtlar taranır, user 'to' listesinde mi; satır 3091-3092)",
+   "profiles.{from} (_profile_of — gönderen adı)"
+  ],
+  "writes": [],
+  "external": [],
+  "server_deps": [
+   "social.json"
+  ],
+  "cf_mapping": "D1: shared_routes'ta 'to' listesi normalize edilmeli (shared_route_targets(sid,user) ara tablosu) — JSON blob içinde 'user in to' taraması D1'de LIKE'a düşer, ölçeklenmez.",
+  "notes": "O(N) tam tarama: tüm shared_routes her istekte gezilir — CF portunda indeksli sorguya çevrilmeli. 50 kayıt sınırı sıralamadan SONRA uygulanır (en yeni 50). ridden alanı burada yalnız okunur; işaretleyen uç GRUP 3'teki POST /api/internal/register-ride (satır 1049, RENDER_DONE_SECRET korumalı; yazma satır 1091). Sıralama -x['ts'] (satır 3098): ts None olan kayıt 500'e yol açar — share_route her zaman ts yazar, pratikte olmaz ama CF portunda COALESCE ile korun.",
+  "port_durum": "TAMAM — api/src/routes/grup6.ts (2026-08-30, DENETLENDİ: 3 düzeltme uygulandı, typecheck gecti)"
+ }
+]

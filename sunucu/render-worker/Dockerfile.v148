@@ -1,0 +1,10 @@
+# v148 (2026-09-05) — v147'deki BEYAZ-KARE KAPISININ İKİ KUSURU kapatıldı (denetimde bulundu).
+#  R3: kapı yalnız ilk ~24 saniyeye bakıyordu (`fps=1/2` + `-frames:v 12` → t=0,2,…,22).
+#      24. sn'den SONRA beyazlaşan video kapıdan GEÇİYORDU. KANITLANDI: 20 sn dolu + 15 sn beyaz
+#      yapay video → eski kapı %16 (GEÇER), yeni kapı %43 (RED). Artık süre ölçülüp örnekleme
+#      hızı ona göre kuruluyor: video ne kadar uzun olursa olsun baştan sona ~16 örnek.
+#  R4: beyaz tespitinde `_redispatch` 6 denemeye kadar gidiyordu → sistematik yanlış-pozitif
+#      7 tam render yakabilirdi (~$2,7-5,2). Beyaz dalına AYRI tavan kondu: 1 deneme.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v147
+FROM ${BASE}
+COPY rp_handler.v147.py /app/rp_handler.py

@@ -1,0 +1,743 @@
+// Gercek 3B flythrough: MapLibre GL + terrain + egimli kamera rota boyunca ucar.
+// 2026-08-10: MAPBOX'TAN TAM KOPUŞ — kütüphane imajda gömülü, karolar kendi sunucumuzdan,
+// arazi anahtarsız terrarium DEM'den, binalar kendi Protomaps arşivimizden fill-extrusion.
+// Girdi: argv[2] = JSON {token,W,H,fps,outMp4,ffmpeg,frames,pitch,zoom,title:{date,totkm},pts:[{lon,lat,t,spd,cum,hr}]}
+// Kareler PNG olarak ffmpeg image2pipe stdin'e yazilir -> mp4.
+const puppeteer = require('puppeteer');
+const { spawn } = require('child_process');
+const fs = require('fs');
+
+const IN = JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const {token,fps,outMp4,ffmpeg,frames,pitch,zoom,title,pts} = IN;
+// 🔴 ZIPLAMA FİKSİ (04.09) — YUMUŞATMA KATSAYILARINI KARE HIZINA NORMALİZE ET.
+// Katsayılar (0.35 / 0.012 / 0.02 / 0.06 / 0.05 ...) 60fps'e göre elle ayarlanmış, fps terimi yok.
+// TELEFON hattı 30fps koştuğu için her süzgeç yarı hızda ilerliyor: kare başı yer değiştirme ve
+// kalıcı gecikme iki katına çıkıyor. 30fps telefon videosunda ÖLÇÜLDÜ: saniyede 3,01 sıçrama,
+// taban hareketin 9,2 katı (60fps bulut referansı 1,55/sn ve 4,6x). Aynı fonksiyondaki HUD geçişi
+// zaten f/(fps*0.9) ile fps'e bölünüyor — kamera yumuşatmasında unutulmuş.
+// a_eff = 1-(1-a60)^(60/fps)  → zaman sabiti fps'ten bağımsız olur.
+const _A = (a60) => (fps===60 ? a60 : 1-Math.pow(1-a60, 60/fps));
+
+// İç render çözünürlüğü: 3D'de swiftshader bellek/CPU maliyeti piksele bağlı.
+// Küçük çöz -> az bellek (OOM yok) + hızlı çekim (60fps olur). ffmpeg final boyuta lanczos upscale eder.
+// rscale<1 = iç çöz DÜŞÜR (CPU/swiftshader bellek); rscale>1 = SUPERSAMPLE (büyük GPU'da çiz,
+// lanczos ile küçült -> maksimum keskinlik/anti-alias). İkisinde de ffmpeg final boyuta ölçekler.
+const OW=IN.W, OH=IN.H, RS=(IN.rscale && IN.rscale>0)?IN.rscale:1;
+const W = RS!==1 ? Math.round(IN.W*RS/2)*2 : IN.W;
+const H = RS!==1 ? Math.round(IN.H*RS/2)*2 : IN.H;
+
+function bearing(a,b){
+  const r=Math.PI/180; const y=Math.sin((b.lon-a.lon)*r)*Math.cos(b.lat*r);
+  const x=Math.cos(a.lat*r)*Math.sin(b.lat*r)-Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lon-a.lon)*r);
+  return (Math.atan2(y,x)/r+360)%360;
+}
+function hav(a,b){const R=6371000,r=Math.PI/180;const dla=(b.lat-a.lat)*r,dlo=(b.lon-a.lon)*r;
+  const x=Math.sin(dla/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dlo/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
+const angd=(a,b)=>((a-b+540)%360)-180;   // en kisa acisal fark
+// İz zaten map-match ile yola oturtuldu (temiz). Eskiden 26-pencere çift yumuşatma KÖŞELERİ KESİP
+// bina içinden geçiyordu. Artık ÇİZGİ birebir map-match noktalarından (pts) çizilir; kamera/marker
+// için sadece HAFİF yumuşatma (jitter için), köşe kesmez.
+const WINs=4;   // küçük pencere = köşeleri korur (yola sadık), sadece minik jitter giderir
+function smooth1(arr){return arr.map((p,i)=>{let a=Math.max(0,i-WINs),b=Math.min(arr.length-1,i+WINs),so=0,sa=0,c=0;
+  for(let k=a;k<=b;k++){so+=arr[k].lon;sa+=arr[k].lat;c++;}return {lon:so/c,lat:sa/c};});}
+const smPath=smooth1(pts);   // tek hafif geçiş — yalnız kamera/marker için (çizgi pts kullanır)
+
+// ══════════ MAPBOX'SIZ HARİTA (2026-08-10) ══════════
+// Barış kararı: Mapbox'tan TAM kopuş. Standard v3'ün foto-gerçekçi binaları/ağaçları gitti;
+// yerine kendi Protomaps arşivimizden fill-extrusion bina hacmi + kendi uydu karolarımız.
+// Kütüphane CDN'den DEĞİL imajdan okunur -> render anında dış bağımlılık SIFIR.
+const MLJS  = fs.readFileSync(__dirname + '/vendor/maplibre-gl.js', 'utf8');
+const MLCSS = fs.readFileSync(__dirname + '/vendor/maplibre-gl.css', 'utf8');
+
+// Karo uçları: kendi sunucumuz (nginx -> harita-proxy). Ortamdan ezilebilir (test/tatbikat için).
+// 2026-08-11: karolar ARTIK CDN'li alan adından. harita.nickdegs.com Cloudflare turuncu bulut
+// arkasında (30 gün immutable cache) -> tekrar eden karo ORIGIN'E HİÇ GELMEZ (kanıt: MISS→HIT).
+// kisisel-api DNS-only kalmalı (turuncu bulut ücretsiz planda 100MB yükleme sınırı getirir,
+// bizde foto/müzik için client_max_body_size 200M var -> yüklemeler kırılırdı).
+//
+// 🔴 2026-08-31 ÖNEKLİ YOLA GEÇİŞ (sunucusuzlaştırma). ESKİ varsayılan ÇIPLAK yoldu
+// (`https://harita.nickdegs.com`) ve o yol nginx -> harita-proxy'ye gider: SUNUCU KAPANINCA 502
+// -> 13.000 karo hatası -> render exit(7). Önekli yol (`/{ONEK}/xyz|mvt|yukseklik`) 31.08'de
+// `harita-katman` worker'ına route'landı; worker karoları Esri/Hooder/EOX public zincirinden
+// verir, sunucu tamamen kapalıyken de 200 döner.
+// ⚠️ ÇIPLAK YOLA GEÇME: harita.nickdegs.com/xyz/'e gelen ~4.400 istek/gün HOODER'IN OYUN
+// İSTEMCİLERİ'nin (Hooder/2.4 MapLibre iOS, app.realvirtuality.landlord Android) ve o yol
+// bilerek route'lanmadı. Bizim tüketicimiz DAİMA önekli yoldan gelir.
+// Önek /opt/matrix/secrets/harita-uc.conf (HARITA_UC_ONEK) ile aynıdır; env ile ezilebilir
+// (HARITA_TABAN=... -> yerel yan-servis/tatbikat). route-video.py'deki HARITA_UC ile aynı biçim.
+const HARITA = process.env.HARITA_TABAN || 'https://harita.nickdegs.com/24579d9db6c7c001';
+// ULTRA AYRIMI: katman parametresi -> proxy Ultra'ya en yüksek zoom/kaliteli kaynağı verir.
+// (Uzak worker'ın isteğinde tier bilgisi URL'de taşınmalı; sunucudaki .aktif-katman dosyası
+//  yalnız YEREL taktik render için, uzak istekleri kapsamaz.)
+const KATMAN = IN.ultra ? 'ultra' : 'premium';
+// 🏢 GERÇEK YÜKSEKLİK (2026-08-11, Barış: "yüzde yüz gerçek — Ultra aboneler"): rota bbox'ı için
+// GHS uydu ölçümü (100m grid) + OSM height/levels kuleleri tek istekte çekilir (CF 7g önbellekli).
+const _ylons=pts.map(p=>p.lon), _ylats=pts.map(p=>p.lat);
+const YBB=[Math.min(..._ylons)-0.02, Math.min(..._ylats)-0.02, Math.max(..._ylons)+0.02, Math.max(..._ylats)+0.02];
+const YUK_URL = HARITA + '/yukseklik?bbox=' + YBB.map(v=>v.toFixed(5)).join(',') + '&n=160';
+const SAT_URL = HARITA + '/xyz/sat/{z}/{x}/{y}.jpg?k=' + KATMAN;
+const STR_URL = HARITA + '/xyz/str/{z}/{x}/{y}.jpg?k=' + KATMAN;
+const MVT_URL = HARITA + '/mvt/{z}/{x}/{y}.mvt';
+// Arazi: anahtarsız kamu terrarium DEM (AWS elevation-tiles-prod; CORS'lu, doğrulandı).
+const DEM_URL = process.env.DEM_TABAN || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+
+// Stil: uydu yolunda foto zemin; şehir yolunda açık zemin + vektör (bina çıkarımı style.load'da eklenir).
+const MLSTYLE = {
+  version: 8,
+  glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
+  sources: {
+    sat: { type: 'raster', tiles: [SAT_URL], tileSize: 256, maxzoom: 19, attribution: '' },
+    str: { type: 'raster', tiles: [STR_URL], tileSize: 256, maxzoom: 19, attribution: '' },
+    vektor: { type: 'vector', tiles: [MVT_URL], minzoom: 0, maxzoom: 15, attribution: '' }
+  },
+  layers: IN.satStyle
+    ? [{ id: 'zemin', type: 'raster', source: 'sat' }]
+    : [{ id: 'zemin', type: 'raster', source: 'str', paint: { 'raster-opacity': 1 } }]
+};
+
+const HTML = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<script>${MLJS}</script>
+<style>${MLCSS}</style>
+<style>body{margin:0}#map{position:absolute;top:0;left:0;width:${W}px;height:${H}px}
+#ov{position:absolute;top:0;left:0;pointer-events:none}
+/* Harita motoru logo + attribution YAZILARINI gizle */
+.maplibregl-ctrl-logo,.maplibregl-ctrl-attrib,.maplibregl-ctrl-bottom-left,.maplibregl-ctrl-bottom-right,.maplibregl-ctrl-attrib-inner{display:none!important;opacity:0!important}</style></head>
+<body><div id="map"></div><canvas id="ov" width="${W}" height="${H}"></canvas>
+<script>
+// ŞEHİR YOLU (satStyle=false): kendi vektör karolarımızdan fill-extrusion bina hacmi.
+// Mapbox Standard v3'ün pişmiş foto-gerçekçi binaları/ağaçları YOK (Barış 2026-08-10: "düz bina kabul").
+// UZUN ROTA (satStyle=true): TAM UYDU + terrarium raster-dem arazi kabartması + globe.
+const map=window._map=new maplibregl.Map({container:'map',style:${JSON.stringify(MLSTYLE)},
+  ${IN.satStyle?"projection:{type:'globe'},":""}   // v95: uzun rotada GERÇEK KÜRE (MapLibre 5 globe)
+  center:[${pts[0].lon},${pts[0].lat}],zoom:${zoom},pitch:${pitch},bearing:0,interactive:false,
+  fadeDuration:0,preserveDrawingBuffer:true,antialias:true,maxTileCacheSize:512,attributionControl:false});
+window._ready=false;
+// 🛟 KARO HATASI SAYACI (2026-08-11): worker'ın ağı/DNS'i bozuksa TÜM karolar "Failed to fetch"
+// olur -> harita BEMBEYAZ ama render "başarıyla" biter (V128/V129'da yaşandı: iki worker'dan biri
+// beyaz üretti — harita.nickdegs.com yeni açıldığı için negatif DNS önbelleği şüphesi).
+// Beyaz video üretmek yerine SAY ve node tarafı erken çıksın -> taze worker'a re-dispatch.
+window._tileHata=0;
+// GERÇEK YÜKSEKLİK: grid bilinear + OSM kulesi (~70m yakınsa birebir değer; kule > grid).
+window._yuk=null; window._yukDone={};
+if(${IN.kabartma?'true':'false'}){
+  fetch('${YUK_URL}').then(r=>r.json()).then(d=>{window._yuk=d;}).catch(e=>{});
+}
+window._yukOrnek=(lon,lat)=>{
+  const d=window._yuk; if(!d) return null;
+  for(const k of d.kule){ const dx=(k[0]-lon)*Math.cos(lat*0.01745), dy=k[1]-lat;
+    if(dx*dx+dy*dy < 0.0000004) return k[2]; }          // ~70 m -> OSM birebir
+  const [a,b,c2,e]=d.bbox, n=d.n;
+  let fx=(lon-a)/(c2-a)*(n-1), fy=(lat-b)/(e-b)*(n-1);
+  if(fx<0||fy<0||fx>n-1||fy>n-1) return null;
+  const x0=Math.floor(fx), y0=Math.floor(fy), x1=Math.min(n-1,x0+1), y1=Math.min(n-1,y0+1);
+  const tx=fx-x0, ty=fy-y0, g=d.grid;
+  const v=g[y0*n+x0]*(1-tx)*(1-ty)+g[y0*n+x1]*tx*(1-ty)+g[y1*n+x0]*(1-tx)*ty+g[y1*n+x1]*tx*ty;
+  return v>0.5? v : null;
+};
+window.yukUygula=()=>{
+  if(!window._yuk) return 0;
+  let n=0;
+  try{
+    const fs2=map.querySourceFeatures('vektor',{sourceLayer:'buildings'});
+    for(const f of fs2){
+      if(f.id===undefined||window._yukDone[f.id]) continue;
+      window._yukDone[f.id]=1;
+      try{
+        let cs=f.geometry.coordinates; while(Array.isArray(cs[0][0])) cs=cs[0];
+        let sx=0,sy=0; for(const c3 of cs){sx+=c3[0];sy+=c3[1];}
+        const h=window._yukOrnek(sx/cs.length, sy/cs.length);
+        if(h) { map.setFeatureState({source:'vektor',sourceLayer:'buildings',id:f.id},{h:Math.max(3.5,h)}); n++; }
+      }catch(e){}
+    }
+  }catch(e){}
+  return n;
+};
+map.on('error',e=>{ const m=String((e&&e.error&&e.error.message)||''); if(m.indexOf('Failed to fetch')>=0||m.indexOf('AJAXError')>=0) window._tileHata++; });
+map.on('style.load',()=>{
+  try{
+    // MAPBOX'SIZ 3B (2026-08-10): Standard v3'ün pişmiş binaları/ağaçları yok; kendi Protomaps
+    // vektör karolarımızdan fill-extrusion ile bina hacmi çıkarılır (Barış: "düz bina kabul").
+    // Yükseklik OSM'den; yoksa 9 m varsayılan (tek katlıdan yüksek, blok hissi verir).
+    // 2026-08-10: binalar artık ULTRA'ya özel (Premium'da YOK) ve uydu zemininde DE çizilir.
+    // Eskiden yalnız satStyle=false dalındaydı; o dal Google 3D yüzünden üretimde erişilmezdi.
+    // 2026-08-11 ÜRÜN KARARI (Barış): 3B binalar KABARTMALI sekmesine bağlı — Premium DE Ultra DA
+    // seçebilir. Normal mod = kusursuz düz uydu (bina yok). Ultra'nın tek farkı cila/dalga efekti.
+    if(${IN.kabartma?'true':'false'}){
+      // Binalar OSM+Microsoft harmanı (proxy). Yükseklik: karo height > GHS uydu > id-hash yedek.
+      // Palet uydu-doğal tonlar; minzoom 13 (proxy z13-14'ü z15'ten sentezler — her zoom'da bina).
+      map.addLayer({id:'binalar',type:'fill-extrusion',source:'vektor','source-layer':'buildings',
+        minzoom:13,
+        paint:{'fill-extrusion-color':['match',['%',['coalesce',['id'],7],5],
+                 0,'#b08a72', 1,'#d8cdb8', 2,'#c4bba8', 3,'#c2a184', '#d0c7b5'],   // uydu-doğal tonlar (Barış: boyalı kutu olmasın)
+               // YÜKSEKLİK ÖNCELİĞİ (11.08, Barış: "Protomaps'in kendi verisinden"):
+               // ① karodaki height (Protomaps=OSM, BİREBİR — Sapphire 261m) ② GHS uydu ölçümü
+               // (feature-state, mahalle profili) ③ id-hash yedek. Eski sıra GHS'i öne alıyordu
+               // -> 261m'lik kule 22m'lik hücre ortalamasına EZİLİYORDU. Düzeltildi.
+               'fill-extrusion-height':['case',['has','height'],['to-number',['get','height']],
+                 ['coalesce',['feature-state','h'],
+                   ['+',7,['%',['coalesce',['id'],7],9]]]],
+               'fill-extrusion-height-transition':{duration:0,delay:0},
+               'fill-extrusion-base':['case',['has','min_height'],['to-number',['get','min_height']],0],
+               'fill-extrusion-vertical-gradient':true,
+               'fill-extrusion-opacity':0.9}});
+    }
+    map.setLight({anchor:'map',position:[1.5,200,35],color:'#fff',intensity:0.45});   // canlı-renk binalar için güçlendirilmiş ışık (varyant kıyasıyla seçildi)   // gündüz yönlü ışık
+  }catch(e){ console.log('config hata:',e); }
+  if(${IN.satStyle?'true':'false'}){ try{   // uydu stilinde 3B arazi kabartması + atmosfer ufku
+    map.addSource('dem',{type:'raster-dem',tiles:['${DEM_URL}'],tileSize:256,maxzoom:14,encoding:'terrarium'});
+    map.setTerrain({source:'dem',exaggeration:1.0});   // v91: uzun rotada kabartma DÜZ (1.15 bile belirgin pompalıyordu; bu zoom'larda görsel kayıp yok)
+    map.setSky({'sky-color':'#4b8fd6','horizon-color':'#cfe0f0','fog-color':'#dbe7f3',
+                'sky-horizon-blend':0.55,'horizon-fog-blend':0.55,'fog-ground-blend':0.30,'atmosphere-blend':0.85});
+  }catch(e){ console.log('terrain hata:',e); } }
+  // rota çizgisi + konum: binalardan SONRA eklenir -> üstte çizilir (MapLibre'de slot yok, sıra belirler)
+  map.addSource('route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:${JSON.stringify(pts.map(p=>[p.lon,p.lat]))}}}});
+  // ═══ 3B ROTA ŞERİDİ — custom WebGL (v139, Barış 2026-08-28) ═══
+  // NEDEN: MapLibre'nin type:'line' katmanı terrain açıkken araziye DRAPE edilir (DEM yüzeyine
+  // yapışır). Köprü/viyadük DEM'de yok (kaba terrarium) -> yol yukarıdayken çizgi altındaki
+  // vadi/dere yatağına iniyor, Barış'ın gördüğü "köprüde yere sabitleme" bu.
+  // MapLibre'de 'line-z-offset' YOK (6.6.0'da bile; o özellik Mapbox GL v3'e özgü) -> sürüm
+  // yükseltmek çözmez. Çözüm: rotayı kendi WebGL katmanımızda GERÇEK YÜKSEKLİKTE çizmek.
+  // z = max(GPS alt, DEM) + 2m  -> köprüde GPS kazanır (çizgi yukarıda), düz yolda DEM kazanır
+  // (GPS gürültüsü çizgiyi yerin altına sokmaz). renderingMode:'3d' + depth test sayesinde
+  // arazi sırtı çizgiyi DOĞRU gizler (overlay'de olmayan kazanç).
+  window._RP3 = ${JSON.stringify(pts.map(p=>[p.lon,p.lat,(typeof p.alt==='number'?p.alt:null)]))};
+  // ═══ ARAZİ YÜKSEKLİĞİNİ KENDİMİZ ÖLÇ (v140) ═══
+  // map.queryTerrainElevation KULLANILMAZ: vendor'da getDEMElevation, karo yoksa 0 doner
+  // yani karo YÜKLÜ DEĞİLKEN null değil **0** döner. 0'ı geçerli yükseklik sayınca "veri tam"
+  // sanılıyor, geometri hiçbir arazi karosu gelmeden donuyor ve şerit araziden ~5 m AŞAĞIDA
+  // kalıyordu -> yamaçta yutuluyor, gidiş-dönüşte biri diğerini örtüyordu.
+  // Çözüm: terrarium DEM karosunu doğrudan okuyup rakımı biz hesaplıyoruz (deterministik:
+  // aynı rota = aynı video; karo yükleme yarışı yok, private API yok).
+  window._demZ = null;
+  window._demHesapla = async function(){
+    const P=window._RP3, Z=12, N=Math.pow(2,Z), U=${JSON.stringify(DEM_URL)};
+    const kon=(lat,lon)=>{ const rad=lat*Math.PI/180;
+      return [ (lon+180)/360*N,
+               (1-Math.log(Math.tan(rad)+1/Math.cos(rad))/Math.PI)/2*N ]; };
+    const gerek=new Set();
+    for(const p of P){ const c=kon(p[1],p[0]); gerek.add(Math.floor(c[0])+'/'+Math.floor(c[1])); }
+    const kar={};
+    for(const k of gerek){
+      const xy=k.split('/');
+      try{
+        const r=await fetch(U.replace('{z}',Z).replace('{x}',xy[0]).replace('{y}',xy[1]));
+        if(!r.ok){ kar[k]=null; continue; }
+        const im=await createImageBitmap(await r.blob());
+        const cv=new OffscreenCanvas(im.width,im.height), cx=cv.getContext('2d');
+        cx.drawImage(im,0,0); kar[k]=cx.getImageData(0,0,im.width,im.height);
+      }catch(e){ kar[k]=null; }
+    }
+    let n=0;
+    window._demZ=P.map(p=>{
+      const c=kon(p[1],p[0]), k=Math.floor(c[0])+'/'+Math.floor(c[1]), g=kar[k];
+      if(!g) return null;
+      const ix=Math.min(g.width-1, Math.floor((c[0]-Math.floor(c[0]))*g.width));
+      const iy=Math.min(g.height-1,Math.floor((c[1]-Math.floor(c[1]))*g.height));
+      const o=(iy*g.width+ix)*4;
+      n++; return (g.data[o]*256+g.data[o+1]+g.data[o+2]/256)-32768;   // terrarium formülü
+    });
+    return n+'/'+P.length;
+  };
+  const _RCOL = ${JSON.stringify(IN.lineColor||'#00e5ff')};
+  function _hex2rgb(h){ const n=parseInt(h.replace('#',''),16);
+    return [((n>>16)&255)/255, ((n>>8)&255)/255, (n&255)/255]; }
+  const rline3d = {
+    id:'rline3d', type:'custom', renderingMode:'3d',
+    onAdd(m, gl){
+      this.map=m; this.hazir=false;
+      // EKRAN-UZAYI kalınlık: yan kaydırma PROJEKSİYONDAN SONRA yapılır, yoksa eğik kamerada
+      // ön plan şişer (ilk denemede oldu). MapLibre'nin kendi line katmanı da böyle çalışır.
+      const vs=gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs,'attribute vec3 a_pos;attribute vec3 a_nxt;attribute float a_side;'+
+        'uniform mat4 u_matrix;uniform vec2 u_vp;uniform float u_half;'+
+        // ⚠️ KAMERA ARKASI: w<=0 olan noktada perspektif bölme işareti ters döner; ekran-uzayı
+        // yön vektörü bozulur ve ŞERİT PATLAR (çizginin uzak/geçilmiş kısmı kayboluyordu).
+        // Böyle vertex'i kadraj dışına atıyoruz — MapLibre'nin kendi line katmanı da
+        // bu noktaları CPU'da kırpar; bizde karşılığı bu.
+        'void main(){vec4 p0=u_matrix*vec4(a_pos,1.0);vec4 p1=u_matrix*vec4(a_nxt,1.0);'+
+        'if(p0.w<=0.0){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}'+
+        'vec2 s0=(p0.xy/p0.w)*u_vp;'+
+        'vec2 s1=(p1.w>0.0)?((p1.xy/p1.w)*u_vp):(s0+vec2(1.0,0.0));'+
+        'vec2 d=s1-s0;float L=length(d);vec2 dir=(L>1e-6)?d/L:vec2(1.0,0.0);'+
+        'vec2 nrm=vec2(-dir.y,dir.x);vec2 off=nrm*u_half*a_side;'+
+        'gl_Position=vec4(p0.xy+(off/u_vp)*p0.w,p0.z,p0.w);}');
+      gl.compileShader(vs);
+      const fs=gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs,'precision mediump float;uniform vec4 u_col;void main(){gl_FragColor=u_col;}');
+      gl.compileShader(fs);
+      const pr=gl.createProgram(); gl.attachShader(pr,vs); gl.attachShader(pr,fs); gl.linkProgram(pr);
+      if(!gl.getProgramParameter(pr,gl.LINK_STATUS)){ console.log('rline3d link hata:',gl.getProgramInfoLog(pr)); return; }
+      this.pr=pr;
+      this.aPos=gl.getAttribLocation(pr,'a_pos'); this.aNxt=gl.getAttribLocation(pr,'a_nxt');
+      this.aSide=gl.getAttribLocation(pr,'a_side');
+      this.uMat=gl.getUniformLocation(pr,'u_matrix'); this.uHalf=gl.getUniformLocation(pr,'u_half');
+      this.uCol=gl.getUniformLocation(pr,'u_col'); this.uVp=gl.getUniformLocation(pr,'u_vp');
+      this.buf=gl.createBuffer();
+    },
+    // Geometriyi BİR KEZ kur: terrain karoları geldikten sonra (DEM sorgusu doğru olsun).
+    kur(gl){
+      const P=window._RP3; const n=P.length; if(n<2){ this.hazir=true; this.say=0; return; }
+      const M=new Array(n);
+      let demOk=0, demYok=0;
+      // 1. geçiş: bilinen arazi yüksekliklerini topla
+      const D=new Array(n);
+      const _dz=window._demZ;
+      for(let i=0;i<n;i++){
+        const d=_dz?_dz[i]:null;
+        if(typeof d==='number' && isFinite(d)){ D[i]=d; demOk++; } else { D[i]=null; demYok++; }
+      }
+      // 2. geçiş: BOŞLUK DOLDURMA — uzak karolar henüz yüklenmemişse en yakın bilinen
+      // araziyi kullan. Yoksa o noktalarda sadece GPS kalıyor; GPS bu rotalarda araziden
+      // ortalama 5 m DÜŞÜK ölçülüyor (ölçüldü) -> çizgi yerin altında kalıp KAYBOLUYORDU.
+      for(let i=0;i<n;i++){
+        if(D[i]!==null) continue;
+        let a=i-1,b=i+1;
+        while(a>=0 && D[a]===null) a--;
+        while(b<n && D[b]===null) b++;
+        const va=(a>=0)?D[a]:null, vb=(b<n)?D[b]:null;
+        D[i]=(va!==null&&vb!==null)?Math.max(va,vb):(va!==null?va:(vb!==null?vb:null));
+      }
+      for(let i=0;i<n;i++){
+        const lon=P[i][0], lat=P[i][1];
+        let z=(typeof P[i][2]==='number')?P[i][2]:null;
+        if(D[i]!==null) z=(z===null)?D[i]:Math.max(z,D[i]);
+        if(z===null) z=0;
+        const mc=maplibregl.MercatorCoordinate.fromLngLat({lng:lon,lat:lat}, z+8);
+        M[i]=[mc.x,mc.y,mc.z];
+      }
+      window._RP3DEM=demOk;
+      // Arazi henüz tam yüklenmediyse geometri EKSİK kalır -> sonraki karede yeniden kur.
+      // (kare sınırı: sonsuz yeniden-kurma olmasın; 400 nokta için maliyeti önemsiz)
+      this._tur=(this._tur||0)+1;
+      const tamam=true;   // _demZ ön-ısıtmada dolduruldu -> tek seferde kur
+      // şerit: her nokta için 2 vertex (sol/sağ), TRIANGLE_STRIP.
+      // Yön shader'da ekran-uzayında hesaplanır -> vertex'e KOMŞU noktayı taşıyoruz.
+      const V=new Float32Array(n*2*7);
+      for(let i=0;i<n;i++){
+        const a=M[i];
+        // komşu: son noktada bir öncekinden ileri yön üret (sıfır uzunluk olmasın)
+        const nb=(i<n-1)?M[i+1]:[2*M[i][0]-M[i-1][0], 2*M[i][1]-M[i-1][1], M[i][2]];
+        for(let s=0;s<2;s++){
+          const o=(i*2+s)*7;
+          V[o]=a[0];  V[o+1]=a[1];  V[o+2]=a[2];
+          V[o+3]=nb[0]; V[o+4]=nb[1]; V[o+5]=nb[2];
+          V[o+6]=(s===0?-1:1);
+        }
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER,this.buf);
+      gl.bufferData(gl.ARRAY_BUFFER,V,gl.STATIC_DRAW);
+      this.say=n*2; this.hazir=tamam;
+      if(tamam) console.log('rline3d hazır:',n,'nokta, arazi eşleşen:',demOk,'/',n,'tur:',this._tur);
+    },
+    render(gl,args){
+      if(!this.pr) return;
+      if(!this.hazir){ if(!window._demZ) return; this.kur(gl); }
+      if(!this.say) return;
+      // MapLibre 5.x: args.defaultProjectionData.mainMatrix — eski API'de düz matris
+      const mtx=(args&&args.defaultProjectionData&&args.defaultProjectionData.mainMatrix)?args.defaultProjectionData.mainMatrix:args;
+      const cv=gl.canvas, vpx=cv.width, vpy=cv.height;
+      gl.useProgram(this.pr);
+      gl.uniformMatrix4fv(this.uMat,false,mtx);
+      gl.uniform2f(this.uVp,vpx*0.5,vpy*0.5);      // NDC -> piksel ölçeği
+      gl.bindBuffer(gl.ARRAY_BUFFER,this.buf);
+      gl.enableVertexAttribArray(this.aPos);  gl.vertexAttribPointer(this.aPos,3,gl.FLOAT,false,28,0);
+      gl.enableVertexAttribArray(this.aNxt);  gl.vertexAttribPointer(this.aNxt,3,gl.FLOAT,false,28,12);
+      gl.enableVertexAttribArray(this.aSide); gl.vertexAttribPointer(this.aSide,1,gl.FLOAT,false,28,24);
+      gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false);
+      // DERİNLİK ÖNYARGISI: sadece yükseklik ofseti (+8m) YETMEDİ — uzak mesafede depth buffer
+      // hassasiyeti düştüğü için çizginin uzak yarısı arazinin altında kalıp KAYBOLUYORDU
+      // (ölçüldü: +2m'de yarısı, +8m'de üst kısmı yok). polygonOffset çizgiyi derinlik
+      // testinde kameraya doğru kaydırır: yanlış gizlenme biter, gerçek tepe-arkası
+      // gizlenmesi (asıl kazanç) korunur.
+      gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-8,-8);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+      const c=_hex2rgb(_RCOL);
+      // ölçek: motor rscale ile küçük tuval kullanabiliyor -> kalınlık tuvale göre ölçeklenir
+      const k=vpy/${JSON.stringify(IN.H||832)};
+      // 1) siyah kenarlık (9px) 2) renkli iz (5px) — eski iki line katmanının birebir karşılığı
+      gl.uniform1f(this.uHalf,4.5*k); gl.uniform4f(this.uCol,0,0,0,0.55);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,this.say);
+      gl.uniform1f(this.uHalf,2.5*k); gl.uniform4f(this.uCol,c[0],c[1],c[2],1.0);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,this.say);
+      gl.disable(gl.POLYGON_OFFSET_FILL);   // MapLibre'nin kendi katmanlarını etkilemesin
+      gl.depthMask(true);
+    }
+  };
+  map.addLayer(rline3d);
+  map.addSource('pos',{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[${pts[0].lon},${pts[0].lat}]}}});
+  map.addLayer({id:'posdot',type:'circle',source:'pos',paint:{'circle-radius':9,'circle-color':'${IN.dotColor||"#ff3b30"}','circle-stroke-width':3,'circle-stroke-color':'#fff'}});
+  if(${IN.satStyle?'true':'false'}){ try{ map.setLayoutProperty('posdot','visibility','none'); }catch(e){} }   // v93: uzun rotada nokta OVERLAY'de çizilir (arazi sırtı 3D katmandaki noktayı örtüp "yerin altına" sokuyordu)
+  ${(IN.mates&&IN.mates.length)?`
+  // GRUP SÜRÜŞ (v113): N eş sürücü — her birine kendi renginde iz + nokta
+  window._mateCols=${JSON.stringify(IN.mates.map(m=>m.dot||'#FFD60A'))};
+  ${IN.mates.map((m,i)=>`
+  map.addSource('route2_${i}',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:${JSON.stringify(m.pts2)}}}});
+  map.addLayer({id:'rline2g_${i}',type:'line',source:'route2_${i}',paint:{'line-color':'#000','line-width':9,'line-opacity':0.55},layout:{'line-cap':'round','line-join':'round'}});
+  map.addLayer({id:'rline2_${i}',type:'line',source:'route2_${i}',paint:{'line-color':'${m.line||"#FF9F0A"}','line-width':5},layout:{'line-cap':'round','line-join':'round'}});
+  map.addSource('pos2_${i}',{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[${m.pos2[0][0]},${m.pos2[0][1]}]}}});
+  map.addLayer({id:'posdot2_${i}',type:'circle',source:'pos2_${i}',paint:{'circle-radius':9,'circle-color':'${m.dot||"#FFD60A"}','circle-stroke-width':3,'circle-stroke-color':'#fff'}});
+  ${IN.satStyle?`try{ map.setLayoutProperty('posdot2_${i}','visibility','none'); }catch(e){}`:''}`).join('')}`:''}
+  window._ready=true;
+});
+const ov=document.getElementById('ov'),ctx=ov.getContext('2d');
+function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+let _wm=null; const _WM=${JSON.stringify(IN.wm||"")};
+if(_WM){ _wm=new Image(); _wm.src=_WM; }
+const ACC='${IN.lineColor||"#00e5ff"}';
+const _Wd=${W}, _Hd=${H}, _mg=Math.round(_Wd*0.05), _S=Math.min(_Wd,_Hd);  // _S: yazı/aralık tabanı — YATAY videoda taşma/üst üste binme fix'i (2026-07-11)
+function drawBolt(x,y,sz,col){ ctx.save(); ctx.fillStyle=col; ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=sz*0.18;
+  ctx.beginPath(); ctx.moveTo(x+sz*0.58,y); ctx.lineTo(x+sz*0.12,y+sz*0.56); ctx.lineTo(x+sz*0.46,y+sz*0.56);
+  ctx.lineTo(x+sz*0.30,y+sz); ctx.lineTo(x+sz*0.86,y+sz*0.40); ctx.lineTo(x+sz*0.50,y+sz*0.40); ctx.closePath(); ctx.fill(); ctx.restore(); }
+window.draw=(s)=>{ctx.clearRect(0,0,_Wd,_Hd);
+  if(${IN.satStyle?'true':'false'} && window._mpos){
+    // v93: nokta overlay'de — HER ZAMAN görünür, arazi/sırt örtemez (harita katmanındaki kopya gizli)
+    try{ const q=map.project(window._mpos);
+      if(q&&isFinite(q.x)&&isFinite(q.y)){
+        ctx.save(); ctx.beginPath(); ctx.arc(q.x,q.y,Math.round(_S*0.011),0,Math.PI*2);
+        ctx.fillStyle='${IN.dotColor||"#ff3b30"}'; ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=6; ctx.fill();
+        ctx.shadowBlur=0; ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.stroke(); ctx.restore();
+      } }catch(e){}
+  }
+  if(${(IN.satStyle&&IN.mates&&IN.mates.length)?'true':'false'} && window._mposM){
+    for(let mi=0;mi<window._mposM.length;mi++){
+      try{ const q2=map.project(window._mposM[mi]);
+        if(q2&&isFinite(q2.x)&&isFinite(q2.y)){
+          ctx.save(); ctx.beginPath(); ctx.arc(q2.x,q2.y,Math.round(_S*0.011),0,Math.PI*2);
+          ctx.fillStyle=(window._mateCols&&window._mateCols[mi])||'#FFD60A'; ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=6; ctx.fill();
+          ctx.shadowBlur=0; ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.stroke(); ctx.restore();
+        } }catch(e){}
+    }
+  }
+  // --- ŞIK HUD (v96, Barış "cilala"): cam kapsüller + ikonlar + yumuşak beliriş/çekilme (s.hudA) ---
+  const _story=_Hd>_Wd, _topY=_story?0.135:0.060, _botY=_story?0.125:0.055, _poiY=_story?0.185:0.115;
+  const hudA=(${IN.noHud?'0':'(s.hudA===undefined?1:Math.max(0,Math.min(1,s.hudA)))'});
+  const pill=(x,y,w,h)=>{const r=h/2;   // LIQUID GLASS (v99, Barış): koyu zemin YOK — açık cam + ışık kenarı + mercek yanması
+    const P=()=>{ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();};
+    P(); let g=ctx.createLinearGradient(0,y,0,y+h);   // v102: DAHA şeffaf gövde (Barış: opaklığı düşür)
+    g.addColorStop(0,'rgba(255,255,255,0.19)'); g.addColorStop(0.5,'rgba(255,255,255,0.08)'); g.addColorStop(1,'rgba(255,255,255,0.045)');
+    ctx.fillStyle=g; ctx.fill();
+    let rg=ctx.createLinearGradient(0,y,0,y+h);       // kenar ışığı ultra yumuşak
+    rg.addColorStop(0,'rgba(255,255,255,0.50)'); rg.addColorStop(0.4,'rgba(255,255,255,0.16)'); rg.addColorStop(1,'rgba(255,255,255,0.09)');
+    P(); ctx.lineWidth=1.3; ctx.strokeStyle=rg; ctx.stroke();
+    ctx.save(); P(); ctx.clip();   // mercek yanması: ULTRA yumuşak, geniş yayılım
+    let fg=ctx.createRadialGradient(x+h*0.9,y+h*0.1,0,x+h*0.9,y+h*0.1,h*2.3);
+    fg.addColorStop(0,'rgba(255,255,255,0.26)'); fg.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=fg; ctx.fillRect(x,y,w,h); ctx.restore();};
+  ctx.textAlign='left';
+  if(hudA>0.01){ ctx.save(); ctx.globalAlpha=hudA; ctx.textBaseline='middle';
+    const slide=(1-hudA)*_Hd*0.02;   // belirirken hafif süzülme
+    // ÜST kapsül: 📍 tarih • toplam km
+    ctx.font='600 '+Math.round(_S*0.030)+'px DejaVu Sans, "Noto Color Emoji", sans-serif';
+    const ttxt='📍 '+s.title;
+    const th=Math.round(_Hd*0.050), tw=ctx.measureText(ttxt).width+th*1.5;
+    const ty=Math.round(_Hd*_topY)-Math.round(th*0.62)-slide;
+    pill(_mg,ty,tw,th);
+    ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=7; ctx.fillStyle='rgba(255,255,255,0.97)'; ctx.fillText(ttxt,_mg+th*0.75,ty+th*0.54);
+    // ALT kapsül: 🛣️ mesafe  🕘 saat  ❤️ nabız
+    ctx.font='700 '+Math.round(_S*0.037)+'px DejaVu Sans, "Noto Color Emoji", sans-serif';
+    const btxt='🛣️ '+(s.cum/1000).toFixed(1)+' km'+(s.tm?('       🕘 '+s.tm):'')+(s.hr?('       ❤️ '+Math.round(s.hr)):'');
+    const bh=Math.round(_Hd*0.058), bw2=ctx.measureText(btxt).width+bh*1.5;
+    const by=_Hd-Math.round(_Hd*_botY)-Math.round(bh*0.62)+slide;
+    pill(_mg,by,bw2,bh);
+    ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=7; ctx.fillStyle='#fff'; ctx.fillText(btxt,_mg+bh*0.75,by+bh*0.54);
+    ctx.restore(); ctx.textBaseline='alphabetic'; }
+  // MEKAN adı (dwell'de ortada fade-in)
+  if(s.poi && s.poiA>0.15){ ctx.save(); ctx.globalAlpha=Math.min(1,(s.poiA-0.15)/0.5);
+    ctx.textAlign='center'; ctx.font='700 '+Math.round(_S*0.044)+'px DejaVu Sans, sans-serif';
+    ctx.shadowColor='rgba(0,0,0,0.8)'; ctx.shadowBlur=8; ctx.fillStyle='#fff';
+    ctx.fillText(s.poi, _Wd/2, Math.round(_Hd*_poiY)); ctx.restore(); }
+  // (EN HIZLI NOKTA iğnesi KALDIRILDI — hız tespiti yanlış olduğu için peak hız de gösterilmiyor)
+  // MINIK kaynak attribution (köşede, lisans uyumu) — sağ alt, soluk.
+  // 2026-08-10: Mapbox'tan kopunca metin GERÇEK kaynaklara güncellendi. Eski "© Mapbox" hem YANLIŞ
+  // (artık kullanılmıyor) hem EKSİKTİ. Zorunlu olanlar: Esri World Imagery (Esri/Maxar) + OSM
+  // (kendi Protomaps arşivimiz OSM türevi). Silme — lisans gereği görünmek zorunda.
+  ctx.save(); ctx.globalAlpha=0.45; ctx.fillStyle='#fff'; ctx.font='400 '+Math.round(_S*0.017)+'px DejaVu Sans, sans-serif';
+  ctx.textAlign='right'; ctx.fillText('© OpenStreetMap · Esri, Maxar', _Wd-Math.round(_Wd*0.018), _Hd-Math.round(_Hd*0.010)); ctx.restore(); ctx.textAlign='left';
+  // FREE logo (KENDİ logomuz) — sağ alt küçük
+  if(_wm && _wm.complete && _wm.width){ const ww=Math.round(_S*0.12), hh=Math.round(ww*_wm.height/_wm.width); ctx.globalAlpha=0.85; ctx.drawImage(_wm,_Wd-ww-Math.round(_Wd*0.03),_Hd-hh-Math.round(_Hd*0.085),ww,hh); ctx.globalAlpha=1; }};
+window.drawIntro=(name,activity,date)=>{ctx.clearRect(0,0,_Wd,_Hd);
+  // YATAY FIX (2026-07-11): yazı boyutu + satır aralığı kısa kenara (_S) bağlı — dikeyde birebir aynı,
+  // yatayda satırlar artık üst üste binmez (eski hali fontu genişlikten, aralığı yükseklikten alıyordu).
+  ctx.fillStyle='rgba(6,8,18,0.86)'; ctx.fillRect(0,0,_Wd,_Hd);
+  ctx.textAlign='center';
+  const ny=Math.round(_Hd*0.455);
+  ctx.fillStyle='#fff'; ctx.shadowColor='rgba(0,0,0,0.6)'; ctx.shadowBlur=10;
+  ctx.font='700 '+Math.round(_S*0.062)+'px DejaVu Sans, sans-serif';
+  ctx.fillText((name&&name.trim())||'Move Log', _Wd/2, ny);
+  ctx.shadowBlur=0; ctx.strokeStyle=ACC; ctx.lineWidth=3;
+  const lw=Math.round(_S*0.09), uy=ny+Math.round(_S*0.053);
+  ctx.beginPath(); ctx.moveTo(_Wd/2-lw,uy); ctx.lineTo(_Wd/2+lw,uy); ctx.stroke();
+  ctx.fillStyle=ACC; ctx.font='600 '+Math.round(_S*0.040)+'px DejaVu Sans, sans-serif';
+  ctx.fillText([activity,date].filter(Boolean).join('  •  '), _Wd/2, ny+Math.round(_S*0.169));
+  ctx.textAlign='left';};
+window.drawOutro=(lines)=>{ctx.clearRect(0,0,_Wd,_Hd);
+  // YATAY FIX: satır adımı ve fontlar _S tabanlı (dikey birebir korunur)
+  ctx.fillStyle='rgba(6,8,18,0.88)'; ctx.fillRect(0,0,_Wd,_Hd);
+  ctx.textAlign='center'; ctx.shadowColor='rgba(0,0,0,0.6)'; ctx.shadowBlur=10;
+  const L=lines&&lines.length?lines:['Özet'];
+  let y=Math.round(_Hd*0.5-_S*0.1067*(L.length-1));
+  for(let i=0;i<L.length;i++){ ctx.fillStyle=i===0?'#fff':ACC;
+    ctx.font=(i===0?'700 ':'600 ')+Math.round(_S*(i===0?0.055:0.040))+'px DejaVu Sans, sans-serif';
+    ctx.fillText(L[i], _Wd/2, y); y+=Math.round(_S*0.169); }
+  ctx.shadowBlur=0; ctx.textAlign='left';};
+window.setPos=(mlon,mlat,clon,clat,brg,zm,pit)=>{map.getSource('pos').setData({type:'Feature',geometry:{type:'Point',coordinates:[mlon,mlat]}});
+  window._mpos=[mlon,mlat];
+  map.jumpTo({center:[clon,clat],zoom:zm,pitch:pit,bearing:brg});};
+window.setPosAll=(arr)=>{for(let i=0;i<arr.length;i++){try{map.getSource('pos2_'+i).setData({type:'Feature',geometry:{type:'Point',coordinates:arr[i]}});}catch(e){}} window._mposM=arr;};
+window.fitInfo=(w,e,s,n)=>{const c=map.cameraForBounds([[w,s],[e,n]],{padding:90});
+  const ct=c.center; return {lon:(ct.lng!==undefined?ct.lng:ct[0]),lat:(ct.lat!==undefined?ct.lat:ct[1]),zoom:c.zoom};};
+window.drawWorldStats=(lines,a)=>{if(a===undefined)a=1; ctx.clearRect(0,0,_Wd,_Hd);   // dünya finali: şık bilgi kartı (yumuşak belirir)
+  const L=(lines&&lines.length?lines:['']);
+  ctx.save(); ctx.globalAlpha=Math.max(0,Math.min(1,a));
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font='700 '+Math.round(_S*0.042)+'px DejaVu Sans, "Noto Color Emoji", sans-serif';
+  let mw=0; for(const ln of L){ mw=Math.max(mw,ctx.measureText(ln).width); }
+  const lh=Math.round(_S*0.0924), pad=Math.round(_S*0.05);
+  const cw=mw+pad*2, chh=L.length*lh+pad*1.2, cx=(_Wd-cw)/2, cy=_Hd*0.80-chh/2+( (1-a)*_Hd*0.02 );
+  const r=Math.round(_S*0.039); ctx.beginPath(); ctx.moveTo(cx+r,cy); ctx.arcTo(cx+cw,cy,cx+cw,cy+chh,r); ctx.arcTo(cx+cw,cy+chh,cx,cy+chh,r); ctx.arcTo(cx,cy+chh,cx,cy,r); ctx.arcTo(cx,cy,cx+cw,cy,r); ctx.closePath();
+  ctx.fillStyle='rgba(8,12,22,0.60)'; ctx.fill(); ctx.lineWidth=1.5; ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.stroke();
+  ctx.fillStyle='#fff';
+  let yy=cy+pad*0.6+lh*0.5; for(const ln of L){ ctx.fillText(ln,_Wd/2,yy); yy+=lh; }
+  ctx.restore(); ctx.textBaseline='alphabetic';};
+window.waitIdle=(cap)=>new Promise(res=>{
+  // AKILLI BEKLEME (v89): önce BİR kare render et (yeni konumun karo istekleri kuyruğa girsin) —
+  // v80'de anında dönüş, istekler daha atılmadan "yüklü" sanıp BEYAZ kare bırakıyordu.
+  map.triggerRepaint();
+  requestAnimationFrame(()=>{
+    if(map.areTilesLoaded&&map.areTilesLoaded()&&map.loaded()) return res();
+    let d=false;const ok=()=>{if(!d){d=true;res();}};map.once('idle',ok);setTimeout(ok,cap);
+  });});
+</script></body></html>`;
+
+(async()=>{
+  // GPU varsa (Cloud Run L4) donanım WebGL -> 3D saniyeler; yoksa swiftshader (yazılım, yavaş)
+  const GPU = process.env.RENDER_GPU==='1';
+  // gl-egl = ANGLE'ın NVIDIA EGL üzerinden donanım GL'i; teşhiste L4'ü kullanan TEK kombinasyon buydu.
+  const glArgs = GPU
+    ? ['--use-gl=angle','--use-angle=gl-egl','--enable-gpu','--ignore-gpu-blocklist','--enable-webgl']
+    : ['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--enable-webgl'];
+  const browser=await puppeteer.launch({headless:'new',protocolTimeout:600000,
+    args:['--no-sandbox','--disable-setuid-sandbox',...glArgs,`--window-size=${W},${H}`]});
+  const page=await browser.newPage();
+  await page.setViewport({width:W,height:H,deviceScaleFactor:1});
+  // 🔍 GL TEŞHİSİ (11.08): donanım GL gerçekten açıldı mı? RENDER_GPU=1 olsa bile sürücü/EGL
+  // yoksa Chrome sessizce SwiftShader'a düşer -> pahalı GPU boşa öder. Log'a BASILIR ki
+  // ölçülebilsin (rp_handler stdout'u yakalıyor).
+  try{
+    const _gl=await page.evaluate(()=>{const c=document.createElement('canvas');
+      const g=c.getContext('webgl2')||c.getContext('webgl'); if(!g) return 'GL YOK';
+      const d=g.getExtension('WEBGL_debug_renderer_info');
+      return d? String(g.getParameter(d.UNMASKED_RENDERER_WEBGL)) : String(g.getParameter(g.RENDERER));});
+    console.log('GL RENDERER:', _gl, '| RENDER_GPU=', process.env.RENDER_GPU||'yok');
+  }catch(e){ console.log('GL teşhis hata:', e.message); }
+  await page.setContent(HTML,{waitUntil:'networkidle0',timeout:60000});
+  await page.waitForFunction('window._ready===true',{timeout:60000});
+  await new Promise(r=>setTimeout(r,1500));
+  // PARALEL SEGMENT RENDER (google3d ile aynı sözleşme): segFrom..segTo bu worker'ın payı.
+  // Kamera matematiği HEP kare 0'dan koşar (yumuşatma durumu dilimler arasında birebir), sadece pencerede ekran işi.
+  const SEG_FROM=Math.max(0,IN.segFrom|0);
+  const SEG_TO=(IN.segTo&&IN.segTo>0)?Math.min(frames,IN.segTo|0):frames;
+  const SEG_FIRST=SEG_FROM===0, SEG_LAST=SEG_TO>=frames;
+  // intro (isim+aktivite) + outro (özet istatistik) kart kareleri + fade in/out (flat/flyover paritesi)
+  // FADE dilim-farkındalı: fade-in sadece İLK, fade-out sadece SON dilimde (yoksa dilim sınırları kararır)
+  const introN=Math.round(fps*1.6), outroN=IN.satStyle?Math.round(fps*6.0):Math.round(fps*3.2);   // uzun rota: dünya-finali (2 aşamalı 4.2sn zoom-out: rota kadrajı -> UZAYDAN KÜRE + 1.8sn bilgi)
+  const _fd=0.8, _segFrames=SEG_TO-SEG_FROM;   // v96: video aç/kapa fade'i daha yumuşak (0.5->0.8sn)
+  const _dur=((SEG_FIRST?introN:0)+_segFrames+(SEG_LAST?outroN:0))/fps;
+  const _filters=[];
+  if(RS!==1) _filters.push(`scale=${OW}:${OH}:flags=lanczos`);   // iç çöz -> final boyuta (down/up) lanczos
+  if(SEG_FIRST) _filters.push(`fade=t=in:st=0:d=${_fd}`);
+  if(SEG_LAST) _filters.push(`fade=t=out:st=${Math.max(0,_dur-_fd).toFixed(2)}:d=${_fd}`);
+  const vf = _filters.length ? ['-vf', _filters.join(',')] : [];
+  const ff=spawn(ffmpeg,['-y','-f','image2pipe','-framerate',String(fps),'-i','-',
+    '-f','lavfi','-i','anullsrc=r=44100:cl=stereo',...vf,   // sessiz ses kanalı: audio'suz mp4 telefonda AÇILMIYOR
+    '-c:v','libx264','-pix_fmt','yuv420p','-preset','veryfast','-crf','25',
+    '-c:a','aac','-shortest','-movflags','+faststart',outMp4],
+    {stdio:['pipe','ignore','ignore']});
+  const N=pts.length;
+  // EN HIZLI nokta (animasyonlu iğne için)
+  let maxSpd=0,maxI=0; for(let i=0;i<N;i++){ const sp=pts[i].spd||0; if(sp>maxSpd){maxSpd=sp;maxI=i;} }
+  // UZUN ROTA (satStyle): dwell zoom KAPALI — 900km'de onlarca duraklama var, her birinde zoom in/out
+  // "baş döndürücü pompalama" yapıyordu (2026-07-05 Barış). Kamera sabit geniş kadrajda dingin kalır.
+  const Zd=(IN.satStyle?0:(IN.dwellZoom||2.2));            // mekana girince ne kadar yakinlasilsin (şehirde)
+  const sideBase=(IN.sideAngle!==undefined?IN.sideAngle:40);  // YAN aci (sagdan/soldan bakis)
+  const sm=smPath;   // yumusatilmis yol (rota cizgisi + marker + kamera ayni yolu kullanir)
+  let lastBuf=null, camB=null, camLon=sm[0].lon, camLat=sm[0].lat, camZ=zoom, camPit=pitch, dw=0, tzS=zoom, tpS=pitch;
+  const mE=(IN.mates||[]).map(m=>({lon:m.pos2[0][0],lat:m.pos2[0][1]}));   // v114: eş noktalara lider ile AYNI easing (zıplama parite fix)
+  let altT=null, altS=null, alt0=null;   // rakım telafisi durumu (satStyle)
+  let tcLon=sm[0].lon, tcLat=sm[0].lat;   // çift-yumuşatma için ARA hedef (ivme zıplamasını yutar)
+  let mLon=sm[0].lon, mLat=sm[0].lat;   // marker konumu (ease'lenir -> isinlanma yok)
+  const FIDX=IN.frameIdx||null;   // MESAFE+HIZ pacing, FRACTIONAL (duruşta donmaz, yumuşak akar)
+  // EN HIZLI iğnesi KARE-tabanlı pencere: peak noktasına en yakın kareyi bul -> ~1.6s sabit görünür
+  // (yüksek hızlı peak pacing'de az karede geçtiği için nokta-index penceresi çok kısaydı).
+  let maxFrame=0,_bd=1e9; for(let f=0;f<frames;f++){ const fi=FIDX?FIDX[f]:f*(N-1)/(frames-1); const d=Math.abs(fi-maxI); if(d<_bd){_bd=d;maxFrame=f;} }
+  const pinFrames=Math.max(30,Math.round(fps*1.6));
+  // KARO ÖN-ISITMA (v91, satStyle): render başlamadan dilimin güzergâhı üzerinden 9 durakta geçip
+  // uydu karolarını CACHE'e yükle -> render sırasında karolar hazır, BEYAZ KARE fiziksel olarak kalmaz.
+  if(IN.satStyle){
+    const _wf0=FIDX?FIDX[Math.max(0,SEG_FROM)]:SEG_FROM*(N-1)/Math.max(1,frames-1);
+    const _wf1=FIDX?FIDX[Math.min(frames-1,Math.max(0,SEG_TO-1))]:(SEG_TO-1)*(N-1)/Math.max(1,frames-1);
+    const _i0w=Math.max(0,Math.floor(Math.min(_wf0,_wf1))), _i1w=Math.min(N-1,Math.ceil(Math.max(_wf0,_wf1)));
+    const _stepw=Math.max(1,Math.floor((_i1w-_i0w)/8));
+    for(let _iw=_i0w;_iw<=_i1w;_iw+=_stepw){
+      await page.evaluate((lon,lat,zm,pit)=>{window.setPos(lon,lat,lon,lat,0,zm,pit);},sm[_iw].lon,sm[_iw].lat,zoom,pitch);
+      await page.evaluate(c=>window.waitIdle(c),2500);
+    }
+    console.log('karo ön-ısıtma tamam ('+Math.floor((_i1w-_i0w)/_stepw+1)+' durak)');
+    // ARAZİ ÖLÇÜMÜ (v140): şerit geometrisi bundan sonra kurulur (bkz window._demHesapla)
+    try{
+      const _dn = await page.evaluate(()=>window._demHesapla());
+      console.log('DEM ölçüldü: '+_dn+' nokta');
+    }catch(e){ console.log('DEM ölçüm hata:', e.message); }
+  }
+  // INTRO kartı: haritayı başlangıca oturt, isim+aktivite+tarih kartı (fade-in ile açılır)
+  await page.evaluate((mlon,mlat,zm,pit)=>window.setPos(mlon,mlat,mlon,mlat,0,zm,pit),
+    sm[0].lon,sm[0].lat,zoom,pitch);
+  await page.evaluate(c=>window.waitIdle(c),GPU?420:320);   // Standard 3B bina/ağaç yüklensin (intro)
+  if(SEG_FIRST && !IN.noHud){   // intro kartı sadece İLK dilimde (noHud: atla)
+    await page.evaluate((n,a,d)=>window.drawIntro(n,a,d), IN.name||'', IN.activity||'', (title&&title.date)||'');
+    const b=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});
+    for(let k=0;k<introN;k++) ff.stdin.write(b);
+  }
+  for(let f=0;f<frames;f++){
+    if(IN.kabartma && f%45===0){ try{ await page.evaluate(()=>window.yukUygula()); }catch(e){} }
+    // 🌊 CİLA/DALGA (2026-08-11 NİHAİ, Barış "kelime oyunu"): app'teki "3D · arazi kabartmalı"
+    // seçeneği = DALGA EFEKTLİ 3B binalar (Premium+Ultra, mode==3d). "Kuş bakışı" = düz uydu,
+    // dokunulmadı. Işık yönü kamera bearing'i + zamanla süpürülür -> yüzeylerde hareketli parlaklık.
+    if(IN.kabartma){ try{ const _az=(200+(camB||0)+f*0.9)%360;
+      await page.evaluate((az)=>{ if(window._map&&window._map.setLight)
+        window._map.setLight({anchor:'map',position:[1.5,az,32],color:'#fff',intensity:0.5}); }, _az);
+    }catch(e){} }
+    if(f>0 && f%60===0){                       // ~saniyede bir kontrol (60fps)
+      const _th=await page.evaluate(()=>window._tileHata||0);
+      if(_th>400){                             // yüzlerce karo hatası = ağ ÖLÜ, video beyaz olacak
+        console.error('KARO AĞI ÖLÜ: '+_th+' fetch hatası -> exit(7), taze worker denesin');
+        try{ ff.stdin.end(); }catch(e){}
+        process.exit(7);
+      }
+    }
+    const fi=FIDX?FIDX[f]:f*(N-1)/(frames-1);
+    const i0=Math.max(0,Math.min(N-1,Math.floor(fi))), i1=Math.min(N-1,i0+1), fr=fi-i0;
+    const L=(a,b)=>a+(b-a)*fr;   // iki nokta arası lineer ara-değer -> tereyağ gibi yumuşak hareket
+    const p={lon:L(pts[i0].lon,pts[i1].lon), lat:L(pts[i0].lat,pts[i1].lat),
+             spd:L(pts[i0].spd||0,pts[i1].spd||0), cum:L(pts[i0].cum||0,pts[i1].cum||0),
+             dwell:pts[i0].dwell, tm:pts[i0].tm, poi:pts[i0].poi||'', hr:pts[i0].hr};
+    const c={lon:L(sm[i0].lon,sm[i1].lon), lat:L(sm[i0].lat,sm[i1].lat)};
+    mLon+=(p.lon-mLon)*_A(0.35); mLat+=(p.lat-mLat)*_A(0.35);   // marker ara-değerli yoldan -> binaya değmez; kamera ayrı (sm)
+    dw+=((p.dwell?1:0)-dw)*0.022;
+    // --- YUMUŞAK KAMERA (Relive tarzı): yakın taban, çok hafif & yavaş süzülen ---
+    // ZOOM tamamen HIZDAN BAĞIMSIZ: sadece taban + mekan-dwell yakınlaşması (hız terimi KALDIRILDI ->
+    // hızlanınca zoom oynamaz). Çift yumuşatma zaten ani değişimi yutar.
+    // RAKIM TELAFİSİ (v90, satStyle): dağda zemin yükselince görüntü "zoom in" gibi POMPALIYORDU
+    // (zoom sabitti ama zemin-kamera mesafesi değişiyordu). Kamera, iz rakımını ÇİFT yumuşatmayla
+    // takip eder (~1500m fark ≈ 1 zoom kademesi) -> mesafe sabit, mükemmel yumuşak.
+    let tzRaw=zoom+dw*Zd;
+    if(IN.satStyle){
+      const _a0=pts[i0].alt, _a1=pts[i1].alt;
+      const _ga=(typeof _a0==='number'?_a0:(typeof _a1==='number'?_a1:0));
+      const _gb=(typeof _a1==='number'?_a1:_ga);
+      const _g=_ga+(_gb-_ga)*fr;
+      altT=(altT===null)?_g:altT+(_g-altT)*0.06; altS=(altS===null)?altT:altS+(altT-altS)*0.09;   // v91: daha sıkı takip (0.02/0.03 geç kalıp "belirgin" zıplama bırakıyordu)
+      if(alt0===null) alt0=altS;
+      tzRaw=zoom-(altS-alt0)/1200;
+    }
+    tzS+=(tzRaw-tzS)*_A(0.012); camZ+=(tzS-camZ)*_A(0.02);          // çift yumuşatma (hedef + kamera)
+    // PITCH SABİT: arazi-pitch bağı KALDIRILDI (yukarı-aşağı zıplamanın sebebi oydu)
+    const tpRaw=IN.satStyle?pitch:(pitch-dw*(pitch-50));   // uzun rotada pitch de SABİT (dwell pompalaması yok)
+    tpS+=(tpRaw-tpS)*0.012; camPit+=(tpS-camPit)*0.02;
+    // yön: çok yavaş, yumuşak dönüş (sallanma yok)
+    let j=i0,dd=0; while(j<N-1 && dd<300){dd+=hav(sm[j],sm[j+1]); j++;}
+    const tb=bearing({lon:camLon,lat:camLat}, sm[j]);
+    camB=(camB===null)?tb:camB+angd(tb,camB)*0.01;
+    // KONUM TAKİBİ — ÇİFT YUMUŞATMA + SABİT ORAN (hızdan BAĞIMSIZ -> hızlanınca zıplamaz):
+    //  (1) ara hedef tc, gerçek hedef c'ye sabit oranla süzülür (ivme/ani adımı yutar)
+    //  (2) kamera, ara hedef tc'ye sabit oranla süzülür
+    // Eski takip oranı dpos'a (mesafeye) bağlıydı -> hızlanınca büyüyüp ani sıçrama yapıyordu; o kaldırıldı.
+    if(IN.satStyle){
+      // v92 (Barış): sert kilit SALLANTI yapıyordu -> YUMUŞAK-İVMELİ merkez takibi.
+      // Çift yumuşatma (deadzone yok): nokta merkez civarında kalır (~%8-15 ekran), ivmelenmede
+      // hafifçe kayar ve yumuşakça toparlar; marker titreşimi kameraya GEÇMEZ. Taşma imkânsız
+      // (kalıcı gecikme ~500m ≈ ekranın onda biri).
+      tcLon+=(mLon-tcLon)*_A(0.22); tcLat+=(mLat-tcLat)*_A(0.22);
+      camLon+=(tcLon-camLon)*_A(0.25); camLat+=(tcLat-camLat)*_A(0.25);
+    } else {
+      tcLon+=(c.lon-tcLon)*_A(0.06); tcLat+=(c.lat-tcLat)*_A(0.06);
+      const dpos=hav({lon:camLon,lat:camLat},{lon:tcLon,lat:tcLat});
+      const DZ=(IN.deadzone||10);
+      // 🔴 ZIPLAMA FİKSİ (04.09): sert kapı (hata DZ'yi aşana dek kamera DURUR, sonra boşalır)
+      // tut-boşalt döngüsü üretiyordu; ölçümde taban 15 px iken 72/121/155/239 px sıçramalar.
+      // Yerine sürekli rampa: kazanç DZ..2*DZ arasında smoothstep ile 0'dan tam değere çıkar.
+      const _k=Math.max(0, Math.min(1, (dpos-DZ)/DZ));
+      const _g=_A(0.05)*(_k*_k*(3-2*_k));
+      camLon+=(tcLon-camLon)*_g; camLat+=(tcLat-camLat)*_g;
+    }
+    const sideOff=sideBase + 4*Math.sin(f/Math.max(1,frames)*Math.PI*2);   // hafif, yavaş yan salınım
+    const brg=(((camB+sideOff)%360)+360)%360;
+    const mArr=(IN.mates||[]).map((m,i)=>{const p=m.pos2[Math.min(f,m.pos2.length-1)];const e=mE[i];
+      e.lon+=(p[0]-e.lon)*0.35; e.lat+=(p[1]-e.lat)*0.35; return [e.lon,e.lat];});   // easing HER karede (SEG determinizmi)
+    if(f<SEG_FROM || f>=SEG_TO) continue;   // segment dışı: kamera matematiği koşuldu (durum sürekli), ekran işi YOK
+    if(mArr.length) await page.evaluate(a=>window.setPosAll(a),mArr);   // GRUP SÜRÜŞ: eş sürücü noktaları (eased)
+    await page.evaluate((mlon,mlat,clon,clat,b,zm,pit,s)=>{window.setPos(mlon,mlat,clon,clat,b,zm,pit);window.draw(s);},
+      mLon,mLat,camLon,camLat,brg,camZ,camPit,
+      {title:title.date+'  •  '+title.totkm+' km', tm:p.tm, spd:p.spd, cum:p.cum, hr:p.hr,
+       poi:(p.poi||''), poiA:dw,
+       hudA:Math.max(0,Math.min(1, f/(fps*0.9), (frames-1-f)/(fps*0.9)+(IN.satStyle?0:1))),   // başta yumuşak belir; uzun rotada sona doğru yumuşak çekil (finale devralır)
+       pinLon:pts[maxI].lon, pinLat:pts[maxI].lat, pinSpd:maxSpd,
+       pinA:Math.max(0,1-Math.abs(f-maxFrame)/pinFrames)});
+    // harita otursun: idle bekle ama kisa tavan (CPU bos; cogu karo komsu karelerde cached) -> hiz
+    await page.evaluate(c=>window.waitIdle(c),IN.satStyle?2000:(GPU?340:260));   // uydu: ön-ısıtma sonrası çoğu kare anında; nadir soğuk bölgede 2sn'e kadar bekle (beyaz kare OLMAZ)
+    // JPEG = PNG'den ~5-10x hızlı encode/readback (asıl darboğaz buydu); kalite 92 telefonda kayıpsız görünür
+    const buf=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});
+    lastBuf=buf; ff.stdin.write(buf);
+  }
+  // OUTRO — sadece SON dilimde
+  if(SEG_LAST){
+    if(IN.satStyle){
+      // DÜNYA FİNALİ (v94, Barış): yumuşak zoom-out ile TÜM rota kadraja (nereden nereye, ülke ölçeği)
+      // + toplam bilgiler alt şeritte + ffmpeg fade-out ile zarif kapanış.
+      let bw=1e9,be=-1e9,bs=1e9,bn=-1e9;
+      for(const p of pts){ if(p.lon<bw)bw=p.lon; if(p.lon>be)be=p.lon; if(p.lat<bs)bs=p.lat; if(p.lat>bn)bn=p.lat; }
+      const fit=await page.evaluate((a,b2,c2,d2)=>window.fitInfo(a,b2,c2,d2),bw,be,bs,bn);
+      const zoomN=Math.round(fps*4.2), holdN=Math.max(1,outroN-zoomN);
+      const z0=camZ,lo0=camLon,la0=camLat,p0=camPit,b0=(camB===null?0:camB);
+      const GLOBE_Z=1.9;   // uzaydan yuvarlak dünya (küre projeksiyonu + fog = gerçek uydu hissi)
+      for(let k=0;k<zoomN;k++){
+        let u=k/Math.max(1,zoomN-1);
+        // 2 AŞAMA (tek kesintisiz süzülme): 0..0.5 rota kadrajına, 0.5..1 uzaya (küre)
+        let zz,lo,la;
+        if(u<0.5){ let t=u/0.5; t=t*t*(3-2*t);
+          zz=z0+((fit.zoom-0.2)-z0)*t; lo=lo0+(fit.lon-lo0)*t; la=la0+(fit.lat-la0)*t; }
+        else { let t=(u-0.5)/0.5; t=t*t*(3-2*t);
+          zz=(fit.zoom-0.2)+(GLOBE_Z-(fit.zoom-0.2))*t; lo=fit.lon; la=fit.lat; }
+        let t=u*u*(3-2*u);
+        const pp=p0*(1-Math.min(1,u*2)), bb=b0+angd(0,b0)*Math.min(1,u*2);
+        await page.evaluate((mlon,mlat,clon,clat,brg2,zm,pit,s3)=>{window.setPos(mlon,mlat,clon,clat,brg2,zm,pit);window.draw(s3);},
+          mLon,mLat,lo,la,bb,zz,pp,
+          {title:title.date+'  •  '+title.totkm+' km', tm:'', spd:0, cum:(pts[N-1].cum||0), hr:null, poi:'', poiA:0,
+           hudA:Math.max(0,1-u*2.2),   // finale başında HUD yumuşakça çekilir, bilgi şeridi devralır
+           pinLon:pts[maxI].lon, pinLat:pts[maxI].lat, pinSpd:0, pinA:0});
+        await page.evaluate(c=>window.waitIdle(c),1200);
+        const b=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});
+        ff.stdin.write(b);
+      }
+      const rampN=IN.noHud?0:Math.min(holdN,Math.round(fps*0.7));   // bilgi kartı yumuşak belirir (noHud: kartsız bekle)
+      let bH=null;
+      for(let k=0;k<holdN;k++){
+        if(k<=rampN && !IN.noHud){
+          let a=k/Math.max(1,rampN); a=a*a*(3-2*a);
+          await page.evaluate((l,al)=>window.drawWorldStats(l,al), IN.stats||[(title&&title.totkm||'')+' km'], a);
+          bH=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});
+        }
+        if(!bH) bH=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});   // noHud: kartsız küre karesi (null yazma = crash)
+        ff.stdin.write(bH);
+      }
+    } else if(!IN.noHud){
+      await page.evaluate(l=>window.drawOutro(l), IN.stats||[(title&&title.totkm||'')+' km']);
+      const b=await page.screenshot({type:'jpeg',quality:92,clip:{x:0,y:0,width:W,height:H}});
+      for(let k=0;k<outroN;k++) ff.stdin.write(b);
+    }
+  }
+  ff.stdin.end();
+  await new Promise(r=>ff.on('close',r));
+  await browser.close();
+  console.log('3D OK: '+outMp4);
+})().catch(e=>{console.error('HATA:',e.message);console.error(e.stack);process.exit(1);});

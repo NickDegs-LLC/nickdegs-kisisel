@@ -1,0 +1,10 @@
+{
+  "name": "harita-katman",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node test/uyum-test.mjs",
+    "test:birim": "node test/uyum-test.mjs --birim"
+  }
+}

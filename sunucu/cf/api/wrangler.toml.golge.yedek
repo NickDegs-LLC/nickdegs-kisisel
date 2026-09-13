@@ -1,0 +1,38 @@
+name = "movelog-api"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# routes: Faz 4'te eklenecek (nickdegs.com'a şimdilik trafik YOK)
+
+[observability]
+enabled = true
+
+[vars]
+ORTAM = "golge"
+HARITA_UC = "https://harita.nickdegs.com/24579d9db6c7c001"
+# push kimlik sabitleri (lib/push.ts; SECRETS.md bölüm 2 — push.py:12,34 kod sabitleri)
+APNS_KEY_ID = "CAAF5X8DD3"
+APNS_TEAM_ID = "SZF4T3P583"
+APNS_TOPIC = "com.nickdegs.kisisel"
+FCM_PROJECT_ID = "film-ozet"
+# sırlar (wrangler secret put): JWT_SECRET, RENDER_DONE_SECRET, GIFT_ADMIN_SECRET,
+# APNS_AUTH_KEY, FCM_SERVICE_ACCOUNT ... — bkz cf/SECRETS.md
+
+[[d1_databases]]
+binding = "DB"
+database_name = "movelog-db"
+database_id = "84d8e0a0-cc9b-45ec-b355-d1cc08a90dd9"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "fd5db982178f49c589858c525755fba7"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "movelog"
+
+[[queues.producers]]
+binding = "RENDER_Q"
+queue = "movelog-render"
+

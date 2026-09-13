@@ -1,0 +1,16 @@
+# v143 (2026-09-01) — 3B SESSİZ DÜŞÜŞ DÜZELTMESİ
+#  1) render3d.js: setContent networkidle0/60sn -> domcontentloaded/180sn.
+#     28 Ağustos'ta yapılan bu düzeltme HİÇBİR imaja girmemişti (v139+ render3d.js kopyalamıyor,
+#     son kopyalayan v138). Soğuk karo bölgesinde (yeni harita katmanı, MVT 3-5sn) 'networkidle0'
+#     60sn içinde hiç oluşmuyor -> TimeoutError -> exit(1) -> sessiz düz video.
+#  2) route-video.py: Premium 3B dalında TEK deneme vardı -> Ultra dallarındaki kanıtlı 3 denemeli
+#     kalıp verildi (ilk deneme karoları ısıtır, ikincisi sıcak CDN'e düşer).
+#  3) rp_handler.py: backend'e artık ÜRETİLEN mod bildiriliyor (eskiden istenen mod gidiyordu;
+#     flyover üretilse bile D1'e "3d" yazılıp kullanıcıya 3B diye sunuluyordu) + MOD DÜŞÜŞÜ logu.
+# Kaynak: üretimdeki v142 dosyalarının ta kendisi + yalnız bu üç değişiklik (yerel HEAD'in
+# denenmemiş yeniden yazımı BİLEREK kullanılmadı).
+ARG BASE=ghcr.io/nickdegs/movelog-render:v142
+FROM ${BASE}
+COPY 3d/render3d.v143.js       /app/3d/render3d.js
+COPY scripts/route-video.v143.py /app/scripts/route-video.py
+COPY rp_handler.v143.py        /app/rp_handler.py

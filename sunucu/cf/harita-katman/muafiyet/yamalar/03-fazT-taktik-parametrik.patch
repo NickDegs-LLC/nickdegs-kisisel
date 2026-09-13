@@ -1,0 +1,142 @@
+--- a/kisisel-app/tactical/route_gen.py
++++ b/kisisel-app/tactical/route_gen.py
+@@ -6,6 +6,11 @@
+ random.seed(4)
+ SC=os.environ.get("TAC_WORKDIR", os.path.dirname(os.path.abspath(__file__))+"/work")
+ OUT=f"{SC}/tacframes"; os.makedirs(OUT, exist_ok=True)
++# 2026-08-30 FAZ T + K0 §A3: harita tabani PARAMETRIK. Varsayilan = bugunku davranis
++# (yerel proxy, sifir degisiklik). RunPod/CF'e tasininca TAC_HARITA ortak katmani gosterir
++# ve MUAFIYET ONEGINI icinde tasir: ornek https://harita.nickdegs.com/<ONEK>
++HARITA = os.environ.get("TAC_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ for o in os.listdir(OUT): os.remove(f"{OUT}/{o}")
+ MB=[l.split('=',1)[1].strip() for l in open('/opt/matrix/secrets/mapbox.conf') if l.startswith('MAPBOX_PUBLIC_TOKEN=')][0]
+ def _retcol():
+@@ -60,7 +65,7 @@
+     return x*180.0/math.pi, (2*math.atan(math.exp(y))-math.pi/2)*180.0/math.pi
+ lon0,lat0=inv(bx0,by0); lon1,lat1=inv(bx1,by1)
+ IMG_PX=1280
+-u=(f"http://127.0.0.1:8890/styles/v1/mapbox/satellite-v9/static/"
++u=(f"{HARITA}/styles/v1/mapbox/satellite-v9/static/"
+    f"[{lon0:.6f},{lat0:.6f},{lon1:.6f},{lat1:.6f}]/{IMG_PX}x{IMG_PX}@2x?access_token={MB}")
+ BIG=Image.open(io.BytesIO(urllib.request.urlopen(u,timeout=60).read())).convert("RGB")
+ BW,BH=BIG.size
+@@ -168,7 +173,7 @@
+ 
+ def _dtile(lat,lon,z=16,_size="1280x1280"):
+     # logo/attribution=false: birleştirilen karolarda dağınık "mapbox" logosu olmasın (temiz mozaik)
+-    _u=f"http://127.0.0.1:8890/styles/v1/mapbox/satellite-v9/static/{lon},{lat},{z},0/{_size}@2x?access_token={MB}&logo=false&attribution=false"
++    _u=f"{HARITA}/styles/v1/mapbox/satellite-v9/static/{lon},{lat},{z},0/{_size}@2x?access_token={MB}&logo=false&attribution=false"
+     return Image.open(_io.BytesIO(_ur.urlopen(_u,timeout=50).read())).convert("RGB")
+ def _dtiles_par(coords, workers=12):
+     """PARALEL karo çekme (Barış 2026-07-27 "baştan sona net"): yüksek-çöz karo sayısı arttı -> seri fetch
+@@ -198,7 +203,7 @@
+     ŞEHİR=0.90-1.00, kasaba=0.28, KIR/DAĞ=0.00 (tam ayrım)."""
+     try:
+         _z=16 if fine else 15
+-        _u=f"http://127.0.0.1:8890/styles/v1/mapbox/streets-v12/static/{lon},{lat},{_z},0/512x512@2x?access_token={MB}&logo=false&attribution=false"
++        _u=f"{HARITA}/styles/v1/mapbox/streets-v12/static/{lon},{lat},{_z},0/512x512@2x?access_token={MB}&logo=false&attribution=false"
+         _im=Image.open(_io.BytesIO(_ur.urlopen(_u,timeout=40).read())).convert("RGB").resize((128,128))
+         _d=(sum(ImageOps.grayscale(_im).filter(ImageFilter.FIND_EDGES).getdata())/(128*128))/255.0   # yol/bina kenar yoğunluğu
+         if fine: return max(0.0,min(1.0,(_d-0.055)/0.033))
+@@ -230,7 +235,7 @@
+     try:
+         # language=en -> GLOBAL romanizasyon: Latin-dışı şehirler (東京->Tokyo, 台北->Taipei, Тверской->Tverskoy)
+         # hem Chakra fontunda render olur hem İngilizce TTS okuyabilir; Latin/Türkçe isimler AYNI kalır
+-        _u=(f"http://127.0.0.1:8890/geocoding/v5/mapbox.places/{lon},{lat}.json"
++        _u=(f"{HARITA}/geocoding/v5/mapbox.places/{lon},{lat}.json"
+             f"?access_token={MB}&types=neighborhood,locality,place&limit=1&language=en")
+         _d=json.load(_ur.urlopen(_u,timeout=15)); f=_d.get("features",[])
+         if not f: return ("","")
+--- a/kisisel-app/tactical/intro_gen.py
++++ b/kisisel-app/tactical/intro_gen.py
+@@ -7,6 +7,11 @@
+ random.seed(23)
+ SC=os.environ.get("TAC_WORKDIR", os.path.dirname(os.path.abspath(__file__))+"/work")
+ OUT=f"{SC}/sm8frames"; os.makedirs(OUT, exist_ok=True)
++# 2026-08-30 FAZ T + K0 §A3: harita tabani PARAMETRIK. Varsayilan = bugunku davranis
++# (yerel proxy, sifir degisiklik). RunPod/CF'e tasininca TAC_HARITA ortak katmani gosterir
++# ve MUAFIYET ONEGINI icinde tasir: ornek https://harita.nickdegs.com/<ONEK>
++HARITA = os.environ.get("TAC_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ for o in os.listdir(OUT): os.remove(f"{OUT}/{o}")
+ MB=[l.split('=',1)[1].strip() for l in open('/opt/matrix/secrets/mapbox.conf') if l.startswith('MAPBOX_PUBLIC_TOKEN=')][0]
+ LAT=float(os.environ.get("TAC_LAT","40.99038")); LON=float(os.environ.get("TAC_LON","37.87437"))
+@@ -19,7 +24,7 @@
+ def FST(s): return ImageFont.truetype(_FDIR+"/BlackOpsOne-Regular.ttf", s)   # stencil — sadece dev hero başlık
+ FB,FM,FS,FT,FTT=FBD(42),F(31),F(23),F(19),F(16)
+ def sat(lon,lat,z):
+-    u=f"http://127.0.0.1:8890/styles/v1/mapbox/satellite-v9/static/{lon},{lat},{z},0/1280x1280@2x?access_token={MB}"
++    u=f"{HARITA}/styles/v1/mapbox/satellite-v9/static/{lon},{lat},{z},0/1280x1280@2x?access_token={MB}"
+     return Image.open(io.BytesIO(urllib.request.urlopen(u,timeout=50).read())).convert("RGB")
+ print("varlıklar...")
+ import json as _json
+--- a/kisisel-app/tactical/outro_gen.py
++++ b/kisisel-app/tactical/outro_gen.py
+@@ -9,6 +9,11 @@
+ random.seed(9)
+ SC=os.environ.get("TAC_WORKDIR", os.path.dirname(os.path.abspath(__file__))+"/work")
+ OUT=f"{SC}/outroframes"; os.makedirs(OUT, exist_ok=True)
++# 2026-08-30 FAZ T + K0 §A3: harita tabani PARAMETRIK. Varsayilan = bugunku davranis
++# (yerel proxy, sifir degisiklik). RunPod/CF'e tasininca TAC_HARITA ortak katmani gosterir
++# ve MUAFIYET ONEGINI icinde tasir: ornek https://harita.nickdegs.com/<ONEK>
++HARITA = os.environ.get("TAC_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ for o in os.listdir(OUT): os.remove(f"{OUT}/{o}")
+ MB=[l.split('=',1)[1].strip() for l in open('/opt/matrix/secrets/mapbox.conf') if l.startswith('MAPBOX_PUBLIC_TOKEN=')][0]
+ LAT=float(os.environ.get("TAC_OLAT","40.98446")); LON=float(os.environ.get("TAC_OLON","37.87898"))
+@@ -29,7 +34,7 @@
+ def FBD(s): return ImageFont.truetype(_FDIR+"/ChakraPetch-Bold.ttf", s)
+ FB,FM,FS,FTT=FBD(42),F(31),F(23),F(16)
+ def sat(z):
+-    u=f"http://127.0.0.1:8890/styles/v1/mapbox/satellite-v9/static/{LON},{LAT},{z},0/1280x1280@2x?access_token={MB}"
++    u=f"{HARITA}/styles/v1/mapbox/satellite-v9/static/{LON},{LAT},{z},0/1280x1280@2x?access_token={MB}"
+     return Image.open(io.BytesIO(urllib.request.urlopen(u,timeout=50).read())).convert("RGB")
+ ZLVL=list(range(17,4,-1))   # z17..z5 (z17: yakın şehir bitişi de route ile eşleşsin; alt: uzağa zoom-out)
+ TILES={z:sat(z) for z in ZLVL}
+--- a/kisisel-app/tactical/render_job.py
++++ b/kisisel-app/tactical/render_job.py
+@@ -14,6 +14,11 @@
+ # Cloud Run modunda TAC_PUT_URL set olur ve bu adreslere zaten hic gidilmez.
+ BACKEND = os.environ.get("TAC_BACKEND", "http://127.0.0.1:8780")
+ TRACCAR = os.environ.get("TRACCAR_URL", "http://127.0.0.1:8084")
++# 2026-08-30 FAZ T + K0 §A3: harita tabani PARAMETRIK. Varsayilan = bugunku davranis
++# (yerel proxy, sifir degisiklik). RunPod/CF'e tasininca TAC_HARITA ortak katmani gosterir
++# ve MUAFIYET ONEGINI icinde tasir: ornek https://harita.nickdegs.com/<ONEK>
++HARITA = os.environ.get("TAC_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ # GÜVENLİK (2026-07-26): hardcoded cred YOK -> env'den. Env boşsa LOKAL secrets dosyasından oku (2026-07-27:
+ # embedded track'siz rideler fetch_track'te 401 alıyordu). Dosya /opt/matrix/secrets içinde = repo/image DIŞI
+ # (CR image'ında yok -> orada zaten embedded track kullanılır, fetch_track çağrılmaz).
+@@ -270,7 +275,7 @@
+                 coords = ";".join(f"{p['lon']:.6f},{p['lat']:.6f}" for p in ch)
+                 geom = None; _bestconf = -1.0
+                 for _rad in (22, 45):                            # SIKI-önce (22m=isabetli, bölünmüş yolda doğru şerit) -> GENİŞ-sonra (45m=gürültülü GPS kurtar)
+-                    _url = (f"http://127.0.0.1:8890/matching/v5/mapbox/driving/{coords}"
++                    _url = (f"{HARITA}/matching/v5/mapbox/driving/{coords}"
+                             f"?geometries=geojson&overview=full&tidy=true&radiuses={';'.join(str(_rad) for _ in ch)}&access_token={_MB}")
+                     try:
+                         d = json.load(urllib.request.urlopen(_url, timeout=25))
+--- a/kisisel-app/tactical/_qa_render.py
++++ b/kisisel-app/tactical/_qa_render.py
+@@ -11,6 +11,11 @@
+ 
+ BACKEND = "http://127.0.0.1:8780"
+ TRACCAR = "http://127.0.0.1:8084"
++# 2026-08-30 FAZ T + K0 §A3: harita tabani PARAMETRIK. Varsayilan = bugunku davranis
++# (yerel proxy, sifir degisiklik). RunPod/CF'e tasininca TAC_HARITA ortak katmani gosterir
++# ve MUAFIYET ONEGINI icinde tasir: ornek https://harita.nickdegs.com/<ONEK>
++HARITA = os.environ.get("TAC_HARITA", "http://127.0.0.1:8890").rstrip("/")
++
+ TUSER = "daclen10@gmail.com"; TPASS = "SIR_KALDIRILDI_bkz_etc_nickdegs_traccar_conf"
+ R2C = {}
+ for _l in open("/opt/matrix/secrets/movelog-r2.conf"):
+@@ -152,7 +157,7 @@
+                 coords = ";".join(f"{p['lon']:.6f},{p['lat']:.6f}" for p in ch)
+                 rad = ";".join("30" for _ in ch)
+                 # 2026-08-11: QA aracı da proxy'ye — canlı hattaki SON Mapbox-host referansıydı (bağımsızlık ilanı denetimi)
+-                url = (f"http://127.0.0.1:8890/matching/v5/mapbox/driving/{coords}"
++                url = (f"{HARITA}/matching/v5/mapbox/driving/{coords}"
+                        f"?geometries=geojson&overview=full&tidy=true&radiuses={rad}&access_token={_MB}")
+                 geom = None
+                 try:

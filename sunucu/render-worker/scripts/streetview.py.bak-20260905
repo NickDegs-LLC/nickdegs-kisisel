@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+# STREET VIEW "sürüş" render — pacman/Sokak modu (gerçek sokak görüntüsü, ground-level, ücretli/ultra).
+# HYPERLAPSE tekniği: her panoya sürekli ileri-zoom (hareket illüzyonu) + panolar arası crossfade -> slayt DEĞİL akıcı.
+# Metadata-first: her noktayı gerçek pano'ya SNAP eder (no-imagery elenir). Saf Python (PIL+ffmpeg), GPU YOK.
+import json, math, os, sys, subprocess, urllib.request, tempfile
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
+from PIL import Image, ImageDraw, ImageFont
+IN = json.load(open(sys.argv[1]))
+GK = IN.get("gkey") or IN.get("token")
+W, H = IN["W"], IN["H"]; FPS = IN.get("fps", 60); outMp4 = IN["outMp4"]
+pts = IN["pts"]; N = len(pts); title = IN.get("title", {})
+NAME = IN.get("name", ""); ACTLBL = IN.get("activity", ""); STATS = IN.get("stats", [])
+DIST = (IN.get("camdist") or "orta")
+# DAR FOV = öne-odaklı tünel dashcam (kaldırım periferisi az, vertigo düşer). Level pitch = öne bak.
+FOV = {"yakin": 68, "orta": 75, "uzak": 84}.get(DIST, 75)
+PITCH = 0
+LA = 3   # look-ahead: her pano 3 konum ÖTESINE bakar (yol ilerisine, bina dibi/jitter az, motor/araç önü)
+DURSEC = max(10.0, min(60.0, (IN.get("frames", FPS*18)/FPS)))   # hedef sürüş süresi (route-video FR'den); Street View tavanı 60sn
+FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"; FONTB = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+def _f(sz, b=False):
+    try: return ImageFont.truetype(FONTB if b else FONT, sz)
+    except: return ImageFont.load_default()
+f_top = _f(int(W*0.041)); f_big = _f(int(W*0.052), True); f_name = _f(int(W*0.062), True); f_act = _f(int(W*0.040))
+def hav(a, b):
+    R=6371000; r=math.pi/180; dla=(b[1]-a[1])*r; dlo=(b[0]-a[0])*r
+    x=math.sin(dla/2)**2+math.cos(a[1]*r)*math.cos(b[1]*r)*math.sin(dlo/2)**2
+    return 2*R*math.asin(math.sqrt(x))
+def brg(a, b):
+    r=math.pi/180; y=math.sin((b[0]-a[0])*r)*math.cos(b[1]*r)
+    x=math.cos(a[1]*r)*math.sin(b[1]*r)-math.sin(a[1]*r)*math.cos(b[1]*r)*math.cos((b[0]-a[0])*r)
+    return (math.atan2(y,x)/r+360)%360
+
+# 1) ROTA'yı ~8m'ye İNTERPOLE et (track noktaları ~50m arayla -> aradaki panolar kaçmasın!) + METADATA snap + pano_id dedup
+samples=[]
+for i in range(N-1):
+    a=pts[i]; b=pts[i+1]; d=hav((a["lon"],a["lat"]),(b["lon"],b["lat"])); steps=max(1,int(d/8))
+    for k in range(steps):
+        t=k/steps
+        samples.append((a["lon"]+(b["lon"]-a["lon"])*t, a["lat"]+(b["lat"]-a["lat"])*t,
+                        a.get("cum",0)+(b.get("cum",0)-a.get("cum",0))*t, a.get("tm",""), a.get("hr"),
+                        a.get("spd",0.0)+(b.get("spd",0.0)-a.get("spd",0.0))*t))
+p_last=pts[-1]
+samples.append((p_last["lon"],p_last["lat"],p_last.get("cum",0),p_last.get("tm",""),p_last.get("hr"),p_last.get("spd",0.0)))
+def meta(s):
+    try:
+        u=f"https://maps.googleapis.com/maps/api/streetview/metadata?location={s[1]},{s[0]}&radius=25&source=outdoor&key={GK}"   # 25m: yol DIŞI (otopark/ara sokak) panoları alma (v85)
+        d=json.loads(urllib.request.urlopen(u,timeout=15).read())
+        if d.get("status")=="OK":
+            loc=d["location"]; return (d["pano_id"], loc["lng"], loc["lat"], s[2], s[3], s[4], s[5])
+    except Exception: pass
+    return None
+with ThreadPoolExecutor(max_workers=16) as ex:
+    metas=list(ex.map(meta, samples))
+panos=[]; seen=set()
+for m in metas:
+    if m and m[0] not in seen: seen.add(m[0]); panos.append(m)   # (pano_id,lon,lat,cum,tm,hr,spd)
+# PANO TAVANI (2026-07-05): uzun rotada binlerce pano = 20GB+ RAM (OOM!) + $0.007/pano maliyet patlaması.
+# 60sn videoda ~700 panodan fazlası görünmez -> eşit aralıkla seyrelt (RAM ~2GB, maliyet ~$5 tavan).
+_MAXP=700
+if len(panos)>_MAXP:
+    _st=(len(panos)-1)/(_MAXP-1); panos=[panos[round(i*_st)] for i in range(_MAXP)]
+    print(f"pano seyreltildi -> {len(panos)} (RAM/maliyet tavanı)")
+Lp=len(panos)
+if Lp<2:
+    print("STREETVIEW: yetersiz pano coverage"); sys.exit(4)
+# 1b) LOOK-AHEAD YÖN (STABİL): LA konum ötesine bak. Hafif smooth + deadband (düz=jitter sil) +
+#     BİRİNCİ-DERECE takip (spring DEĞİL -> overshoot/sağa-sola sallanma İMKANSIZ) ama dönüşe hızlı ulaşır (net dönüş).
+# HER PANO YOLA SABİT (2026-07-05, Barış teşhisi): heading = pano konumuna EN YAKIN GPS rota
+# noktasındaki YOL TEĞETİ (merkezli ~50m pencere). Pano->pano bakış sivri virajda viraj-sonrasına
+# bakıyordu (araç düz ama bakış kenara vuruyor); yol teğeti her karede tam "o metredeki önü" verir.
+# KM-KONUMLU TEĞET (2026-07-05 v85): "en yakın nokta" eşleşmesi SERPANTİNDE yanlış bacağa
+# oturuyordu (kıvrımın alt/üst yolu 10-20m mesafede -> teğet ters/yan = bütün video kenara bakıyor).
+# Pano zaten hangi rota-kilometresinden geldiğini biliyor (cum) -> teğet o kilometreden hesaplanır (sıra garantili).
+_cums=[p.get("cum",0) for p in pts]
+import bisect as _bs
+def _tangent_cum(c):
+    j=min(max(_bs.bisect_left(_cums,c),1),N-1)
+    j0=max(0,j-1); j1=min(N-1,j)
+    if j0==j1: j1=min(N-1,j0+1)
+    return brg((pts[j0]["lon"],pts[j0]["lat"]),(pts[j1]["lon"],pts[j1]["lat"]))
+raw_hd=[_tangent_cum(panos[i][3]) for i in range(Lp)]
+raw_hd[-1]=raw_hd[-2] if Lp>1 else 0
+# YUMUŞATMA ZİNCİRİ SÖKÜLDÜ (v85): teğet zaten GPS yolundan geliyor (doğru sinyal) — eski
+# smooth(±2 pano=±120m)+deadband+takipçi katmanları dönemeçli yolda kamerayı SÜREKLİ ~15-20° yana
+# kaydırıyordu ("bütün video kenara bakıyor"). Sadece unwrap + minik 3-nokta ortalama kaldı.
+uh=[raw_hd[0]]
+for i in range(1,Lp):
+    dd=raw_hd[i]-raw_hd[i-1]
+    while dd>180: dd-=360
+    while dd<-180: dd+=360
+    uh.append(uh[-1]+dd)
+def _sm2(a,win=2):
+    return [sum(a[max(0,i-win):min(len(a),i+win+1)])/(min(len(a),i+win+1)-max(0,i-win)) for i in range(len(a))]
+eh=_sm2(uh,1)                   # win=1 (~±60m): GPS mikro-gürültüsünü alır, virajı GERİDE BIRAKMAZ
+# 2) her panoyu KENDİ look-ahead heading'inde indir
+# ---------- KALICI PANO ÖNBELLEĞİ (Barış 2026-08-03) ----------
+# Sokak modu video başına 700 pano × $0.007 = $4.90 ile açık ara en pahalı modumuzdu.
+# Önbellek zaten vardı ama /tmp'teydi: worker geçici olduğu için HER render sıfırdan
+# satın alıyordu. Artık panolar R2'ye yazılıyor -> aynı yol ikinci kez render edilince
+# (aynı kullanıcı tekrar ürettiğinde VEYA başka kullanıcı aynı yoldan geçtiğinde) BEDAVA.
+# Anahtar deterministik (pano_id + heading + fov + pitch) -> aynı görüntü, KALİTE DEĞİŞMEZ.
+# R2 çıkış ücreti yok, depolama ~$0.015/GB -> 1000 rota ≈ 50GB ≈ $0.75/ay.
+# R2 yoksa/erişilemezse eski davranışa sessizce döner (render asla kırılmaz).
+import threading
+_SVC_PFX = "svcache/"
+_R2 = None
+_R2B = os.environ.get("R2_BUCKET", "")
+try:
+    if _R2B and os.environ.get("R2_ENDPOINT"):
+        import boto3
+        _R2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"],
+                           aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                           aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                           region_name="auto")
+except Exception as _e:
+    print("SVCACHE: R2 yok, onbelleksiz devam:", str(_e)[:80], flush=True); _R2 = None
+
+_SVS = {"yerel": 0, "r2": 0, "google": 0, "hata": 0}
+_SVL = threading.Lock()
+def _svs(k):
+    with _SVL: _SVS[k] += 1
+
+os.makedirs("/tmp/svc", exist_ok=True)
+def fetch(i):
+    pid,lon,lat=panos[i][0],panos[i][1],panos[i][2]; hd=int(round(eh[i]/2)*2)%360
+    ad=f"{pid}_{hd}_{FOV}_{PITCH}.jpg"
+    fn=f"/tmp/svc/{ad}"
+    if os.path.exists(fn):
+        _svs("yerel")
+    else:
+        alindi=False
+        if _R2 is not None:                      # 1) KALICI ÖNBELLEK (bedava)
+            try:
+                _R2.download_file(_R2B, _SVC_PFX+ad, fn)
+                _svs("r2"); alindi=True
+            except Exception:
+                pass
+        if not alindi:                           # 2) Google (PARA BURADA GİDER)
+            u=(f"https://maps.googleapis.com/maps/api/streetview?size=640x640&pano={pid}"
+               f"&heading={hd}&pitch={PITCH}&fov={FOV}&key={GK}")
+            try:
+                urllib.request.urlretrieve(u,fn); _svs("google")
+            except Exception:
+                _svs("hata"); return None
+            if _R2 is not None:                  # sonraki render'lar için sakla
+                try: _R2.upload_file(fn, _R2B, _SVC_PFX+ad)
+                except Exception: pass
+    try:
+        # RAM: kaynak 640px'te TUT (tam W,H'a şişirme — 3000 pano × 1080x1920 = 20GB OOM yapıyordu);
+        # kare üretiminde blend küçük boyutta yapılır, tek resize ile finale çıkar (kalite aynı: kaynak zaten 640).
+        im=Image.open(fn).convert("RGB"); CW=int(640*W/H)
+        return im.crop(((640-CW)//2,0,(640+CW)//2,640))
+    except Exception: return None
+with ThreadPoolExecutor(max_workers=16) as ex:
+    imgs=list(ex.map(fetch, range(Lp)))
+# P: (img, pano_meta, heading) — None'ları at, hizayı koru
+P=[(imgs[i],panos[i],eh[i]) for i in range(Lp) if imgs[i] is not None]
+if len(P)<2: print("STREETVIEW: görüntü indirilemedi"); sys.exit(4)
+_ist=_SVS["yerel"]+_SVS["r2"]; _top=_ist+_SVS["google"]
+_oran=(100.0*_ist/_top) if _top else 0.0
+print(f"SVCACHE: isabet %{_oran:.1f} (r2={_SVS['r2']} yerel={_SVS['yerel']} google={_SVS['google']} hata={_SVS['hata']})"
+      f" -> bu video ${_SVS['google']*0.007:.2f} (onbelleksiz olsaydi ${_top*0.007:.2f})", flush=True)
+if _R2 is not None:                              # isabet oranini olcebilmek icin kaydet
+    try:
+        import io as _io2, json as _json2
+        _b=_json2.dumps({"ts": int(__import__("time").time()), "pano": _top,
+                         "r2": _SVS["r2"], "yerel": _SVS["yerel"], "google": _SVS["google"],
+                         "usd": round(_SVS["google"]*0.007, 4),
+                         "usd_onbelleksiz": round(_top*0.007, 4)}).encode()
+        _R2.put_object(Bucket=_R2B,
+                       Key=f"svcache-stats/{__import__('time').strftime('%Y-%m-%d')}/{int(__import__('time').time()*1000)}.json",
+                       Body=_b)
+    except Exception: pass
+print(f"pano: {len(P)} (benzersiz), FOV{FOV} LA{LA}")
+
+# scrim (bir kez)
+_SB=int(H*0.30); _SCB=Image.new("RGBA",(W,_SB),(0,0,0,0))
+_g=Image.new("L",(1,_SB)); [_g.putpixel((0,y),int(205*(y/_SB))) for y in range(_SB)]; _SCB.putalpha(_g.resize((W,_SB)))
+_SCT=Image.new("RGBA",(W,int(H*0.085)),(0,0,0,95))
+def zc(im, z):  # merkez zoom (ileri hareket)
+    if z<=1.001: return im
+    nw,nh=int(W/z),int(H/z); x=(W-nw)//2; y=(H-nh)//2
+    return im.crop((x,y,x+nw,y+nh)).resize((W,H))
+def hud(im, cum, tm, hr):
+    im=im.convert("RGBA"); im.alpha_composite(_SCT,(0,0)); im.alpha_composite(_SCB,(0,H-_SB)); im=im.convert("RGB")
+    d=ImageDraw.Draw(im,"RGBA")
+    d.text((int(W*0.05),int(H*0.03)),f"{title.get('date','')}   •   {title.get('totkm','')} km",font=f_top,fill=(255,255,255,245))
+    sub=f"▸ {cum:.1f} km     {tm}"+(f"     ♥ {int(hr)}" if hr else "")
+    d.text((int(W*0.05),H-int(H*0.075)),sub,font=f_big,fill=(255,255,255,255))
+    return im
+
+tmp=tempfile.mkdtemp(prefix="svf_"); idx=0
+# HIZ (2026-07-05, 2 saat -> ~10dk): PNG kaydı kare başına ~1-2sn yiyordu (asıl darboğaz) -> JPEG q92
+# (görsel fark yok, ~10x hızlı) + sürüş kareleri ÇOK ÇEKİRDEĞE paralel (kareler bağımsız, P salt-okunur/fork).
+def wr_at(im, i): im.save(f"{tmp}/{i:05d}.jpg", "JPEG", quality=92)
+def wr(im):
+    global idx; wr_at(im, idx); idx+=1
+# INTRO (2.0sn): ilk pano koyu kart üstünde isim
+i0=P[0][0].resize((W,H)); nIntro=int(FPS*2.0)
+for f in range(nIntro):
+    a=min(1.0,f/(nIntro*0.4)) if f<nIntro*0.7 else max(0.0,(nIntro-f)/(nIntro*0.3)); a=a*a*(3-2*a)
+    fr=Image.alpha_composite(i0.convert("RGBA"),Image.new("RGBA",(W,H),(8,10,22,int(215*a)))).convert("RGB")
+    d=ImageDraw.Draw(fr,"RGBA")
+    d.text((W//2,int(H*0.44)),(NAME or "Move Log"),font=f_name,fill=(255,255,255,int(255*a)),anchor="mm")
+    d.text((W//2,int(H*0.51)),f"{ACTLBL}  •  {title.get('date','')}",font=f_act,fill=(160,200,255,int(235*a)),anchor="mm")
+    wr(fr)
+# SÜRÜŞ — OTO-HIZ (gerçek GPS spd) + DÖNÜŞ ağırlıklı tempolama:
+# yavaş/sokak = çok kare (slow-motion), ana yol = az kare (hızlı); keskin dönüş = ekstra yavaş.
+Lp2=len(P)
+spds=[max(0.0,float(P[i][1][6] or 0.0)) for i in range(Lp2)]   # km/h
+_srt=sorted(spds); Vref=max(8.0,_srt[len(_srt)//2] if _srt else 20.0)   # medyan hız (ref)
+heads=[P[i][2] for i in range(Lp2)]
+def _w(i):
+    # SADECE GPS hızı (dönüş yavaşlatması YOK — kullanıcı "dönüşte mal mal bekleme" dedi).
+    sp=spds[i]
+    if sp<5.0: return 0.85                             # DURUŞ/çok yavaş -> donma yok, hızlı geç
+    return max(0.9,min(1.5,Vref/max(14.0,sp)))        # orta hız(sokak)=>hafif slow-mo max 1.5x, anayol=>hızlı
+w=[_w(i) for i in range(Lp2)]
+arc=[0.0]
+for i in range(Lp2-1): arc.append(arc[-1]+w[i])
+TOTW=arc[-1] or 1.0
+def pos_at(a):
+    lo,hi=0,Lp2-1
+    while lo<hi:
+        m=(lo+hi)//2
+        if arc[m+1]<=a: lo=m+1
+        else: hi=m
+    i=min(lo,Lp2-2); u=(a-arc[i])/max(1e-9,w[i]); return i+u
+drive_frames=max(int(FPS*max(10.0,DURSEC-2.5)), Lp2*6)
+# HAFİF MOD (RIFE YOK): recursive RIFE "vıcık/erime" yapıyordu + 42dk. Yerine SABIT-HIZ SÜREKLI BLEND
+# (sv_smooth tarzı, kullanıcı "tam oldu" demişti) + oto-hız ağırlıklı pos + tmix motion blur.
+# Hızlı render (~dk, GPU'suz), yol net, gerçek panolar; look-ahead yön + deadband ile dönüş vertigosu yok.
+print(f"HAFİF blend sürüş: {drive_frames} kare (oto-hız Vref={Vref:.0f}), {min(12, os.cpu_count() or 4)} çekirdek paralel")
+_OFF=idx   # sürüş kareleri intro'dan sonra başlar; paralel yazımda indeks deterministik
+def _drive_frame(j):
+    a=j/max(1,drive_frames-1)*TOTW; pos=pos_at(a); i0=int(pos); i1=min(Lp2-1,i0+1); u=pos-i0
+    cum=(P[i0][1][3]+(P[i1][1][3]-P[i0][1][3])*u)/1000.0
+    wr_at(hud(Image.blend(P[i0][0],P[i1][0],u).resize((W,H)),cum,P[i0][1][4],P[i0][1][5]), _OFF+j)
+_PROCS=min(int(os.environ.get("SV_PROCS","12")), os.cpu_count() or 4)   # SV_PROCS: paylaşımlı host'ta düşür (OOM koruması)
+with mp.get_context("fork").Pool(_PROCS) as _pool:   # fork ŞART: script prosedürel, forkserver main'i yeniden koşar (py3.14 varsayılanı değişti)
+    for _ in _pool.imap_unordered(_drive_frame, range(drive_frames), chunksize=32): pass
+idx=_OFF+drive_frames
+# OUTRO (3.0sn): son pano koyu + özet + fade-to-black
+ob=P[-1][0].resize((W,H)); sN=int(FPS*3.0)
+for f in range(sN):
+    a=min(1.0,f/(sN*0.3)) if f<sN*0.82 else max(0.0,(sN-f)/(sN*0.18)); a=a*a*(3-2*a)
+    fr=Image.alpha_composite(ob.convert("RGBA"),Image.new("RGBA",(W,H),(0,0,0,180))).convert("RGB")
+    d=ImageDraw.Draw(fr,"RGBA")
+    d.text((W//2,int(H*0.34)),(NAME or title.get('date','')),font=f_name,fill=(255,255,255,int(255*a)),anchor="mm")
+    d.text((W//2,int(H*0.40)),ACTLBL,font=f_act,fill=(160,200,255,int(230*a)),anchor="mm")
+    yy=int(H*0.48)
+    for ln in (STATS or [f"▸ {title.get('totkm','')} km"]):
+        d.text((W//2,yy),ln,font=f_act,fill=(255,255,255,int(255*a)),anchor="mm"); yy+=int(H*0.05)
+    wr(fr)
+for f in range(int(FPS*0.5)):
+    wr(Image.blend(ob,Image.new("RGB",(W,H),(0,0,0)),min(1.0,0.7+0.3*(f/max(1,int(FPS*0.5)-1)))))
+# MOTION BLUR (tmix=3): RIFE kareleri yapay keskin -> geçiş warp'ı göze batar. Hafif temporal ortalama
+# gerçek aksiyon-kamerası hareket bulanıklığı verir: warp GÖRÜNMEZ olur + "gerçekten çekilmiş" hissi.
+# Statik yazıya (intro/outro) etkisi yok (aynı pikseller ortalanır); yalnız hareketli sürüş yumuşar.
+subprocess.run(f"ffmpeg -v error -y -framerate {FPS} -i {tmp}/%05d.jpg "
+  f"-f lavfi -i anullsrc=r=44100:cl=stereo "
+  f"-vf \"tmix=frames=3:weights='1 1.3 1'\" "
+  f"-c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 21 -c:a aac -shortest -movflags +faststart {outMp4}",shell=True)
+print(f"STREETVIEW OK: {outMp4}  kare:{idx}  pano:{len(P)}")

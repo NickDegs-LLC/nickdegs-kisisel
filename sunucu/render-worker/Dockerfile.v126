@@ -1,0 +1,12 @@
+# v123 — MAPBOX'TAN TAM KOPUŞ (2026-08-10, Barış onayı)
+# Build kaynağı (Dockerfile.runpod) sunucu taşımasında GELMEDİ -> v121'i TABAN alıp yalnız
+# değişen dosyaları üzerine koyuyoruz. Sistem bağımlılıkları (chrome/puppeteer/ffmpeg/rife) v121'den.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v125
+FROM ${BASE}
+
+# 1) MapLibre GL JS 5.6.1 — imaja GÖMÜLÜ (render anında CDN'e çıkmaz, dış bağımlılık sıfır)
+COPY 3d/vendor/ /app/3d/vendor/
+# 2) MapLibre'ye taşınmış 3B motoru (kendi karolar + terrarium DEM + fill-extrusion binalar)
+COPY 3d/render3d.js /app/3d/render3d.js
+# 3) matching/geocoding/statik karo -> kendi harita-proxy'miz (Mapbox host'u kalmadı)
+COPY scripts/route-video.py /app/scripts/route-video.py

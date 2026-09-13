@@ -1,0 +1,993 @@
+[
+  {
+    "method": "POST",
+    "path": "/auth/login",
+    "fn": "login",
+    "line": 537,
+    "auth": "yok",
+    "params": [],
+    "body": [
+      {
+        "ad": "user",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": ""
+      },
+      {
+        "ad": "password",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": ""
+      }
+    ],
+    "response": {
+      "token": "str (HS256 JWT, 30 gün, payload: sub/exp/tv)",
+      "user": "str"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "kullanıcı adı veya parola hatalı"
+      }
+    ],
+    "reads": [
+      "profiles.*.tv (make_jwt -> _token_versions, 10sn TTL cache)"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "CONF_PATH=/opt/matrix/kisisel-app/backend/config.env (JWT_SECRET, USERS=user:pass,... listesi)",
+      "_STORE=social.json (tv cache)"
+    ],
+    "cf_mapping": "Worker: sabit kullanıcı listesi wrangler secret/KV'ye; JWT imzalama WebCrypto HMAC-SHA256; tv değeri D1 users tablosundan (satır 131-142'deki 10sn cache -> Worker'da KV veya istek başına D1 SELECT)",
+    "notes": "hmac.compare_digest ile parola kıyası (satır 541). Sadece Barış+aile (config'deki paylaşılan parola, satır 46-47). JWT'ye tv (token version) gömülür -> profildeki tv bump'ı tüm eski token'ları iptal eder (satır 130-167).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/apple",
+    "fn": "auth_apple",
+    "line": 577,
+    "auth": "yok",
+    "params": [],
+    "body": [
+      {
+        "ad": "identity_token",
+        "tip": "str (Apple ID JWT)",
+        "zorunlu": true,
+        "varsayilan": ""
+      },
+      {
+        "ad": "name",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": ""
+      }
+    ],
+    "response": {
+      "token": "str (JWT)",
+      "user": "str (apple_<sha256(sub)[:12]> veya alias'lı kanonik id)"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "geçersiz Apple token"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Apple imzası doğrulanamadı"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Apple token sahibi uyuşmuyor"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Apple token süresi dolmuş"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Apple kullanıcı kimliği yok"
+      }
+    ],
+    "reads": [
+      "profiles.<username> (varlık kontrolü + alias)",
+      "profiles.* (yeni üyede _uye_bildir sayımları: toplam üye, premium abone)"
+    ],
+    "writes": [
+      "profiles.<username>.apple_sub (setdefault)",
+      "profiles.<username>.name (boşsa, ilk 40 kr)",
+      "adminq/<ms-epoch>.json dosyası (yeni üye bildirimi; _adminq satır 2957-2964)"
+    ],
+    "external": [
+      "GET https://appleid.apple.com/auth/keys (JWKS, 1 saat bellek cache, satır 551-557)"
+    ],
+    "server_deps": [
+      "DATA_DIR/adminq dizini (yeni üye -> notify-admin.sh/wa-notify.sh kuyruğu)"
+    ],
+    "cf_mapping": "JWKS fetch() + KV cache (TTL 1h); RS256 doğrulama saf-Python yerine crypto.subtle.verify('RSASSA-PKCS1-v1_5') (satır 560-574'teki elle PKCS#1 gereksizleşir); profiles -> D1 users; adminq -> Queue veya D1 admin_events + Telegram/WhatsApp fetch",
+    "notes": "aud sabiti com.nickdegs.kisisel (satır 547). ALIAS tuzağı (satır 601-602): profilde alias varsa veri taşınmadan token KANONİK hesaba basılır ve apple_sub/name YAZILMAZ (erken return). aud hem str hem list olabilir (satır 589). _uye_bildir metni bilerek 'ÜYELİK' kelimesiyle (wa-notify APP_RE filtresi, satır 2967-2971).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/google",
+    "fn": "auth_google",
+    "line": 635,
+    "auth": "yok",
+    "params": [],
+    "body": [
+      {
+        "ad": "id_token",
+        "tip": "str (Google ID token JWT)",
+        "zorunlu": true,
+        "varsayilan": ""
+      },
+      {
+        "ad": "name",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": ""
+      }
+    ],
+    "response": {
+      "token": "str (JWT)",
+      "user": "str (google_<sha256(sub)[:12]> veya alias'lı kanonik id)"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "geçersiz Google token"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Google imzası doğrulanamadı"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Google issuer uyuşmuyor"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Google token sahibi uyuşmuyor"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Google token süresi dolmuş"
+      },
+      {
+        "kod": 401,
+        "mesaj": "Google kullanıcı kimliği yok"
+      }
+    ],
+    "reads": [
+      "profiles.<username> (varlık + alias)",
+      "profiles.* (yeni üye sayımları)"
+    ],
+    "writes": [
+      "profiles.<username>.google_sub (setdefault)",
+      "profiles.<username>.name (boşsa; body.name yoksa payload.name)",
+      "adminq/<ms-epoch>.json dosyası (yeni üye)"
+    ],
+    "external": [
+      "GET https://www.googleapis.com/oauth2/v3/certs (JWKS, 1 saat cache, satır 626-632)"
+    ],
+    "server_deps": [
+      "DATA_DIR/adminq dizini"
+    ],
+    "cf_mapping": "Apple ile aynı desen: fetch()+KV JWKS cache, WebCrypto RS256; GOOGLE_AUDS (satır 619-622, 2 client id: Android film-ozet web + iOS move-log-500805) Worker'da env/const olarak taşınır; D1 users; adminq -> Queue",
+    "notes": "RS256 doğrulayıcı _verify_apple_rs256 jenerik, Google için aynen kullanılıyor (satır 645). iss 'accounts.google.com' VEYA 'https://accounts.google.com' (satır 647). Alias erken return'u Apple ile aynı (satır 661-662). Yeni üyede _uye_bildir e-postayı payload.email'den alır.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/sms/start",
+    "fn": "sms_start",
+    "line": 734,
+    "auth": "yok",
+    "params": [],
+    "body": [
+      {
+        "ad": "phone",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "",
+        "not": "ÖLÜ ALAN — uç her zaman 410 döner"
+      }
+    ],
+    "response": {
+      "_": "yanıt yok — her istek 410 ile biter (satır 739 koşulsuz raise)"
+    },
+    "errors": [
+      {
+        "kod": 410,
+        "mesaj": "SMS ile giriş kaldırıldı. Lütfen uygulamayı güncelleyip Google/Apple ile gir. / SMS sign-in was removed. Please update the app and sign in with Google/Apple."
+      }
+    ],
+    "reads": [],
+    "writes": [],
+    "external": [
+      "(ÖLÜ KOD, satır 740-791: Twilio Verify POST Verifications + ip-api.com ülke sorgusu + smsfix.json IP-kurtarma) — çalışmıyor"
+    ],
+    "server_deps": [
+      "(ölü kodda: _rl bellek rate-limit, DATA_DIR/smsfix.json, REVIEW_PHONE config)"
+    ],
+    "cf_mapping": "Worker'da sabit 410 + aynı iki dilli mesaj. 410 sonrası ölü kod (satır 740-791) TAŞINMAZ; eski sürümler (<=1.58) anlamlı hata görmeye devam eder",
+    "notes": "2026-08-09 Barış: 'SMS bakiyem bitti, direkt kaldır' (satır 736-738). Uç bilerek 404 değil 410 — eski app kullanıcısı mesajı görür, Twilio'ya kuruş gitmez. /auth/sms/verify BİLEREK açık kaldı (start olmadan yeni doğrulama başlatılamaz).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/sms/verify",
+    "fn": "sms_verify",
+    "line": 794,
+    "auth": "yok",
+    "params": [],
+    "body": [
+      {
+        "ad": "phone",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": "",
+        "not": "_norm_phone: + yoksa TR (+90) varsayımı, satır 674-685"
+      },
+      {
+        "ad": "code",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": "",
+        "not": "rakam dışı karakterler ayıklanır"
+      }
+    ],
+    "response": {
+      "token": "str (JWT)",
+      "user": "str (u<sha256(phone)[:12]>)"
+    },
+    "errors": [
+      {
+        "kod": 400,
+        "mesaj": "eksik bilgi"
+      },
+      {
+        "kod": 429,
+        "mesaj": "çok fazla deneme, biraz sonra tekrar dene (15dk'da 8, satır 804)"
+      },
+      {
+        "kod": 503,
+        "mesaj": "SMS servisi yapılandırılmamış"
+      },
+      {
+        "kod": 401,
+        "mesaj": "kod doğrulanamadı"
+      }
+    ],
+    "reads": [
+      "profiles.<username> (varlık)",
+      "smsfix.json (IP-kurtarma düzeltilmiş numara, 1 saat TTL, satır 797-800)",
+      "admin-numbers.conf (_is_admin_phone)"
+    ],
+    "writes": [
+      "profiles.<username>.phone (setdefault)",
+      "profiles.<username>.admin=true + premium=true (admin numarasıysa, satır 831-833)",
+      "adminq/<ms-epoch>.json (yeni üye, admin değilse; satır 835)"
+    ],
+    "external": [
+      "POST https://verify.twilio.com/v2/Services/<VERIFY_SID>/VerificationCheck (basic auth TWILIO_SID/TOKEN, satır 816-821)"
+    ],
+    "server_deps": [
+      "_rl bellek içi rate limiter (satır 170-180) — süreç yeniden başlayınca sıfırlanır",
+      "DATA_DIR/smsfix.json",
+      "ADMIN_NUMBERS_FILE (data/admin-numbers.conf)",
+      "config: TWILIO_*, REVIEW_PHONE, REVIEW_CODE"
+    ],
+    "cf_mapping": "Rate limit -> KV sayaç veya Durable Object; smsfix -> KV (TTL 3600); admin-numbers -> KV listesi; Twilio -> fetch (sırlar wrangler secret); REVIEW_PHONE/REVIEW_CODE -> wrangler secret; D1 users",
+    "notes": "TUZAK-1: App Store İNCELEME BYPASS'ı (satır 807-811) — REVIEW_PHONE eşleşirse Twilio'ya hiç gidilmez, sadece sabit REVIEW_CODE kabul edilir; taşınmazsa Apple incelemesi girişte kırılır. TUZAK-2: start 410 ama verify bilerek AÇIK (eski sürüm oturumları + inceleme hesabı). TUZAK-3: smsfix — start'taki IP-kurtarma numarası düzeltmişse kimlik DÜZELTİLMİŞ numaradan türetilir (aynı hesap garantisi, satır 796-800); start artık 410 olduğundan yeni smsfix kaydı oluşamaz ama mantık korunmalı. Admin numarası otomatik admin+premium.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/register-ride",
+    "fn": "register_ride",
+    "line": 1049,
+    "auth": "secret (body.secret == RENDER_DONE_SECRET, satır 1052; secret config'te boş/tanımsızsa uç FAIL-CLOSED: her istek 403)",
+    "params": [],
+    "body": [
+      {
+        "ad": "secret",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "ride_id",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "date",
+        "tip": "str YYYY-MM-DD",
+        "zorunlu": false,
+        "varsayilan": "önceki kayıt değeri"
+      },
+      {
+        "ad": "ts",
+        "tip": "int epoch",
+        "zorunlu": false,
+        "varsayilan": "önceki || 0"
+      },
+      {
+        "ad": "to",
+        "tip": "int epoch",
+        "zorunlu": false,
+        "varsayilan": "önceki || 0"
+      },
+      {
+        "ad": "type",
+        "tip": "str (moto/bike/run/walk/car)",
+        "zorunlu": false,
+        "varsayilan": "önceki || ''"
+      },
+      {
+        "ad": "user",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "önceki"
+      },
+      {
+        "ad": "km",
+        "tip": "float",
+        "zorunlu": false,
+        "varsayilan": "önceki (None ise korunur)"
+      },
+      {
+        "ad": "lat",
+        "tip": "float",
+        "zorunlu": false,
+        "varsayilan": "önceki"
+      },
+      {
+        "ad": "lon",
+        "tip": "float",
+        "zorunlu": false,
+        "varsayilan": "önceki"
+      }
+    ],
+    "response": {
+      "ok": true
+    },
+    "errors": [
+      {
+        "kod": 403,
+        "mesaj": "yetkisiz"
+      },
+      {
+        "kod": 400,
+        "mesaj": "eksik"
+      }
+    ],
+    "reads": [
+      "detected_rides.<rid> (önceki değerler)",
+      "shared_routes.* (to/ridden/ts/km/ride_id/from)",
+      "detected_rides.<shared.ride_id> (kaynak lat/lon)",
+      "profiles.*.name/handle/lang"
+    ],
+    "writes": [
+      "detected_rides.<rid> (tam kayıt, partial-merge)",
+      "shared_routes.<sid>.ridden.<user>=ts (eşleşmede)",
+      "pushq/<ms-epoch>_<hex8>.json x2 (_pushq satır 2986-2997; iki tarafa 'Rota meydan okuması tamam', route alanı YOK)"
+    ],
+    "external": [
+      "yok doğrudan; pushq dosyaları ana sunucu broadcast worker'ı üzerinden APNs/FCM'e gider (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq dizini (dosya kuyruğu)"
+    ],
+    "cf_mapping": "Çağıran activity-detect.py (cron worker'a taşınacak) -> Worker'lar arası service binding veya iç fetch; detected_rides + shared_routes -> D1; pushq -> Queue (push consumer APNs/FCM'i WebCrypto ile imzalar); secret -> wrangler secret",
+    "notes": "Partial update semantiği: gönderilmeyen/None alanlar önceki kaydı KORUR (satır 1060-1069) — D1'de COALESCE/UPSERT ile birebir taşınmalı. Paylaşılan rota eşleştirici (satır 1070-1102): yeni kayıt km>1 (satır 1074) + user hedef listede + henüz sürmemiş + ts paylaşımdan yeni + paylaşım km>1 ve fark ±%25 (satır 1085) + (koordinat varsa) başlangıç haversine <=2km => 'sürdü'; push başlıkları 13 dilde lokalize, gövde formatlı.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/render-done",
+    "fn": "render_done",
+    "line": 1107,
+    "auth": "secret (body.secret == RENDER_DONE_SECRET; secret config'te boş/tanımsızsa uç FAIL-CLOSED: her istek 403)",
+    "params": [],
+    "body": [
+      {
+        "ad": "secret",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "ride_id",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "key",
+        "tip": "str (R2 nesne anahtarı)",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "user",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": null
+      },
+      {
+        "ad": "date",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": null
+      },
+      {
+        "ad": "mode",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "flyover"
+      },
+      {
+        "ad": "speed",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "medium"
+      },
+      {
+        "ad": "aspect",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "16:9"
+      },
+      {
+        "ad": "type",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": ""
+      },
+      {
+        "ad": "ts",
+        "tip": "int",
+        "zorunlu": false,
+        "varsayilan": 0
+      },
+      {
+        "ad": "to",
+        "tip": "int",
+        "zorunlu": false,
+        "varsayilan": 0
+      },
+      {
+        "ad": "size",
+        "tip": "int bayt",
+        "zorunlu": false,
+        "varsayilan": 0
+      },
+      {
+        "ad": "group",
+        "tip": "bool",
+        "zorunlu": false,
+        "varsayilan": false
+      },
+      {
+        "ad": "users",
+        "tip": "list[str]",
+        "zorunlu": false,
+        "varsayilan": "[]",
+        "not": "grup sürüşte >=2 olmalı"
+      },
+      {
+        "ad": "gpu_secs",
+        "tip": "int",
+        "zorunlu": false,
+        "varsayilan": 0
+      },
+      {
+        "ad": "ultra",
+        "tip": "bool",
+        "zorunlu": false,
+        "varsayilan": false
+      },
+      {
+        "ad": "ptitle",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "rid'e göre TR sabit metin — '_ozet' içeren rid özet metni, diğerleri 'Videon hazır 🎬' (satır 1200-1205; moda göre DEĞİL)"
+      },
+      {
+        "ad": "pbody",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "rid'e göre TR sabit metin — '_ozet' içeren rid özet metni (satır 1200-1205; moda göre DEĞİL)"
+      }
+    ],
+    "response": {
+      "ok": true
+    },
+    "errors": [
+      {
+        "kod": 403,
+        "mesaj": "yetkisiz"
+      },
+      {
+        "kod": 400,
+        "mesaj": "eksik"
+      }
+    ],
+    "reads": [
+      "pending_videos.<rid>",
+      "failed_videos.<rid>",
+      "deleted_rides",
+      "cloud_videos.* (grup solo gizleme taraması)",
+      "profiles.*.group_video/lang/name/handle"
+    ],
+    "writes": [
+      "cloud_videos.<rid> (+grupta <rid>_w2.. kullanıcı-başına kopya)",
+      "deleted_rides (grupta örtüşen solo videolar EKLENİR; rid listedeyse ÇIKARILIR)",
+      "gpucost.<user>.<YYYY-MM>.secs/videos/g3d_secs",
+      "pending_videos.pop(rid)",
+      "failed_videos.pop(rid)",
+      "pushreq/<rid>_<ts>.json (tekil, satır 1207) | grupta kullanıcı-başına pushreq/<rid>_<user>_<ts>.json (satır 1194); rid içindeki '/' '_' yapılır"
+    ],
+    "external": [
+      "yok doğrudan; pushreq -> matrix push.py -> APNs (dolaylı). Video R2'de zaten (çağıran RunPod/Cloud Run yükledi)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushreq dizini",
+      "RENDER_DONE_SECRET config"
+    ],
+    "cf_mapping": "Çağıran RunPod motoru — internet'e açık kalmalı: movelog-api Worker'da /api/internal/render-done aynen (secret header/body); cloud_videos -> D1 videos tablosu; pushreq -> Queue -> push worker (APNs JWT ES256 + FCM OAuth WebCrypto); gpucost -> D1 telemetri tablosu",
+    "notes": "GRUP SÜRÜŞ (satır 1122-1144): users[]>=2 + group=true -> aynı R2 key'le kullanıcı başına ayrı rid kopyası (rid_w2, rid_w3...); 'sadece ortak video' tercihi (profiles.group_video=='group') pencereyle ±900sn örtüşen solo videoları deleted_rides'a atarak gizler — ortak video HAZIR olduktan sonra (kimse videosuz kalmaz). rid deleted_rides'taysa yeniden üretim gizlemeyi kaldırır (satır 1157-1159). '_ozet' içeren rid ayrı push metni alır (satır 1200-1205, Barış'ın 'özet demedi' yakalaması). gpu_secs>0 ise aylık maliyet defteri; ultra+mode=='3d' ayrıca g3d_secs. Grup push'u herkese KENDİ dilinde, arkadaş adlarıyla (13 dil, satır 1163-1194).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/render-failed",
+    "fn": "render_failed",
+    "line": 1243,
+    "auth": "secret (body.secret == RENDER_DONE_SECRET; secret config'te boş/tanımsızsa uç FAIL-CLOSED: her istek 403)",
+    "params": [],
+    "body": [
+      {
+        "ad": "secret",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "ride_id",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "reason",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": "'' -> 'GPS verisi yetersiz'"
+      },
+      {
+        "ad": "user",
+        "tip": "str",
+        "zorunlu": false,
+        "varsayilan": null
+      }
+    ],
+    "response": {
+      "ok": true
+    },
+    "errors": [
+      {
+        "kod": 403,
+        "mesaj": "yetkisiz"
+      },
+      {
+        "kod": 400,
+        "mesaj": "eksik"
+      }
+    ],
+    "reads": [
+      "pending_videos.<rid> (pencere/tip bilgisi hata kartına taşınır)"
+    ],
+    "writes": [
+      "pending_videos.pop(rid)",
+      "failed_videos.<rid> = {reason, user, at, ts, to, date, type, mode}",
+      "pushreq/fail_<rid>_<ts>.json ('Video oluşturulamadı')"
+    ],
+    "external": [
+      "yok doğrudan; pushreq -> APNs (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushreq dizini"
+    ],
+    "cf_mapping": "movelog-api Worker'da aynen (RunPod + dispatch çağırır); pending/failed_videos -> D1 videos tablosunda status kolonu (pending/failed/done) daha doğal; pushreq -> Queue",
+    "notes": "BUG FİX geçmişi (satır 1245-1246 + memory 'Video Üretim Fail Bug'): render edilemeyen iş 'sonsuz Hazırlanıyor' hayaleti bırakıyordu — bu uç kilidi kaldırıp hata kartı üretir. Pencere (ts/to/date/type/mode) pending'ten failed'a TAŞINIR ki 'yeniden dene' doğru pencereyle çalışsın (satır 1255-1259). Push gövdesi TR sabit (lokalize değil).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/music",
+    "fn": "internal_music_audio",
+    "line": 2138,
+    "auth": "secret (query ?secret= == RENDER_DONE_SECRET, satır 2142; secret config'te boş/tanımsızsa uç FAIL-CLOSED: her istek 403)",
+    "params": [
+      {
+        "ad": "user",
+        "tip": "str query",
+        "zorunlu": true,
+        "varsayilan": null,
+        "not": "alfanumerik+-_ dışı karakterler ayıklanır (satır 2119)"
+      },
+      {
+        "ad": "ref",
+        "tip": "str query",
+        "zorunlu": false,
+        "varsayilan": "",
+        "not": "''|'active' = global aktif; 'lib:<id>'; 'upload' (session ister); 'stock:<ad>'"
+      },
+      {
+        "ad": "session",
+        "tip": "str query (float epoch)",
+        "zorunlu": false,
+        "varsayilan": ""
+      },
+      {
+        "ad": "secret",
+        "tip": "str query",
+        "zorunlu": true,
+        "varsayilan": ""
+      }
+    ],
+    "body": [],
+    "response": {
+      "_": "binary FileResponse, Content-Type audio/mp4 (m4a dosyası)"
+    },
+    "errors": [
+      {
+        "kod": 403,
+        "mesaj": "no"
+      },
+      {
+        "kod": 404,
+        "mesaj": "müzik yok"
+      }
+    ],
+    "reads": [
+      "social.json OKUMAZ; dosya sistemi: data/usermusic/<user>/active.m4a | <libid>.m4a, data/ridephotos/<user>_<int(session)>/music.m4a, data/stockmusic/<ad>.m4a"
+    ],
+    "writes": [
+      "yok (dikkat: _music_dir makedirs ile usermusic/<user> dizinini OLUŞTURUR, satır 2074)"
+    ],
+    "external": [],
+    "server_deps": [
+      "DATA_DIR/usermusic, DATA_DIR/ridephotos, DATA_DIR/stockmusic dosya ağacı"
+    ],
+    "cf_mapping": "Müzik dosyaları R2'ye (usermusic/<user>/..., stockmusic/...); Worker ref'i çözer ve R2.get ile stream eder ya da RunPod'a kısa ömürlü imzalı R2 URL döndürür (motor zaten R2 kullanıyor). Çağıran RunPod/Cloud Run — uç public kalmalı, secret wrangler secret",
+    "notes": "GÜVENLİK: user ve ref path bileşenleri alfanumerik filtreyle sanitize edilir (satır 2119, 2125, 2133 — path traversal koruması); Worker'da R2 key üretirken aynı sanitizasyon korunmalı. Çözüm mantığı (öncelik sırası: active -> lib -> upload+session -> stock) app-tarafı /api/music/file (satır 2150) ile ORTAK (_muzik_coz) — ikisi tek fonksiyondan türetilmeli. Kullanıcı 'bir kez yükle -> tüm modlar' kuralının servis ucu (memory: Global Kullanıcı Müziği). user query parametresi zorunlu — eksikse FastAPI otomatik 422 döner (handler'a hiç girmeden, secret kontrolünden önce).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/badges",
+    "fn": "award_badges",
+    "line": 3684,
+    "auth": "secret (body.secret == RENDER_DONE_SECRET; secret config'te boş/tanımsızsa uç FAIL-CLOSED: her istek 403)",
+    "params": [],
+    "body": [
+      {
+        "ad": "secret",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null
+      },
+      {
+        "ad": "user",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": ""
+      },
+      {
+        "ad": "badges",
+        "tip": "list[str]",
+        "zorunlu": true,
+        "varsayilan": "[]",
+        "not": "BADGE_DEFS dışındakiler sessizce elenir (8 tanım: km1000,km5000,night,cities5,streak7,longride,first,social)"
+      }
+    ],
+    "response": {
+      "ok": true,
+      "added": "list[str] — bu çağrıda YENİ eklenen rozetler (boş olabilir)"
+    },
+    "errors": [
+      {
+        "kod": 403,
+        "mesaj": "yetkisiz"
+      },
+      {
+        "kod": 404,
+        "mesaj": "kullanıcı yok"
+      }
+    ],
+    "reads": [
+      "profiles.<user>.badges",
+      "profiles.<user>.lang"
+    ],
+    "writes": [
+      "profiles.<user>.badges (union + sorted; yalnız yeni rozet varsa yazılır)",
+      "pushq/<ts>_<hex>.json (yalnız yeni rozette)"
+    ],
+    "external": [
+      "yok doğrudan; pushq -> APNs/FCM (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq dizini",
+      "çağıran: matrix host'taki günlük rozet tarayıcı script'i"
+    ],
+    "cf_mapping": "Rozet tarayıcı movelog-cron Worker'a taşınır -> bu uç iç service binding'e döner (veya cron doğrudan D1 yazar + Queue push); badges -> D1 users.badges (JSON kolonu) veya user_badges tablosu",
+    "notes": "İDEMPOTENT: mevcut rozet tekrar gönderilirse yazma da push da olmaz, added=[] döner (satır 3693-3696). Push başlığı 13 dilde ama gövde kuyruğu yalnız tr/en ('Profilinde parlıyor!'/'Shining on your profile!', satır 3703). 404 profili olmayan kullanıcıda — tarayıcı silinen hesaba rozet yazamaz.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/friends",
+    "fn": "get_friends",
+    "line": 2921,
+    "auth": "auth_user (Bearer JWT; tv iptali + alias çözümü satır 183-198)",
+    "params": [],
+    "body": [],
+    "response": {
+      "friends": "list[profil] — her öğe _profile_of şekli: {username:str, name:str, handle:str, avatar:{type,...}, premium:bool, ultra:bool (ultra VEYA admin — admin bypass, satır 1395), sv_off:bool, sokak_hak:int, video_hak:int, sokak_hediye:false(sabit), free_tactical:bool, admin:bool}"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok"
+      },
+      {
+        "kod": 401,
+        "mesaj": "token geçersiz/süresi dolmuş"
+      }
+    ],
+    "reads": [
+      "friends.<user> (id listesi)",
+      "profiles.<friend>.* (_profile_of)",
+      "free_tactical_enabled",
+      "free_tactical_devices"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [
+      "/opt/movelog/data/sv-kapali dosya-bayrağı (_profile_of.sv_off, satır 1398 — HER profil çıktısında os.path.exists)"
+    ],
+    "cf_mapping": "friends -> D1 friends tablosu (user_a,user_b çift yönlü veya normalize tek satır); _profile_of -> D1 JOIN; sv-kapali dosya bayrağı -> KV feature-flag ('sv_off')",
+    "notes": "TUZAK: _profile_of.sokak_hediye HER ZAMAN false (eski sürüm uyumluluğu için alan korunuyor, satır 1400-1405) — D1'e taşırken alan sabit kalmalı. free_tactical hesabı 4 koşullu (kill-switch free_tactical_enabled — VARSAYILAN True, anahtar hiç yazılmamışsa AÇIK + hesap ultra/admin DEĞİL + free_tactical_used yok + cihaz-dedup: attest_key YOKSA serbest, varsa free_tactical_devices listesinde olmamalı; satır 1406). auth_user'daki alias çözümü her istekte profiles okur — Worker'da JWT sub -> D1 users.alias tek SELECT.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/friends/request",
+    "fn": "friend_request",
+    "line": 3931,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "username",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null,
+        "not": "internal id (u<hash>/apple_/google_) VEYA @handle — _resolve_user ikisini de çözer (satır 2947-2954); girdi _norm_handle ile trim+lstrip('@')+lower edilir; APP_USERS config kullanıcıları (baris vb.) da geçerli hedef (satır 2952)"
+      }
+    ],
+    "response": {
+      "ok": true,
+      "status": "'friends' (zaten arkadaş veya karşılıklı istek -> otomatik kabul) | 'requested'"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok / token geçersiz"
+      },
+      {
+        "kod": 404,
+        "mesaj": "kullanıcı bulunamadı (hedef yok veya kendisi)"
+      }
+    ],
+    "reads": [
+      "profiles.* (_resolve_user handle taraması + _profile_of)",
+      "friends.<user>",
+      "freqs.<user> (karşı taraf bana istek atmış mı)",
+      "freqs.<target>"
+    ],
+    "writes": [
+      "freqs.<target>.<user>=epoch (yeni istek)",
+      "karşılıklı istekte: friends.<user> + friends.<target> (çift yön ekleme) + freqs iki yönden temizlik (_make_friends, satır 3922-3928)",
+      "pushq/*.json (hedefe bildirim)"
+    ],
+    "external": [
+      "yok doğrudan; pushq -> APNs/FCM (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq"
+    ],
+    "cf_mapping": "freqs -> D1 friend_requests(from_user,to_user,ts) tablosu; _by_handle'ın tüm-profiller taraması -> D1 users.handle UNIQUE index; push -> Queue",
+    "notes": "Karşılıklı istek = otomatik kabul (satır 3941-3945): hedef bana zaten istek atmışsa iki taraf arkadaş yapılır ve hedefe 'kabul etti' push'u gider. İDEMPOTENT: istek zaten varsa tekrar yazılmaz ve TEKRAR PUSH ATILMAZ (satır 3947-3950, spam koruması). Push metinleri TR sabit ('sana arkadaşlık isteği gönderdi 🤝'), route='friends'. target==user kendine istek 404.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "GET",
+    "path": "/api/friends/requests",
+    "fn": "friend_requests",
+    "line": 3954,
+    "auth": "auth_user",
+    "params": [],
+    "body": [],
+    "response": {
+      "incoming": "list[profil] (bana istek atanlar, _profile_of şekli)",
+      "outgoing": "list[profil] (benim istek attıklarım)"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok / token geçersiz"
+      }
+    ],
+    "reads": [
+      "freqs.<user> (incoming)",
+      "freqs.* TÜM tablo taraması (outgoing: hangi hedeflerin listesinde ben varım, satır 3958)",
+      "profiles.* (_profile_of)"
+    ],
+    "writes": [],
+    "external": [],
+    "server_deps": [],
+    "cf_mapping": "D1 friend_requests tablosunda iki yönlü index (to_user, from_user) -> outgoing için satır 3958'deki O(N) tam tarama SELECT ... WHERE from_user=? sorgusuna iner",
+    "notes": "Mevcut kod outgoing için TÜM freqs sözlüğünü tarar — kullanıcı sayısı büyüdükçe pahalı; D1'de indeksle çözülür. İstek zaman damgaları (freqs değeri) yanıtta DÖNMEZ, sadece profiller.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/friends/respond",
+    "fn": "friend_respond",
+    "line": 3962,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "username",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null,
+        "not": "id veya @handle (_resolve_user)"
+      },
+      {
+        "ad": "accept",
+        "tip": "bool",
+        "zorunlu": false,
+        "varsayilan": false
+      }
+    ],
+    "response": {
+      "ok": true,
+      "friends": "list[profil] — güncel arkadaş listesi (_profile_of şekli)"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok / token geçersiz"
+      },
+      {
+        "kod": 404,
+        "mesaj": "istek bulunamadı (çözülemedi veya bana açık isteği yok)"
+      }
+    ],
+    "reads": [
+      "freqs.<user> (isteğin varlığı — IDOR koruması: yalnız BANA gelen istek yanıtlanabilir, satır 3967)",
+      "profiles.*",
+      "friends.<user>"
+    ],
+    "writes": [
+      "accept=true: friends çift yön + freqs iki yönden temizlik (_make_friends) + pushq (istek sahibine 'kabul etti 🎉', route='friends')",
+      "accept=false: freqs.<user>.pop(other) — sessiz red, karşı tarafa push YOK"
+    ],
+    "external": [
+      "yok doğrudan; pushq -> APNs/FCM (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq"
+    ],
+    "cf_mapping": "D1 friend_requests DELETE + friends INSERT (tek transaction — D1 batch); push -> Queue",
+    "notes": "Red push'suz ve iz bırakmaz (satır 3974-3975) — karşı taraf reddedildiğini bilmez, outgoing listesinden düşer. 404 kontrolü isteğin gerçekten freqs[user] içinde olmasını şart koşar (başkasının isteğine yanıt verilemez).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "POST",
+    "path": "/api/friends",
+    "fn": "add_friend",
+    "line": 3980,
+    "auth": "auth_user",
+    "params": [],
+    "body": [
+      {
+        "ad": "username",
+        "tip": "str",
+        "zorunlu": true,
+        "varsayilan": null,
+        "not": "id veya @handle"
+      }
+    ],
+    "response": {
+      "ok": true,
+      "requested": true,
+      "friends": "list[profil] — güncel liste (istek sonrası yeniden yüklenir)"
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok / token geçersiz"
+      },
+      {
+        "kod": 404,
+        "mesaj": "kullanıcı bulunamadı"
+      }
+    ],
+    "reads": [
+      "profiles.* (_resolve_user)",
+      "+ friend_request'in tüm okumaları (iç çağrı, satır 3988)",
+      "friends.<user> (yanıt için taze _load)"
+    ],
+    "writes": [
+      "friend_request ile aynı: freqs / friends / pushq"
+    ],
+    "external": [
+      "yok doğrudan; pushq (dolaylı)"
+    ],
+    "server_deps": [
+      "DATA_DIR/pushq"
+    ],
+    "cf_mapping": "Worker'da /api/friends POST -> friend_request handler'ına iç delege (aynı fonksiyon); ayrı uç KORUNMALI (1.3 ve öncesi app sürümleri hâlâ çağırıyor)",
+    "notes": "GERİYE UYUMLULUK ucu (satır 3982-3983): eski 'anında ekle' davranışı gizlilik düzeltmesiyle İSTEĞE çevrildi. TUZAK: friend_request'i Python fonksiyonu olarak çağırır (kendi _load/_save döngüsü), sonra db'yi YENİDEN yükleyip yanıtı taze veriyle kurar (satır 3988-3989). Karşılıklı istek otomatik kabule dönse bile yanıt DAİMA requested:true der — eski app'ler friends listesinden anlar. Çift _load/_save = D1'de tek transaction'a indirilebilir.",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/friends/{uname}",
+    "fn": "del_friend",
+    "line": 3994,
+    "auth": "auth_user",
+    "params": [
+      {
+        "ad": "uname",
+        "tip": "str path",
+        "zorunlu": true,
+        "varsayilan": null,
+        "not": "SADECE internal id — handle ÇÖZÜLMEZ (_resolve_user kullanılmıyor)"
+      }
+    ],
+    "body": [],
+    "response": {
+      "ok": true
+    },
+    "errors": [
+      {
+        "kod": 401,
+        "mesaj": "token yok / token geçersiz"
+      }
+    ],
+    "reads": [
+      "friends.<user>",
+      "friends.<uname>"
+    ],
+    "writes": [
+      "friends.<user> ve friends.<uname> listelerinden karşılıklı çıkarma (setdefault ile liste yoksa boş oluşur)"
+    ],
+    "external": [],
+    "server_deps": [],
+    "cf_mapping": "D1 friends tablosundan DELETE (iki yön / normalize tek satır); idempotent DELETE",
+    "notes": "İDEMPOTENT: arkadaş değilse veya kullanıcı yoksa bile 200 {ok:true} (404 yok). freqs TEMİZLENMEZ — silinen arkadaştan bekleyen istek kaydı kalabilir (davranış korunmalı mı D1 şemasında karar ister). Yalnız kendi listesi + karşı taraftaki kendi kaydı silinir (IDOR yok: iki yön de user'ı içerir).",
+    "port_durum": "TAMAM — api/src/routes/grup3.ts (2026-08-30, typecheck gecti)"
+  }
+]

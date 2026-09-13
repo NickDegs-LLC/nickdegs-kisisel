@@ -1,0 +1,7 @@
+# v145 (2026-09-01) — glcheck tanı modu (v144'ün üstüne)
+# job.glcheck=1 gelirse RENDER YAPMADAN sadece GL kimliğini döndürür. Amaç: worker'ın
+# gerçekten GPU mu kullandığı yoksa llvmpipe (yazılımsal, ~50x yavaş) mı olduğunu
+# saniyeler içinde ve GPU saati yakmadan ölçmek.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v144
+FROM ${BASE}
+COPY rp_handler.v145.py /app/rp_handler.py

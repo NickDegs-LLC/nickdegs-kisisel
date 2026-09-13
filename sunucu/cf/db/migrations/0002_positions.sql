@@ -1,0 +1,10 @@
+-- 0002: 0001_init.sql tarafından KAPSANDI — positions tablosu orada tanımlı
+-- (spd = km/h kararı, hr kolonu, PK (device,ts)). Bu dosya BİLİNÇLİ BOŞ.
+--
+-- Eski içerik neden kaldırıldı (şema düzeltme turu, 2026-08-30):
+--  · CREATE TABLE IF NOT EXISTS positions 0001'dekiyle ÇELİŞİYORDU (spd=knot, brg/charge
+--    kolonları, hr yok, PK yok) — sırayla uygulanınca tablo sessizce hiç oluşmuyor ama
+--    CREATE INDEX idx_positions_dev_ts ÇALIŞIYOR ve PK autoindex'inin birebir kopyası
+--    ikinci bir indeks yaratıyordu (en yüksek yazma hacimli tabloda her INSERT'e çift
+--    indeks güncellemesi). Ayrıca 0002 spec'ine göre kodlanan ingest knot yazardı.
+--  · Henüz hiçbir D1'e uygulanmadı; uygulandıysa telafi: DROP INDEX IF EXISTS idx_positions_dev_ts;

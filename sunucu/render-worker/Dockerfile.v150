@@ -1,0 +1,16 @@
+# v150 (2026-09-05) — SOKAK GÖRÜNÜMÜ KİLOMETREYE GÖRE (Barış: "ürün başına satıyoruz, kilometre
+# kilometre uzunluğuna göre ayarla").
+# ÖNCE: `streetview.py` `_MAXP = 700` SABİTTİ. Rota ne kadar uzun olursa olsun 700 pano alınıyor,
+# yani 100 km'lik bir rotada 143 metrede bir kare kalıyordu — hyperlapse değil slayt gösterisi.
+# Kullanıcı $9,99 ödeyip kötü video alıyordu. (Maliyet zaten bu tavan yüzünden ~$4,90'da duruyor;
+# bir denetim ajanının "100 km = $87,50" iddiası bu tavanı kaçırmıştı, GEÇERSİZ.)
+# ŞİMDİ: API satın alınan sokak hakkı başına 700 pano bütçesi gönderiyor (grup1.ts SV_PANO_KREDI):
+#   API job.sv_pano -> rp_handler args sv_pano= -> route-video.py inp["sv_pano"] -> streetview _MAXP
+# 1 hak = 6 km tam detay (8 m aralık), 3 hak = 18 km. RAM emniyeti: 700 pano ≈ 2 GB, tavan 2100.
+# ⚠️ route-video.py ve streetview.py İMAJDAN çıkarılıp yamalandı (yerel kopyalar eski olabilir —
+# md5 doğrulandı: streetview yerel==imaj, route-video FARKLI olduğu için imajdaki taban alındı).
+ARG BASE=ghcr.io/nickdegs/movelog-render:v149
+FROM ${BASE}
+COPY rp_handler.v150.py /app/rp_handler.py
+COPY imaj-v149/route-video.py /app/scripts/route-video.py
+COPY imaj-v149/streetview.py /app/scripts/streetview.py
