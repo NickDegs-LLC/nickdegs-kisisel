@@ -29,7 +29,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   const { env, now, log } = c
   const wk = now - 7 * 86400
   const rides = await env.DB.prepare('SELECT uid, km FROM rides WHERE ts >= ?1 AND uid IS NOT NULL')
-    .all<{ uid: string; km: number | null }>()
+    .bind(wk).all<{ uid: string; km: number | null }>()
   const stats = new Map<string, { km: number; r: number; mx: number }>()
   for (const v of rides.results) {
     const st = stats.get(v.uid) ?? { km: 0, r: 0, mx: 0 }
