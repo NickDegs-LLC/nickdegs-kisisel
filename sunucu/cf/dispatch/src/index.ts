@@ -1,5 +1,5 @@
 import { izSuz } from '../../ortak/src/izsuzgec'
-import { aylikButceLimit, butcePushGovde, modMaliyet, trGunu } from '../../ortak/src/maliyet'
+import { aylikButceLimit, butcePushBaslik, butcePushGovde, modMaliyet, trGunu } from '../../ortak/src/maliyet'
 
 export type Env = {
   DB: D1Database; KV: KVNamespace; R2: R2Bucket; RENDER_Q: Queue; ORTAM: string
@@ -378,7 +378,7 @@ function izsiz(j: Job): boolean {
 /** Oto işte bütçe push'u dönem başına en fazla 1 kez. Manuel işte her zaman bildir (Türkçe sebep). */
 async function butceKullaniciBildir(
   env: Env, uid: string, oto: boolean, tur: 'aylik' | 'gunluk',
-): Promise<{ bildir: boolean; govde?: string }> {
+): Promise<{ bildir: boolean; govde?: string; baslik?: string }> {
   if (!uid) return { bildir: false }
   if (!oto) return { bildir: true }            // kullanıcının kendi bastığı iş: bugünkü davranış
   const gun = trGunu(simdi())
@@ -389,14 +389,14 @@ async function butceKullaniciBildir(
   const pr = await env.DB.prepare('SELECT lang FROM users WHERE uid = ?1').bind(uid)
     .first<{ lang: string | null }>()
   await env.KV.put(anahtar, String(simdi()), { expirationTtl: tur === 'aylik' ? 40 * 86400 : 36 * 3600 })
-  return { bildir: true, govde: butcePushGovde(pr?.lang, tur) }
+  return { bildir: true, govde: butcePushGovde(pr?.lang, tur), baslik: butcePushBaslik(pr?.lang) }
 }
 
 /** pending → failed taşı + kullanıcıya bildirim kuyruğa (api render-failed ucuyla aynı sözleşme). */
 /** pending kilidini AÇ + hata kartı + kullanıcı bildirimi. Ortak yol (izsiz / bütçe).
  *  `pushGovde` verilirse push gövdesi o olur; failed_videos.reason hep `sebep` (Türkçe kalır). */
 async function isiBitir(
-  env: Env, j: Job, rid: string, sebep: string, iz: string, bildir = true, pushGovde?: string,
+  env: Env, j: Job, rid: string, sebep: string, iz: string, bildir = true, pushGovde?: string, pushBaslik?: string,
 ): Promise<void> {
   const uid = String(j.user ?? '') || null
   const now = simdi()
@@ -413,7 +413,7 @@ async function isiBitir(
   ])
   if (uid && bildir) {
     await env.KV.put(`push:bekleyen:${iz}_${rid.split('/').join('_')}_${now}`,
-      JSON.stringify({ user: uid, title: 'Video oluşturulamadı', body: pushGovde ?? sebep, ts: now, route: 'videos' }),
+      JSON.stringify({ user: uid, title: pushBaslik ?? 'Video oluşturulamadı', body: pushGovde ?? sebep, ts: now, route: 'videos' }),
       { expirationTtl: 7 * 86400 })
   }
   await env.KV.put(`dispatch:${iz}:${rid}`, JSON.stringify({ t: now, uid }), { expirationTtl: 7 * 86400 })
@@ -528,7 +528,7 @@ export default {
             ? 'Bu ayki video payın doldu. Ayın 1\'inde sıfırlanır.'
             : 'Günlük üretim kapasitesi doldu, yarın tekrar dene.'
           const push = await butceKullaniciBildir(env, String(jb.user ?? ''), !!jb.oto, kapi.tur)
-          await isiBitir(env, jb as Job, rid, sebepTr, 'butce', push.bildir, push.govde)
+          await isiBitir(env, jb as Job, rid, sebepTr, 'butce', push.bildir, push.govde, push.baslik)
           await bildirimYaz(env,
             (kapi.tur === 'aylik'
               ? `💸 Kullanıcının AYLIK GPU bütçesi doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `

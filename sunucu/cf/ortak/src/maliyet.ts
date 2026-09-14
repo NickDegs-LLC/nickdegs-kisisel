@@ -85,6 +85,28 @@ export const BUTCE_PUSH_GUNLUK: Record<string, string> = {
   hi: 'आज की उत्पादन क्षमता भर गई, कल फिर कोशिश करें।',
 }
 
+// Push başlığı — gövdeyle aynı dil kümesi (14.09: gövde çevrilip başlık Türkçe kalıyordu).
+export const BUTCE_PUSH_BASLIK: Record<string, string> = {
+  tr: 'Video oluşturulamadı',
+  en: "Video couldn't be created",
+  es: 'No se pudo crear el vídeo',
+  fr: "La vidéo n'a pas pu être créée",
+  de: 'Video konnte nicht erstellt werden',
+  it: 'Impossibile creare il video',
+  pt: 'Não foi possível criar o vídeo',
+  ru: 'Не удалось создать видео',
+  ja: '動画を作成できませんでした',
+  zh: '无法生成视频',
+  ko: '영상을 만들 수 없어요',
+  ar: 'تعذّر إنشاء الفيديو',
+  hi: 'वीडियो नहीं बन सका',
+}
+
+export function butcePushBaslik(lang: string | null | undefined): string {
+  const l = lang || 'en'
+  return BUTCE_PUSH_BASLIK[l] || BUTCE_PUSH_BASLIK.en || BUTCE_PUSH_BASLIK.tr
+}
+
 export function butcePushGovde(lang: string | null | undefined, tur: 'aylik' | 'gunluk'): string {
   const m = tur === 'aylik' ? BUTCE_PUSH_AYLIK : BUTCE_PUSH_GUNLUK
   const l = lang || 'en'
