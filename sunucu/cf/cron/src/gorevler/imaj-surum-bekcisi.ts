@@ -23,8 +23,9 @@
 // 🔴 KURU MOD: RunPod'a hiçbir fetch yok; 'YAPARDIM' kaydı düşer.
 import type { GorevCtx } from '../takvim'
 import { kvJson, kvJsonYaz } from '../lib'
+import { dalMotoru } from '../../../ortak/src/maliyet'
 import {
-  bildir, endpointler, kuru, kuruOlay, olayYaz, onar, rpGpuDurum, rpHealth, rpPodBilgi, rpPodSonlandir, rpRest, saglamOlay,
+  atlandiOlay, bildir, endpointler, kuru, kuruOlay, olayYaz, onar, rpGpuDurum, rpHealth, rpPodBilgi, rpPodSonlandir, rpRest, saglamOlay,
 } from './bekci-ortak'
 
 const uyku = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -47,6 +48,13 @@ export async function kos(c: GorevCtx): Promise<void> {
   if (kuru(env) || !env.RUNPOD_API_KEY) {
     const neden = kuru(env) ? 'ORTAM=golge' : 'RUNPOD_API_KEY yok'
     for (const e of bilinen) {
+      const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
+      if ((await dalMotoru(env.KV, dal)) === 'modal') {
+        // NEDEN: dal Modal — RunPod imaj/flush planı yok.
+        await atlandiOlay(env, BEKCI, `imaj-modal:${e.ad}`,
+          'dal modal: imaj kontrolü/flush planı yok', { endpoint: e.ad, id: e.id, neden })
+        continue
+      }
       const bek = await kvJson<string>(env, `bekci:imaj:beklenen:${e.id}`, BILINEN_HEDEF[e.ad] ?? '')
       const sonflush = await kvJson<string>(env, `bekci:imaj:sonflush:${e.id}`, '')
       await kuruOlay(env, BEKCI, `imaj-kontrol:${e.ad}`,
@@ -59,6 +67,14 @@ export async function kos(c: GorevCtx): Promise<void> {
   }
 
   for (const e of bilinen) {
+    const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
+    if ((await dalMotoru(env.KV, dal)) === 'modal') {
+      // NEDEN: dal Modal — podTerminate/flush RunPod slotlarına ait değil.
+      log(`${e.ad}: dal modal — podTerminate/flush atlandı`)
+      await atlandiOlay(env, BEKCI, `flush-modal:${e.ad}`,
+        'dal modal: podTerminate/flush yok', { endpoint: e.ad, id: e.id })
+      continue
+    }
     try {
       const cfg = (await rpRest(env, `/endpoints/${e.id}`)) as { templateId?: string }
       const tid = String(cfg.templateId ?? '')

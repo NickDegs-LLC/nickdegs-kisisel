@@ -17,11 +17,16 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { hexRasgele, kvJson, kvJsonYaz } from '../lib'
+import { dalMotoru } from '../../../ortak/src/maliyet'
 import { bildir, endpointler, kuru, olayYaz, onar, rpHealth, saglamOlay } from './bekci-ortak'
 
 const BEKCI = 'kendi-kendini-test'
 const DURDU_SN = 7200
 const DUMAN_SQL = 'CREATE TABLE IF NOT EXISTS bekci_duman (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)'
+const MODAL_RUN: Record<string, string> = {
+  'movelog-render': 'https://daclen10--movelog-render-run.modal.run',
+  'movelog-tactical': 'https://daclen10--movelog-tactical-run.modal.run',
+}
 
 type Ayak = { ad: string; ok: boolean; not: string; ms: number }
 
@@ -86,21 +91,50 @@ export async function kos(c: GorevCtx): Promise<void> {
     return `${dogrulama}; yeni iş bırakıldı (${rid})`
   }))
 
-  // ── 5) RunPod /health (yalnız canli) ──
-  const { bilinen } = endpointler(env)
-  if (kuru(env) || !env.RUNPOD_API_KEY) {
-    ayaklar.push({ ad: 'runpod-health', ok: true, ms: 0,
-      not: `KURU: ${bilinen.length} endpoint /health çağrısı atlandı (${kuru(env) ? 'ORTAM=golge' : 'anahtar yok'})` })
-  } else {
-    for (const e of bilinen) {
-      ayaklar.push(await olc(`runpod-health:${e.ad}`, async () => {
-        const h = await rpHealth(env, e.id)
-        if (h.status === 402) throw new Error('HTTP 402 — bakiye bitti')
-        if (h.status >= 400) throw new Error(`HTTP ${h.status}`)
-        const w = (h.j?.workers ?? {}) as Record<string, number>
-        return `ok (ready=${w.ready ?? 0} running=${w.running ?? 0})`
-      }))
+  // ── 5) RunPod /health (yalnız canli + dal RunPod) · Modal /run 403 sonda (dal modal) ──
+  const { bilinen, eksik } = endpointler(env)
+  const hepsi = [...bilinen, ...eksik]
+  for (const e of hepsi) {
+    const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
+    const motor = await dalMotoru(env.KV, dal)
+    if (motor === 'modal') {
+      // NEDEN: dal Modal — RunPod health kırık sayılmaz, runpod-saglik tetiklenmez.
+      ayaklar.push({ ad: `runpod-health:${e.ad}`, ok: true, ms: 0,
+        not: 'atlandı (dal modal)' })
+      const uc = MODAL_RUN[e.ad]
+      if (!uc) continue
+      if (kuru(env)) {
+        ayaklar.push({ ad: `modal-run:${e.ad}`, ok: true, ms: 0,
+          not: 'KURU: Modal /run sonda atlandı' })
+      } else {
+        // NEDEN: yanlış sır GPU açmaz; 403 = kapı sağlam.
+        ayaklar.push(await olc(`modal-run:${e.ad}`, async () => {
+          const r = await fetch(uc, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ secret: 'yanlis', input: { track: [1, 2, 3] } }),
+          })
+          if (r.status === 403) return '403 (sır kapısı sağlam)'
+          throw new Error(`HTTP ${r.status} (403 beklenirdi)`)
+        }))
+      }
+      continue
     }
+    if (kuru(env) || !env.RUNPOD_API_KEY) {
+      if (e.id) {
+        ayaklar.push({ ad: `runpod-health:${e.ad}`, ok: true, ms: 0,
+          not: `KURU: /health atlandı (${kuru(env) ? 'ORTAM=golge' : 'anahtar yok'})` })
+      }
+      continue
+    }
+    if (!e.id) continue
+    ayaklar.push(await olc(`runpod-health:${e.ad}`, async () => {
+      const h = await rpHealth(env, e.id)
+      if (h.status === 402) throw new Error('HTTP 402 — bakiye bitti')
+      if (h.status >= 400) throw new Error(`HTTP ${h.status}`)
+      const w = (h.j?.workers ?? {}) as Record<string, number>
+      return `ok (ready=${w.ready ?? 0} running=${w.running ?? 0})`
+    }))
   }
 
   // ── 6) dispatch /health ──

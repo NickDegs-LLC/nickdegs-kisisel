@@ -20,7 +20,7 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { kvJson, kvJsonYaz, kvListe, renderKuyruk, simdi } from '../lib'
-import { trGunu } from '../../../ortak/src/maliyet'
+import { trGunu, dalMotoru } from '../../../ortak/src/maliyet'
 import { renderFailed } from '../ic'
 import { bildir, kuru, olayYaz, onar, saglamOlay } from './bekci-ortak'
 
@@ -62,14 +62,22 @@ async function parkKayitSil(env: Env, rid: string, parkKey: string): Promise<voi
 function kurtarilabilir(sebep: string): boolean {
   return sebep === 'endpoint-yok' || sebep === 'bakiye' || sebep === '' || sebep === 'presign-yok'
     || sebep === 'butce-aylik' || sebep === 'butce-gunluk'
+    || sebep === 'secret-yok'  // NEDEN: MODAL_SECRET sonradan konabilir; MAX_DENEME zaten var
 }
 
 /** Engel ŞU AN kalktı mı? Bütçe: park t'sinin TR günü/ayı (dispatch trGunu / aylikButce ile aynı). */
-async function engelKalkti(env: Env, sebep: string, t0: number, now: number): Promise<boolean> {
+async function engelKalkti(env: Env, sebep: string, t0: number, now: number, mode?: string | null): Promise<boolean> {
   if (sebep === 'butce-gunluk') return t0 > 0 && trGunu(t0) !== trGunu(now)
   if (sebep === 'butce-aylik') return t0 > 0 && trGunu(t0).slice(0, 7) !== trGunu(now).slice(0, 7)
   if (sebep === 'endpoint-yok') return !!env.RUNPOD_ENDPOINT_TAC
-  if (sebep === 'bakiye' || sebep === '') return (await env.KV.get('bulut-kapali')) === null
+  if (sebep === 'secret-yok') return true  // NEDEN: sır gelince retry; MAX_DENEME pes eder
+  if (sebep === 'bakiye') {
+    const dal: 'render' | 'taktik' = mode === 'tactical' ? 'taktik' : 'render'
+    // NEDEN: Modal 402 üretmez — o dal modal ise park bakiye yüzünden beklemesin.
+    if ((await dalMotoru(env.KV, dal)) === 'modal') return true
+    return (await env.KV.get('bulut-kapali')) === null
+  }
+  if (sebep === '') return (await env.KV.get('bulut-kapali')) === null
   if (sebep === 'presign-yok') return true            // yapılandırma düzelmiş olabilir; 1 deneme hakkı
   return false                                         // ozel-muzik / user-yok / track-yok: veri eksik
 }
@@ -98,7 +106,8 @@ export async function kos(c: GorevCtx): Promise<void> {
     if (yas < TAKILI_DK * 60) { log(`park ${rid}: taze (${yas}s) — bekle`); continue }
 
     const deneme = await kvJson<number>(env, `bekci:kuyruk:deneme:${rid}`, 0)
-    const kalkti = await engelKalkti(env, sebep, t0, now)
+    const parkMode = typeof govde?.mode === 'string' ? govde.mode : null
+    const kalkti = await engelKalkti(env, sebep, t0, now, parkMode)
 
     // Bütçe engeli sürerken: yeniden kuyruklama YOK, pes YOK, push YOK — yalnız log.
     if (butceEngeli(sebep) && !kalkti) {

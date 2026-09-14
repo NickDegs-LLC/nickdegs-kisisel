@@ -5,9 +5,11 @@
 // (c) yetim süpürmesi: R2'de olup videos'ta kaydı olmayan mp4 → rides metadata'sıyla render-done
 import type { GorevCtx } from '../takvim'
 import { trGun } from '../lib'
+import { dalMotoru } from '../../../ortak/src/maliyet'
 import { renderDone, renderFailed } from '../ic'
 
 const STALE = 5400 // 90dk (2026-07-26 false-fail engeli)
+const STALE_MODAL_3B = 7200 // NEDEN: Modal 3B timeout 5400 ile yarışmasın
 
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, now, log } = c
@@ -58,6 +60,10 @@ export async function kos(c: GorevCtx): Promise<void> {
   } catch (e) { log('yetim süpürmesi hata: ' + String(e).slice(0, 120)) }
 
   // ===== pending taraması =====
+  const renderModal = (await dalMotoru(env.KV, 'render')) === 'modal'
+  const ucBMod = (mode: string | null | undefined) => !mode || mode === '3d' || mode === 'auto'
+  const staleOf = (mode: string | null | undefined) =>
+    (renderModal && ucBMod(mode)) ? STALE_MODAL_3B : STALE
   const pend = await env.DB.prepare('SELECT vid, uid, date, ts, to_ts, ride_type, mode, queued_at FROM pending_videos')
     .all<{ vid: string; uid: string; date: string | null; ts: number; to_ts: number; ride_type: string | null; mode: string | null; queued_at: number }>()
   if (!pend.results.length) { log('pending yok, temiz'); return }
@@ -79,10 +85,10 @@ export async function kos(c: GorevCtx): Promise<void> {
         to: pv.to_ts || 0, type: typ, mode: pv.mode || 'tactical', speed: 'medium', aspect, size: obj.size,
       })
       log(`FINALIZE ${pv.vid} (video vardı -> kilit açıldı)`); acted++
-    } else if (age > STALE) {
+    } else if (age > staleOf(pv.mode)) {
       // (b) videosuz + eski -> çökmüş render hayaleti
       await renderFailed(env, pv.vid, pv.uid, 'render tamamlanamadı (oto-temizlik)')
-      log(`FAILED ${pv.vid} (yaş ${age}s, videosuz -> temizlendi)`); acted++
+      log(`FAILED ${pv.vid} (yaş ${age}s, eşik ${staleOf(pv.mode)}s, videosuz -> temizlendi)`); acted++
     } else {
       log(`bekle ${pv.vid} (yaş ${age}s, henüz render olabilir)`)
     }

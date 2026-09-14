@@ -7,11 +7,17 @@
 #   · geçiş  = kod dağıt (bir kez) + bayrağı 'modal' yap
 #   · dönüş  = bayrağı 'runpod' yap (YENİDEN DAĞITIM YOK, saniyeler içinde)
 # Bu, "geri alamıyoruz" riskini ortadan kaldırır.
+#
+# NEDEN (Mac): sunucu köprü; betik kendi konumundan repo yollarını türetir,
+# sırlar ~/.nickdegs/anahtarlar/movelog-sunucu, wrangler npx --yes wrangler@4.
 set -euo pipefail
 
-KAYNAK=/opt/matrix/cf/dispatch/src/index.ts
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+MODAL_DIR="$SCRIPT_DIR"
+DISPATCH_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/../cf/dispatch" && pwd)"
+KAYNAK="$DISPATCH_DIR/src/index.ts"
+SIR_DIR="${HOME}/.nickdegs/anahtarlar/movelog-sunucu"
 KV_NS=fd5db982178f49c589858c525755fba7
-MODAL_DIR=/opt/matrix/modal
 RENDER_RUN=https://daclen10--movelog-render-run.modal.run
 TAC_RUN=https://daclen10--movelog-tactical-run.modal.run
 
@@ -19,6 +25,11 @@ GERI=0
 DURUM=0
 YALNIZ=""          # "" | taktik | render
 MOTOR_TAC_VER=""   # boş = yazma (tam geçişte kalıntı override'ı temizlemek için modal yazılır)
+DEPLOY_ATLA=0
+
+wra() {
+  npx --yes wrangler@4 "$@"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,13 +37,14 @@ while [ $# -gt 0 ]; do
     --durum) DURUM=1 ;;
     --yalniz-taktik) YALNIZ=taktik ;;
     --yalniz-render) YALNIZ=render ;;
+    --deploy-atla) DEPLOY_ATLA=1 ;;
     --motor-tac)
       MOTOR_TAC_VER="${2:-}"
       if [ -z "$MOTOR_TAC_VER" ]; then echo "  ✗ --motor-tac değer ister (modal|runpod)"; exit 1; fi
       shift
       ;;
     --yardim|-h)
-      echo "kullanım: $0 [--geri] [--durum] [--yalniz-taktik|--yalniz-render] [--motor-tac modal|runpod]"
+      echo "kullanım: $0 [--geri] [--durum] [--yalniz-taktik|--yalniz-render] [--motor-tac modal|runpod] [--deploy-atla]"
       exit 0
       ;;
     *) echo "bilinmeyen bayrak: $1  ($0 --yardim)"; exit 1 ;;
@@ -40,41 +52,41 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-source /opt/matrix/secrets/movelog-cf.conf
+source "$SIR_DIR/movelog-cf.conf"
 export CLOUDFLARE_API_TOKEN="$MOVELOG_CF_TOKEN" WRANGLER_SEND_METRICS=false
 export CLOUDFLARE_ACCOUNT_ID="${MOVELOG_CF_ACCOUNT_ID:-45241304800d3e122aced1f0ae599943}"
 CF_EMAIL= CF_TOKEN= CF_GLOBAL_KEY=; export CF_EMAIL CF_TOKEN CF_GLOBAL_KEY
 
 bayrak() {
   local anahtar="$1" deger="$2"
-  cd /opt/matrix/cf/dispatch
-  npx wrangler kv key put --namespace-id "$KV_NS" --remote "$anahtar" "\"$deger\"" >/dev/null 2>&1
+  cd "$DISPATCH_DIR"
+  wra kv key put --namespace-id "$KV_NS" --remote "$anahtar" "\"$deger\"" >/dev/null 2>&1
   echo "  bayrak: $anahtar = $deger"
 }
 
 kv_get() {
-  cd /opt/matrix/cf/dispatch
-  npx wrangler kv key get --namespace-id "$KV_NS" --remote "$1" 2>/dev/null || echo '(ayarsız)'
+  cd "$DISPATCH_DIR"
+  wra kv key get --namespace-id "$KV_NS" --remote "$1" 2>/dev/null || echo '(ayarsız)'
 }
 
 modal_bin() {
-  if [ -x /opt/modal-isci/venv/bin/modal ]; then
-    echo /opt/modal-isci/venv/bin/modal
+  if [ -x "${HOME}/.venvs/modal/bin/modal" ]; then
+    echo "${HOME}/.venvs/modal/bin/modal"
   else
     echo modal
   fi
 }
 
 modal_py() {
-  if [ -x /opt/modal-isci/venv/bin/python ]; then
-    echo /opt/modal-isci/venv/bin/python
+  if [ -x "${HOME}/.venvs/modal/bin/python" ]; then
+    echo "${HOME}/.venvs/modal/bin/python"
   else
     echo python3
   fi
 }
 
 modal_ortam() {
-  source /opt/matrix/secrets/modal.conf
+  source "$SIR_DIR/modal.conf"
   export MODAL_TOKEN_ID MODAL_TOKEN_SECRET
 }
 
@@ -113,7 +125,7 @@ if [ "$YALNIZ" != render ]; then
   echo "→ 0/N movelog-tactical Modal sırrı"
   if ! sir_var_mi movelog-tactical; then
     echo "  ✗ Modal sırrı 'movelog-tactical' yok — GEÇİŞ YAPILMADI."
-    echo "    Oluştur (değerleri RunPod template egptl6t4pr / secrets'ten al, BURAYA YAZMA):"
+    echo "    Oluştur (değerleri RunPod template egptl6t4pr / sır dosyalarından al, BURAYA YAZMA):"
     echo "      modal secret create movelog-tactical \\"
     echo "        HARITA_GEOCODING=... HARITA_MATCHING=... \\"
     echo "        HARITA_MVT=... HARITA_UZAK=... \\"
@@ -169,7 +181,7 @@ fi
 
 echo "→ $adim/N /run uçları (yanlış sır → 403, eksik gövde → 400)"
 adim=$((adim + 1))
-source /opt/matrix/secrets/modal-dispatch.conf
+source "$SIR_DIR/modal-dispatch.conf"
 export MODAL_DISPATCH_SECRET
 "$MPY" -c "
 import json, os, sys, urllib.error, urllib.request
@@ -208,16 +220,25 @@ echo "→ $adim/N dispatch kaynağı + dağıtım"
 adim=$((adim + 1))
 if ! grep -q "taktikModalGonder" "$KAYNAK"; then
   echo "  ✗ $KAYNAK içinde taktikModalGonder yok."
-  echo "    Bu PR'daki sunucu/cf/dispatch/src/index.ts'i /opt/matrix/cf/dispatch/src/index.ts olarak koy."
-  echo "    dispatch-modal.patch silindi (taktiği 'runpod'a sabitliyordu)."
-  echo "    /opt/matrix/modal/ altında elde kalmış bir kopyası varsa UYGULAMA, sil."
+  echo "    dispatch kaynağı repo sunucu/cf/dispatch/src/index.ts olmalı (taktik Modal dalı)."
+  echo "    dispatch-modal.patch silindi (taktiği 'runpod'a sabitliyordu) — elde kopyası varsa UYGULAMA, sil."
   exit 1
 fi
 echo "   taktik Modal dalı kaynakta var"
-cd /opt/matrix/cf/dispatch
-source /opt/matrix/secrets/modal-dispatch.conf
-echo "$MODAL_DISPATCH_SECRET" | npx wrangler secret put MODAL_SECRET >/dev/null
-npx wrangler deploy 2>&1 | tail -3
+cd "$DISPATCH_DIR"
+if [ "$DEPLOY_ATLA" = 1 ]; then
+  # NEDEN: kaynakta Modal dalı var + MODAL_SECRET canlıysa yeniden dağıtım gereksiz.
+  if wra secret list 2>/dev/null | grep -q 'MODAL_SECRET'; then
+    echo "   --deploy-atla: MODAL_SECRET canlı, dağıtım atlandı"
+  else
+    echo "  ✗ --deploy-atla istendi ama MODAL_SECRET canlıda yok — dağıtım şart"
+    exit 1
+  fi
+else
+  source "$SIR_DIR/modal-dispatch.conf"
+  echo "$MODAL_DISPATCH_SECRET" | wra secret put MODAL_SECRET >/dev/null
+  wra deploy 2>&1 | tail -3
+fi
 
 echo "→ $adim/N bayrak"
 if [ "$YALNIZ" = taktik ]; then
@@ -236,4 +257,5 @@ echo
 echo "✅ GEÇİLDİ. Geri dönüş:  bash $0 --geri   (yeniden dağıtım gerekmez)"
 echo "   Yalnız taktik:        bash $0 --yalniz-taktik"
 echo "   Yalnız 3B:            bash $0 --yalniz-render"
-echo "   İlk videoyu izle:     wrangler tail movelog-dispatch"
+echo "   Dağıtımı atla:        bash $0 --deploy-atla"
+echo "   İlk videoyu izle:     npx --yes wrangler@4 tail movelog-dispatch"

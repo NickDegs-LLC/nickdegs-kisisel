@@ -4,9 +4,15 @@
 Barış'ın talimatı: *"bakiye bitince geçeriz"*. Bakiye $10,90 → uyarı $6'da düşer (~13 video).
 
 ## Geçiş anı geldiğinde
+Mac'ten (repo kökü, örn. `~/claude/matrix/nickdegs-kisisel`). Sırlar:
+`~/.nickdegs/anahtarlar/movelog-sunucu/{movelog-cf.conf,modal.conf,modal-dispatch.conf}`.
 ```bash
-bash /opt/matrix/modal/gecis-yap.sh          # uygular + dağıtır + doğrular
-bash /opt/matrix/modal/gecis-yap.sh --geri   # RunPod'a geri döner (aynı hızda)
+bash sunucu/modal/gecis-yap.sh                 # uygular + dağıtır + doğrular
+bash sunucu/modal/gecis-yap.sh --geri          # RunPod'a geri döner (aynı hızda)
+bash sunucu/modal/gecis-yap.sh --yalniz-taktik # yalnız taktik (önce bu)
+bash sunucu/modal/gecis-yap.sh --yalniz-render # sonra 3B
+bash sunucu/modal/gecis-yap.sh --deploy-atla   # kaynakta Modal dalı + MODAL_SECRET canlıysa dağıtımı atla
+bash sunucu/modal/gecis-yap.sh --durum
 ```
 
 Bayrak KV'de (`dispatch:motor`), kod değil → geri dönüş **yeniden dağıtım istemez**.
@@ -32,10 +38,12 @@ Bayrak KV'de (`dispatch:motor`), kod değil → geri dönüş **yeniden dağıt�
 ## Uçlar
 - `https://daclen10--movelog-render-run.modal.run` → RunPod `/v2/{id}/run` eşleniği
 - `https://daclen10--movelog-render-status.modal.run` → `/status` eşleniği
-- Sır: `/opt/matrix/secrets/modal-dispatch.conf` (600) + Modal `movelog-dispatch`
+- Sır: `~/.nickdegs/anahtarlar/movelog-sunucu/modal-dispatch.conf` (600) + Modal `movelog-dispatch`
 
-Yanıt şekilleri RunPod ile **birebir aynı** (`{"id":...,"status":"IN_QUEUE"}` / `{"status":"COMPLETED","output":{...}}`),
-bu yüzden dispatch'te `runpodGonder` dışında hiçbir şey değişmiyor.
+Yanıt şekilleri RunPod ile **birebir aynı** (`{"id":...,"status":"IN_QUEUE"}` / `{"status":"COMPLETED","output":{...}}`).
+Dispatch her dalı KV motor bayrağına göre seçer: 3B `dispatch:motor` (`runpodGonder` / `modalGonder`);
+taktik `dispatch:motor-tac` doluysa onu, yoksa ana bayrağı (`taktikGonder` / `taktikModalGonder`).
+Geçiş sırası: önce yalnız taktik (`motor-tac=modal`), sonra 3B (`motor=modal`).
 
 ---
 
@@ -44,9 +52,8 @@ bu yüzden dispatch'te `runpodGonder` dışında hiçbir şey değişmiyor.
 1. ~~**Taktik dalı (`movelog-tactical`) TAŞINMADI.**~~
    **✅ GÜNCEL (2026-09-14): taktik de taşındı** — `movelog_tactical.py` + `TAKTIK-GECIS.md`.
    Artık iki hat da KV bayrağını izliyor, dolayısıyla "bakiye sıfırlanırsa taktik durur" riski
-   kalmadı. **Bu belgedeki geçiş komutu artık tek başına yetmez:** `gecis-yap.sh` yeni
-   `dispatch/src/index.ts`'i (içinde `taktikModalGonder`) `/opt/matrix` altında bekler ve
-   yoksa çıkar. Ayrıntı ve `movelog-tactical` sırrının içeriği: `TAKTIK-GECIS.md`.
+   kalmadı. **Geçiş Mac'ten `sunucu/modal/gecis-yap.sh` ile:** betik `sunucu/cf/dispatch/src/index.ts`
+   içinde `taktikModalGonder` yoksa çıkar. Ayrıntı ve `movelog-tactical` sırrının içeriği: `TAKTIK-GECIS.md`.
 2. **`_redispatch` Modal'da çalışmaz** (bilerek: `RUNPOD_API_KEY` sırra konmadı, yoksa Modal'dan
    RunPod'a iş sıçrardı). Karşılığı: GL bozuksa `Isci.render` exception atar → Modal taze
    konteynerde 2 kez dener (`modal.Retries(max_retries=2)`).

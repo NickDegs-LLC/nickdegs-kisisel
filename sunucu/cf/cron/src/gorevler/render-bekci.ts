@@ -12,6 +12,7 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { bildirimBekleyen, kvJson, kvJsonYaz, simdi } from '../lib'
+import { dalMotoru } from '../../../ortak/src/maliyet'
 import { atlandiOlay, kuruOlay, olayYaz, saglamOlay } from './bekci-ortak'
 import { SAHIP_ANAHTAR } from './runpod-saglik'
 
@@ -20,6 +21,7 @@ const BAKIYE_ESIK = 2.0
 const BULUT_KAPALI_ESIK = 0.5
 const KUYRUK_DK = 25
 const GENREQ_DK = 30
+const GENREQ_MODAL_3B_DK = 100  // NEDEN: Modal 3B timeout 90 dk — 30 dk alarmı yarışır
 const RETRY_MAX = 3
 const SESSIZ_SAAT = 6
 
@@ -55,8 +57,14 @@ export async function kos(c: GorevCtx): Promise<void> {
   // wmax/bakiye sorumluluğu runpod-saglik'te mi? (kira canlıysa 1/2 blokları atlanır)
   const devredildi = (await env.KV.get(SAHIP_ANAHTAR)) !== null
   const canliRp = !golge && !!env.RUNPOD_API_KEY
+  // NEDEN: render dalı Modal iken wmax/bakiye/bulut-kapali/RunPod /health kuyruğu anlamsız.
+  const renderModal = (await dalMotoru(env.KV, 'render')) === 'modal'
 
-  if (devredildi) {
+  if (renderModal) {
+    log('render dalı modal — RunPod wmax/bakiye/bulut-kapali/health kuyruğu atlandı')
+    await atlandiOlay(env, 'render-bekci', 'render-modal',
+      'render dalı modal: RunPod wmax + bakiye/bulut-kapali + /health kuyruğu yok', {})
+  } else if (devredildi) {
     log('wmax+bakiye blokları runpod-saglik bekçisine devredildi (kira canlı) — burada tekrar edilmedi')
     await atlandiOlay(env, 'render-bekci', 'sahiplik-kirasi',
       'wmax + bakiye/bulut-kapali sahibi runpod-saglik — çift PATCH/çift bildirim önlendi',
@@ -121,8 +129,8 @@ export async function kos(c: GorevCtx): Promise<void> {
     }
   }
 
-  // --- 3/4) kuyruk sağlığı — HER ZAMAN bu görevin (devredilmez); yalnız canli+anahtar ---
-  if (canliRp) {
+  // --- 3/4) kuyruk sağlığı — HER ZAMAN bu görevin (devredilmez); yalnız canli+anahtar+RunPod dalı ---
+  if (canliRp && !renderModal) {
     try {
       const h = (await rp(env, '/health')) as { jobs: Record<string, number>; workers: Record<string, number> }
       const bekleyen = h.jobs?.inQueue ?? 0
@@ -145,22 +153,28 @@ export async function kos(c: GorevCtx): Promise<void> {
 
   // --- 5) uzun süredir bekleyen iş (genreq eşleniği: pending_videos yaşı) ---
   // Kaynak genreq dizin yaşına bakıyordu; CF'de dispatch edilemeyen işin izi pending_videos'ta
-  // (queued_at). Videosu R2'ye düşmemiş + GENREQ_DK'dan yaşlı pending = gönderilemeyen iş.
+  // (queued_at). Videosu R2'ye düşmemiş + eşikten yaşlı pending = gönderilemeyen iş.
+  // NEDEN: Modal 3B timeout 90 dk — render modal iken 3d/auto için alarm ≥100 dk.
+  const ucBMod = (mode: string | null | undefined) => !mode || mode === '3d' || mode === 'auto'
+  const genreqDkOf = (mode: string | null | undefined) =>
+    (renderModal && ucBMod(mode)) ? GENREQ_MODAL_3B_DK : GENREQ_DK
   try {
-    const pend = await env.DB.prepare('SELECT vid, queued_at FROM pending_videos').all<{ vid: string; queued_at: number }>()
-    const takili = pend.results.filter((p) => now - (p.queued_at || 0) > GENREQ_DK * 60)
+    const pend = await env.DB.prepare('SELECT vid, queued_at, mode FROM pending_videos')
+      .all<{ vid: string; queued_at: number; mode: string | null }>()
+    const takili = pend.results.filter((p) => now - (p.queued_at || 0) > genreqDkOf(p.mode) * 60)
     if (takili.length) {
       for (const p of takili) st.retry[p.vid] = (st.retry[p.vid] || 0) + 1
       const asanlar = Object.entries(st.retry).filter(([, n]) => n >= RETRY_MAX).map(([a]) => a)
+      const alarmDk = renderModal ? GENREQ_MODAL_3B_DK : GENREQ_DK
       if (asanlar.length && !sessizde(st, 'genreq-takili')) {
         await bildirimBekleyen(env,
-          `🚨 ${takili.length} video isteği ${GENREQ_DK} dk'dır gönderilemiyor (${RETRY_MAX}+ deneme): ${asanlar.slice(0, 3).map((a) => a.slice(0, 34)).join(', ')}`, 'Move Log Render')
+          `🚨 ${takili.length} video isteği ${alarmDk} dk'dır gönderilemiyor (${RETRY_MAX}+ deneme): ${asanlar.slice(0, 3).map((a) => a.slice(0, 34)).join(', ')}`, 'Move Log Render')
       }
       await olayYaz(env, {
         bekci: 'render-bekci', tespit: 'gonderilemeyen-is',
         aksiyon: `sayaç artırıldı; ${RETRY_MAX}+ denemede bildirim — kesin temizlik kuyruk-bekcisi/d1-tutarlilik'te`,
         sonuc: asanlar.length ? 'bildirildi' : 'saglam',
-        detay: { takili: takili.length, asan: asanlar.slice(0, 5), dk: GENREQ_DK },
+        detay: { takili: takili.length, asan: asanlar.slice(0, 5), dk: alarmDk, render_modal: renderModal },
       })
     } else if (Object.keys(st.retry).length) st.retry = {}
   } catch (e) { log('bekleyen-iş kontrolü hata: ' + String(e).slice(0, 100)) }
