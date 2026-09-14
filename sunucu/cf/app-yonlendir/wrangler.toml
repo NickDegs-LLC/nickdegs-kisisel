@@ -5,5 +5,5 @@ name = "movelog-app-yonlendir"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
-# DNS geçişi (A kaydı silinip bu worker'a özel alan adı bağlanınca) aşağıdaki satır açılır:
-# routes = [{ pattern = "app.nickdegs.com", custom_domain = true }]
+# DNS geçişi 2026-09-14 yapıldı: A kaydı (169.58.124.139) silindi, alan adı bu worker.a bağlandı.
+routes = [{ pattern = "app.nickdegs.com", custom_domain = true }]
