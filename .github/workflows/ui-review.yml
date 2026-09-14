@@ -1,23 +1,38 @@
+# 14.09: macos-15 → kalıcı self-hosted Mac ([self-hosted, macOS]).
+# sudo xcode-select parola sorar ve asılır → DEVELOPER_DIR. brew koşulsuz install yok.
+# checkout clean:true (önceki koşunun .xcodeproj/dd sızmasın).
+# concurrency cancel-in-progress:false. timeout-minutes: asılan iş kalıcı runner'ı kilitler.
 name: UI Review Shots
 
 on:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   shots:
-    runs-on: macos-15
-    timeout-minutes: 40
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
       - name: Select Xcode 26
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.app 2>/dev/null || true
+          # 14.09: self-hosted'da `sudo xcode-select -s` parola sorar, iş sessizce asılır.
+          # DEVELOPER_DIR aynı işi yapar ve sistemi hiç değiştirmez.
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$XC" ] || XC=/Applications/Xcode.app
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          "$XC/Contents/Developer/usr/bin/xcodebuild" -version
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
       - name: Generate project
         working-directory: ios-native
         run: xcodegen generate

@@ -1,7 +1,30 @@
+# 14.09: macos-15 → kalıcı self-hosted Mac ([self-hosted, macOS]).
+# GitHub barındırmalı runner tek kullanımlıktır; Barış'ın makinesi değil — ağaç, keychain,
+# Homebrew koşular arasında yaşar. sudo xcode-select parola sorar ve asılır → DEVELOPER_DIR.
+# actions/setup-node yok (nvm/PATH'e müdahale eder); Node kontrolü yeterli.
+# pod install --repo-update her koşuda spec deposunu çekmesin — yalnız ilk başarısızlıkta.
+# ruby/setup-ruby YOK (EACCES); gerekirse PATH'e /opt/homebrew/opt/ruby/bin.
+# checkout clean:true. concurrency cancel-in-progress:false. timeout-minutes: asılan iş kilitler.
+# keychain: rastgele parola, movelog-build, arama listesi ezilmez, always() temizlik.
+# KEYCHAIN_PASSWORD kullanılmıyor (secret duruyor).
 name: iOS → TestFlight
 
 on:
   workflow_dispatch:
+    inputs:
+      yukle:
+        description: 'TestFlight yükle (false = imzasız duman derlemesi)'
+        type: boolean
+        default: true
+
+# Bu iş yalnız workflow_dispatch. yukle varsayılan true → eski yükleme davranışı.
+# yukle=false → imza/ASC/yükleme atlanır, imzasız simülatör derlemesi koşar.
+# aynı ifade ios-native ile: github.event_name != 'workflow_dispatch' || inputs.yukle
+# (burada event her zaman dispatch, yani inputs.yukle'ye indirgenir)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -12,22 +35,31 @@ env:
 jobs:
   testflight:
     name: Build & Upload to TestFlight
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          clean: true
 
       - name: Select Xcode 26 (iOS 26 SDK)
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.app 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_16.3.app 2>/dev/null || true
-          xcodebuild -version
+          # 14.09: self-hosted'da `sudo xcode-select -s` parola sorar, iş sessizce asılır.
+          # DEVELOPER_DIR aynı işi yapar ve sistemi hiç değiştirmez.
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1 || true)
+          [ -n "$XC" ] || XC=/Applications/Xcode.app
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          "$XC/Contents/Developer/usr/bin/xcodebuild" -version
 
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Node kontrolü
+        run: |
+          if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+            echo "::error::Node/npm PATH'te yok. Kalıcı Mac'te Node kurulu olmalı; actions/setup-node kullanılmıyor (nvm/PATH'e müdahale eder)."
+            exit 1
+          fi
+          node --version && npm --version
 
       - name: Install JS deps
         run: npm ci || npm install
@@ -37,26 +69,36 @@ jobs:
 
       - name: CocoaPods install
         run: |
+          export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
           cd ios/App
-          pod install --repo-update
+          pod install || pod install --repo-update
 
       - name: Import Distribution Certificate
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
         env:
           DIST_P12_BASE64: ${{ secrets.DIST_P12_BASE64 }}
           DIST_P12_PASSWORD: ${{ secrets.DIST_P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          # 14.09: rastgele parola; KEYCHAIN_PASSWORD kullanılmıyor.
+          # create-keychain öncesi eski movelog-build.keychain silinir.
+          # list-keychains -s ezmez: eski liste saklanır, yenisi eklenir.
+          # default-keychain -s YOK — login keychain'e dokunulmaz.
+          KC_PASS=$(openssl rand -hex 20)
+          echo "::add-mask::$KC_PASS"
+          echo "KC_PASS=$KC_PASS" >> "$GITHUB_ENV"
+          security delete-keychain movelog-build.keychain 2>/dev/null || true
+          security create-keychain -p "$KC_PASS" movelog-build.keychain
+          security set-keychain-settings -lut 21600 movelog-build.keychain
+          security unlock-keychain -p "$KC_PASS" movelog-build.keychain
           echo "$DIST_P12_BASE64" | base64 --decode > $RUNNER_TEMP/dist.p12
-          security import $RUNNER_TEMP/dist.p12 -P "$DIST_P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH login.keychain
-          security find-identity -v -p codesigning $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/dist.p12 -P "$DIST_P12_PASSWORD" -A -t cert -f pkcs12 -k movelog-build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" movelog-build.keychain
+          security list-keychains -d user | tr -d '"' | sed 's/^[[:space:]]*//' > /tmp/movelog-kc-onceki.txt
+          security list-keychains -d user -s movelog-build.keychain $(tr '\n' ' ' < /tmp/movelog-kc-onceki.txt)
+          security find-identity -v -p codesigning movelog-build.keychain
 
       - name: Install Provisioning Profile
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
         env:
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
         run: |
@@ -65,6 +107,7 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print:UUID' /dev/stdin <<< "$(security cms -D -i ~/Library/MobileDevice/Provisioning\ Profiles/nickdegs.mobileprovision)" || true
 
       - name: Decode ASC API Key
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
         env:
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -73,6 +116,8 @@ jobs:
           echo "$ASC_KEY_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
       - name: Build Archive (manual signing — App hedefinde tanımlı)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
+        timeout-minutes: 150
         run: |
           BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
           echo "Build number: $BUILD_NUMBER"
@@ -84,9 +129,10 @@ jobs:
             -archivePath $RUNNER_TEMP/App.xcarchive \
             -destination "generic/platform=iOS" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/build.keychain"
+            OTHER_CODE_SIGN_FLAGS="--keychain movelog-build.keychain"
 
       - name: Export & Upload to TestFlight
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -120,3 +166,31 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           echo "✅ TestFlight'a yüklendi"
+
+      - name: İmzasız simülatör derlemesi (duman)
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.yukle }}
+        run: |
+          xcodebuild build \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Keychain ve sırları temizle
+        if: always()
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          if [ -s /tmp/movelog-kc-onceki.txt ]; then
+            security list-keychains -d user -s $(tr '\n' ' ' < /tmp/movelog-kc-onceki.txt)
+          fi
+          security delete-keychain movelog-build.keychain 2>/dev/null || true
+          rm -f /tmp/movelog-kc-onceki.txt
+          rm -f "$RUNNER_TEMP/dist.p12"
+          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/nickdegs.mobileprovision"
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/nickdegs-watch.mobileprovision"
+          rm -f "$RUNNER_TEMP/ExportOptions.plist"
+          rm -rf "$RUNNER_TEMP/export"
+          security list-keychains -d user
