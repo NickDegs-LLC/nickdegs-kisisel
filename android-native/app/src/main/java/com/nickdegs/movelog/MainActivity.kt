@@ -10,11 +10,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickdegs.movelog.data.Store
+import com.nickdegs.movelog.data.ayiklaDavetUri
 import com.nickdegs.movelog.ui.MoveLogApp
 import com.nickdegs.movelog.ui.theme.MoveLogTheme
 
 // Bildirime dokununca gelen "route" -> MoveLogApp okuyup ilgili sekmeye gider (deep-link).
-object AppNav { var route by mutableStateOf<String?>(null) }
+// Davet: https://app.nickdegs.com/?invite=  ve  movelog://invite?code=
+object AppNav {
+    var route by mutableStateOf<String?>(null)
+    var davetKod by mutableStateOf<String?>(null)
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,9 +37,16 @@ class MainActivity : ComponentActivity() {
                 MoveLogApp(store)
             }
         }
+        isleDavetIntent(intent)
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         intent.getStringExtra("route")?.let { AppNav.route = it }
+        isleDavetIntent(intent)
+    }
+    private fun isleDavetIntent(intent: Intent?) {
+        val kod = ayiklaDavetUri(intent?.data)
+        if (kod.isNotEmpty()) AppNav.davetKod = kod
     }
 }

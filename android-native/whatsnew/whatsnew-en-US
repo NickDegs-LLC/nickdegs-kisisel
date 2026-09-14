@@ -1,7 +1,3 @@
-• On-device video: progress no longer goes backwards, and upload shows real progress
-• Screen no longer locks mid-render — flat/flyover videos stop failing halfway
-• Notifications now say which ride they're for; tapping opens the video
-• No more duplicate notifications for the same video
-• When a video can't be created, you see the real reason
-• Fixed the live friends map; removed duplicate route cards
-• Sessions no longer expire every 30 days
+• Invite friends: create and share an invite link from Profile
+• Tapping an invite link opens the app and adds your friend automatically
+• You can also enter an invite code manually

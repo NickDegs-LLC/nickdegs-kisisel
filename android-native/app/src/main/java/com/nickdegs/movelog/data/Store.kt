@@ -17,6 +17,27 @@ import com.nickdegs.movelog.util.saveVideoToGallery
 
 const val API = "https://kisisel-api.nickdegs.com"
 
+/** iOS DavetLink.ayikla ile aynı: `invite=` / `code=` sonrası, 6–32 url-safe. */
+fun ayiklaDavetKodu(ham: String): String {
+    var s = ham.trim()
+    val inv = s.indexOf("invite=", ignoreCase = true)
+    val cod = s.indexOf("code=", ignoreCase = true)
+    s = when {
+        inv >= 0 -> s.substring(inv + 7)
+        cod >= 0 -> s.substring(cod + 5)
+        else -> s
+    }
+    s = s.substringBefore('&').substringBefore('#').trim()
+    return if (s.matches(Regex("^[A-Za-z0-9_-]{6,32}$"))) s else ""
+}
+
+fun ayiklaDavetUri(uri: android.net.Uri?): String {
+    if (uri == null) return ""
+    uri.getQueryParameter("invite")?.let { val k = ayiklaDavetKodu(it); if (k.isNotEmpty()) return k }
+    uri.getQueryParameter("code")?.let { val k = ayiklaDavetKodu(it); if (k.isNotEmpty()) return k }
+    return ayiklaDavetKodu(uri.toString())
+}
+
 // Oturum durumu — uygulama yalnızca SUNUCU-DOĞRULANMIŞ kimlikle açılır (internetsiz/kopya token çalışmaz).
 // BLOCKED = Play Integrity tamper/sideload tespiti (kurcalanmış/korsan kurulum).
 enum class AuthState { CHECKING, VALID, NEED_LOGIN, OFFLINE, BLOCKED }
@@ -120,6 +141,20 @@ class Store(app: Application) : AndroidViewModel(app) {
         ultra = v; prefs.edit().putBoolean("nd_ultra", v).apply()
     }
     fun signOut() { persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN }
+
+    var davetSonuc by mutableStateOf<String?>(null)
+    var davetYenile by mutableStateOf(0)
+
+    fun bekleyenDavetSakla(kod: String) {
+        val t = ayiklaDavetKodu(kod)
+        if (t.isEmpty()) return
+        prefs.edit().putString("bekleyenDavet", t).apply()
+    }
+    fun bekleyenDavetAl(): String {
+        val t = prefs.getString("bekleyenDavet", "") ?: ""
+        if (t.isNotEmpty()) prefs.edit().remove("bekleyenDavet").apply()
+        return t
+    }
 
     // ---- HTTP yardımcısı (auth header + JSON) ----
     private suspend fun req(path: String, method: String = "GET", body: JSONObject? = null): String? =
@@ -565,6 +600,13 @@ class Store(app: Application) : AndroidViewModel(app) {
     suspend fun invite(): String {
         val d = req("/api/invite", "POST", JSONObject()) ?: return ""
         return JSONObject(d).optString("link", "")
+    }
+    /** iOS Store.acceptInvite ile aynı sözleşme: POST /api/invite/accept {token} */
+    suspend fun acceptInvite(token: String): Boolean {
+        val kod = ayiklaDavetKodu(token)
+        if (kod.isEmpty()) return false
+        val d = req("/api/invite/accept", "POST", JSONObject().put("token", kod)) ?: return false
+        return try { JSONObject(d).optBoolean("ok", false) } catch (_: Exception) { false }
     }
     // GRUP SÜRÜŞ video tercihi (1.7): both | group | solo
     suspend fun groupVideoPref(): String {

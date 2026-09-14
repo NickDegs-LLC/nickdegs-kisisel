@@ -25,6 +25,42 @@ fun MoveLogApp(store: Store) {
     val scope = rememberCoroutineScope()
     // AÇILIŞ KAPISI: yalnızca sunucu-doğrulanmış kimlikle aç. İnternetsiz/kopya token ile ÇALIŞMAZ.
     LaunchedEffect(Unit) { if (store.auth == com.nickdegs.movelog.data.AuthState.CHECKING) store.validate() }
+
+    // Davet derin-linki: oturum yoksa sakla, varsa kabul et (pano okunmaz).
+    LaunchedEffect(com.nickdegs.movelog.AppNav.davetKod, store.auth) {
+        val kod = com.nickdegs.movelog.AppNav.davetKod ?: return@LaunchedEffect
+        if (store.auth == com.nickdegs.movelog.data.AuthState.CHECKING) return@LaunchedEffect
+        com.nickdegs.movelog.AppNav.davetKod = null
+        if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) {
+            val ok = store.acceptInvite(kod)
+            store.davetSonuc = if (ok) L("Arkadaş eklendi 🤝", "Friend added 🤝")
+                               else L("Kod geçersiz veya süresi dolmuş.", "Invalid or expired code.")
+            if (ok) store.davetYenile++
+        } else {
+            store.bekleyenDavetSakla(kod)
+        }
+    }
+    LaunchedEffect(store.auth) {
+        if (store.auth != com.nickdegs.movelog.data.AuthState.VALID) return@LaunchedEffect
+        val p = store.bekleyenDavetAl()
+        if (p.isEmpty()) return@LaunchedEffect
+        val ok = store.acceptInvite(p)
+        store.davetSonuc = if (ok) L("Arkadaş eklendi 🤝", "Friend added 🤝")
+                           else L("Kod geçersiz veya süresi dolmuş.", "Invalid or expired code.")
+        if (ok) store.davetYenile++
+    }
+
+    store.davetSonuc?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { store.davetSonuc = null },
+            title = { Text(L("Davet kodu", "Invite code")) },
+            text = { Text(msg) },
+            confirmButton = {
+                TextButton(onClick = { store.davetSonuc = null }) { Text("OK") }
+            }
+        )
+    }
+
     // Açılışta: canlı-takip beacon'ı + FCM push token kaydı (bildirimler için)
     LaunchedEffect(store.auth) {
         if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) { store.sendBeacon(); store.registerFcm() }

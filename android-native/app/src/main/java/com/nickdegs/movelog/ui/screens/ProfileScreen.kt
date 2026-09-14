@@ -40,6 +40,8 @@ fun ProfileScreen(store: Store) {
     var showPaywall by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(false) }
     var addFriend by remember { mutableStateOf(false) }
+    var davetGiris by remember { mutableStateOf(false) }
+    var davetGirisi by remember { mutableStateOf("") }
     var friends by remember { mutableStateOf<List<Convo>>(emptyList()) }
     var boostMsg by remember { mutableStateOf<String?>(null) }
     var sens by remember { mutableStateOf(store.sensitivity) }
@@ -69,6 +71,9 @@ fun ProfileScreen(store: Store) {
     LaunchedEffect(Unit) {
         store.loadProfile(); friends = store.friends()
         val s = store.summarySettings(); sumOn = s.enabled; sumHour = s.hour; sumVid = s.video
+    }
+    LaunchedEffect(store.davetYenile) {
+        if (store.davetYenile > 0) friends = store.friends()
     }
     val shown = store.displayName.ifBlank { store.me }.ifBlank { "Move Log" }
 
@@ -153,6 +158,35 @@ fun ProfileScreen(store: Store) {
                             color = Color(0xFF9AA4B2), fontSize = 13.sp)
                     }
                     Text(billing.paketFiyati(sku), color = Brand.accent, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Arkadaş daveti (iOS Profile.swift ile aynı uçlar)
+        item {
+            Column(Modifier.fillMaxWidth()) {
+                Text(L("Davet", "Invite"), color = Color(0xFF9AA4B2), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                Surface(color = Brand.card, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                val link = store.invite()
+                                if (link.isNotEmpty()) {
+                                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, link)
+                                    }
+                                    ctx.startActivity(android.content.Intent.createChooser(
+                                        send, L("Davet linkini paylaş", "Share invite link")))
+                                }
+                            }
+                        }) { Text(L("Davet linki oluştur", "Create invite link"), color = Brand.accent) }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { davetGiris = true }) {
+                            Text(L("Kodum var", "I have a code"), color = Brand.accent)
+                        }
+                    }
                 }
             }
         }
@@ -377,6 +411,35 @@ fun ProfileScreen(store: Store) {
                 }) { Text(L("Ekle", "Add")) }
             },
             dismissButton = { TextButton(onClick = { addFriend = false }) { Text(L("Vazgeç", "Cancel")) } })
+    }
+
+    if (davetGiris) {
+        AlertDialog(onDismissRequest = { davetGiris = false; davetGirisi = "" },
+            title = { Text(L("Davet kodu", "Invite code")) },
+            text = {
+                OutlinedTextField(
+                    value = davetGirisi,
+                    onValueChange = { davetGirisi = it },
+                    singleLine = true,
+                    label = { Text(L("Kodu yapıştır", "Paste the code")) },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val kod = davetGirisi
+                    davetGiris = false
+                    davetGirisi = ""
+                    scope.launch {
+                        val ok = store.acceptInvite(kod)
+                        store.davetSonuc = if (ok) L("Arkadaş eklendi 🤝", "Friend added 🤝")
+                                           else L("Kod geçersiz veya süresi dolmuş.", "Invalid or expired code.")
+                        if (ok) { store.davetYenile++; friends = store.friends() }
+                    }
+                }) { Text(L("Kabul et", "Accept")) }
+            },
+            dismissButton = { TextButton(onClick = { davetGiris = false; davetGirisi = "" }) {
+                Text(L("Vazgeç", "Cancel"))
+            } })
     }
 
     if (showPaywall) {
