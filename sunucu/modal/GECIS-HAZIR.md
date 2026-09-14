@@ -41,9 +41,12 @@ bu yüzden dispatch'te `runpodGonder` dışında hiçbir şey değişmiyor.
 
 ## ⚠️ Geçmeden önce bilinmesi gerekenler
 
-1. **Taktik dalı (`movelog-tactical`) TAŞINMADI.** O ayrı bir CPU endpoint'i (`RUNPOD_ENDPOINT_TAC`)
-   ve bu iş yalnız 3B/rota render'ını kapsıyordu. Taktik videolar RunPod'da kalır → bakiye
-   sıfırlanırsa taktik durur. Ya taktik de taşınmalı ya bakiyede pay bırakılmalı.
+1. ~~**Taktik dalı (`movelog-tactical`) TAŞINMADI.**~~
+   **✅ GÜNCEL (2026-09-14): taktik de taşındı** — `movelog_tactical.py` + `TAKTIK-GECIS.md`.
+   Artık iki hat da KV bayrağını izliyor, dolayısıyla "bakiye sıfırlanırsa taktik durur" riski
+   kalmadı. **Bu belgedeki geçiş komutu artık tek başına yetmez:** `gecis-yap.sh` yeni
+   `dispatch/src/index.ts`'i (içinde `taktikModalGonder`) `/opt/matrix` altında bekler ve
+   yoksa çıkar. Ayrıntı ve `movelog-tactical` sırrının içeriği: `TAKTIK-GECIS.md`.
 2. **`_redispatch` Modal'da çalışmaz** (bilerek: `RUNPOD_API_KEY` sırra konmadı, yoksa Modal'dan
    RunPod'a iş sıçrardı). Karşılığı: GL bozuksa `Isci.render` exception atar → Modal taze
    konteynerde 2 kez dener (`modal.Retries(max_retries=2)`).
