@@ -61,7 +61,9 @@ Eşzamanlı girdi kapalı (mini müzik ucu job'a özel `music_url` tutar).
 
 Önce bu PR'daki dosyaların `/opt/matrix` altında olduğundan emin ol
 (`sunucu/modal/` → `/opt/matrix/modal/`, `sunucu/cf/dispatch/` → `/opt/matrix/cf/dispatch/`).
-Eski `dispatch-modal.patch` taktiği RunPod'a kilitler — **uygulama**.
+`dispatch-modal.patch` bu işle birlikte **silindi**: içeriği artık repodaki `index.ts`'in
+kendisinde ve yamanın son satırı taktiği `'runpod'`a sabitliyordu — `/opt/matrix`'te elde kalmış
+bir kopyası varsa onu da sil, uygulanırsa bu geçişi sessizce geri alır.
 
 ```bash
 bash /opt/matrix/modal/gecis-yap.sh                 # iki hat Modal

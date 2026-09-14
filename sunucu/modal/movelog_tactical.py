@@ -369,7 +369,12 @@ def saglik():
 
     sonuc["ortam"]["ok"] = bool(sonuc["ortam"].get("yan_servis_hazir"))
     sonuc["imaj"] = IMAJ_ETIKET
-    sonuc["donanim"] = "cpu-8-32"
+    # DÜRÜSTLÜK: bu sınav cpu=2/4096'da koşar, üretim işçisi cpu=8/32768'de.
+    # Tek "donanim" alanı yazmak, sınavın üretim şeklinde geçtiğini ima ederdi.
+    # Buradaki kontroller (yan-servis, ağ, font, import) çekirdek sayısına duyarlı
+    # değil; ama CPU/bellek tavanına bağlı bir sorun bu sınavda GÖRÜNMEZ.
+    sonuc["donanim_sinav"] = "cpu-2-4"
+    sonuc["donanim_isci"] = "cpu-8-32"
     sonuc["cikis_ip"] = _cikis_ip()
     sonuc["hepsi_ok"] = all(v.get("ok") for v in sonuc.values() if isinstance(v, dict))
     return sonuc

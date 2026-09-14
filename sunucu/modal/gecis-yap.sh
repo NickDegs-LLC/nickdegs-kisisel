@@ -209,7 +209,8 @@ adim=$((adim + 1))
 if ! grep -q "taktikModalGonder" "$KAYNAK"; then
   echo "  ✗ $KAYNAK içinde taktikModalGonder yok."
   echo "    Bu PR'daki sunucu/cf/dispatch/src/index.ts'i /opt/matrix/cf/dispatch/src/index.ts olarak koy."
-  echo "    Eski dispatch-modal.patch taktiği RunPod'a kilitler — UYGULAMA."
+  echo "    dispatch-modal.patch silindi (taktiği 'runpod'a sabitliyordu)."
+  echo "    /opt/matrix/modal/ altında elde kalmış bir kopyası varsa UYGULAMA, sil."
   exit 1
 fi
 echo "   taktik Modal dalı kaynakta var"
