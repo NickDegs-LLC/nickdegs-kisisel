@@ -8,5 +8,9 @@
 	<array><string>Default</string></array>
 	<key>aps-environment</key>
 	<string>production</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:app.nickdegs.com</string>
+	</array>
 </dict>
 </plist>

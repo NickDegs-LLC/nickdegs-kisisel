@@ -65,7 +65,6 @@ struct ProfileView: View {
     @State private var davetPaylas = false
     @State private var davetGirisAcik = false
     @State private var davetGirisi = ""
-    @State private var davetSonuc = ""
     @State private var vcIncoming: (from: String, name: String)? = nil // gelen canlı-telsiz daveti
     @State private var vcJoinPeer: Friend? = nil                       // kabul sonrası katılım
     @State private var pttBusyFriends: Set<String> = []                // şu an bana konuşan arkadaşlar
@@ -608,6 +607,9 @@ struct ProfileView: View {
                 if AppEnv.screen == "avatar" { showAvatar = true }
             }
         }
+        .onChange(of: store.davetYenile) { _, _ in
+            Task { await reloadFriends() }
+        }
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
@@ -652,20 +654,16 @@ struct ProfileView: View {
             TextField(L("Kodu yapıştır","Paste the code"), text: $davetGirisi)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
             Button(L("Kabul et","Accept")) {
-                let kod = davetGirisi.trimmingCharacters(in: .whitespaces)
-                    .components(separatedBy: "invite=").last ?? davetGirisi
+                let kod = DavetLink.ayikla(davetGirisi)
                 davetGirisi = ""
                 Task {
-                    let ok = await store.acceptInvite(kod.trimmingCharacters(in: .whitespaces))
-                    davetSonuc = ok ? L("Arkadaş eklendi 🤝","Friend added 🤝")
-                                    : L("Kod geçersiz veya süresi dolmuş.","Invalid or expired code.")
-                    if ok { await reloadFriends() }
+                    let ok = await store.acceptInvite(kod)
+                    store.davetSonuc = ok ? L("Arkadaş eklendi 🤝","Friend added 🤝")
+                                          : L("Kod geçersiz veya süresi dolmuş.","Invalid or expired code.")
+                    if ok { store.davetYenile += 1; await reloadFriends() }
                 }
             }
             Button(L("Vazgeç","Cancel"), role: .cancel) { davetGirisi = "" }
-        }
-        .alert(davetSonuc, isPresented: Binding(get: { !davetSonuc.isEmpty }, set: { if !$0 { davetSonuc = "" } })) {
-            Button("OK", role: .cancel) { davetSonuc = "" }
         }
         .alert(L("Canlı telsiz daveti 📻", "Live radio invite 📻"), isPresented: Binding(
             get: { vcIncoming != nil }, set: { if !$0 { vcIncoming = nil } })) {

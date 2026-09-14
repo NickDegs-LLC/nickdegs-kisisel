@@ -1,0 +1,48 @@
+# 2026-09-14: android-native.yml'nin YAYINSIZ kopyası. main'e android-native push'u Play PRODUCTION'a
+# (status: completed) yüklediği için dal değişiklikleri onaysız burada DERLENEREK doğrulanır.
+# upload-artifact ve Play yükleme adımları kasıtlı olarak YOK. main'de koşmaz.
+name: Android Native — yalnız derleme (yayın YOK)
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths:
+      - 'android-native/**'
+      - '.github/workflows/android-derle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # AGP 8.9.2 (targetSdk 36 için gerekli) EN AZ Gradle 8.11.1 ister — 8.9 ile
+          # "Minimum supported Gradle version is 8.11.1" diye derleme düşüyor (05.09'da yaşandı).
+          gradle-version: '8.11.1'
+
+      - name: Versiyon (build number = epoch)
+        run: echo "BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+
+      - name: Decode upload keystore
+        run: echo "${{ secrets.MOVELOG_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/movelog.keystore"
+
+      - name: Decode google-services.json (FCM push)
+        run: printf '%s' "${{ secrets.GOOGLE_SERVICES_JSON }}" | tr -d '[:space:]' | base64 -d > app/google-services.json
+
+      - name: Build AAB (signed)
+        env:
+          MOVELOG_KEYSTORE: ${{ runner.temp }}/movelog.keystore
+          MOVELOG_KS_PASS: ${{ secrets.MOVELOG_KS_PASS }}
+        run: gradle bundleRelease --no-daemon --stacktrace

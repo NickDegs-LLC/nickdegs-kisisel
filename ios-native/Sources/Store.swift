@@ -83,6 +83,32 @@ struct Convo: Codable, Identifiable, Hashable {
 // Açılış kapısı: uygulama yalnızca SUNUCU-DOĞRULANMIŞ kimlikle açılır (internetsiz/kopya token çalışmaz).
 enum AuthGate { case checking, valid, needLogin, offline }
 
+/// Arkadaş davet kodu: `movelog://invite?code=` ve `https://app.nickdegs.com/?invite=` (elle yapıştırma ile aynı ayıklama).
+enum DavetLink {
+    static func ayikla(_ ham: String) -> String {
+        var s = ham.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = s.range(of: "invite=", options: .caseInsensitive) {
+            s = String(s[r.upperBound...])
+        } else if let r = s.range(of: "code=", options: .caseInsensitive) {
+            s = String(s[r.upperBound...])
+        }
+        if let amp = s.firstIndex(of: "&") { s = String(s[..<amp]) }
+        if let hash = s.firstIndex(of: "#") { s = String(s[..<hash]) }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ok = s.range(of: "^[A-Za-z0-9_-]{6,32}$", options: .regularExpression) != nil
+        return ok ? s : ""
+    }
+    static func from(url: URL) -> String? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let v = items.first(where: { $0.name == "invite" || $0.name == "code" })?.value {
+            let k = ayikla(v)
+            if !k.isEmpty { return k }
+        }
+        let k = ayikla(url.absoluteString)
+        return k.isEmpty ? nil : k
+    }
+}
+
 // MARK: - API + Durum
 @MainActor final class Store: ObservableObject {
     static weak var shared: Store?   // arka plan (BGTask/push) oto-kayıt için AppDelegate erişimi (2026-07-27)
@@ -92,6 +118,8 @@ enum AuthGate { case checking, valid, needLogin, offline }
     @Published var jumpToVideos = false   // "Video oluştur" sonrası Videolarım sekmesine geç ("Hazırlanıyor" görünür)
     @Published var telefondaUretiliyor = false   // 1.63: cihazda üretim sürerken UI dürüst metin gösterir
     @Published var gate: AuthGate = .checking   // açılış doğrulama durumu
+    @Published var davetSonuc = ""              // arkadaş daveti kabul sonucu (alert)
+    @Published var davetYenile = 0              // kabul sonrası Profil arkadaş listesini tazelesin
     var loggedIn: Bool { !token.isEmpty || (AppEnv.demo && AppEnv.screen != "hero") }
     init() {
         #if DEBUG
@@ -441,8 +469,9 @@ enum AuthGate { case checking, valid, needLogin, offline }
     /// hiçbir kod yoktu ve `/api/invite/accept` HİÇ çağrılmıyordu → davet akışı tümüyle ölüydü.
     @discardableResult
     func acceptInvite(_ token: String) async -> Bool {
-        guard !token.isEmpty else { return false }
-        guard let d = try? await req("/api/invite/accept", method: "POST", body: ["token": token]),
+        let kod = DavetLink.ayikla(token)
+        guard !kod.isEmpty else { return false }
+        guard let d = try? await req("/api/invite/accept", method: "POST", body: ["token": kod]),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
         return (o["ok"] as? Bool) ?? false
     }

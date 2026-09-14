@@ -9,6 +9,7 @@ struct MoveLogApp: App {
     @StateObject private var tracker = Tracker.shared
     @AppStorage("nd_font") var fontId = "default"
     @AppStorage("nd_scheme") var scheme = "dark"
+    @AppStorage("bekleyenDavet") private var bekleyenDavet = ""
     var design: Font.Design {
         switch fontId { case "serif": return .serif; case "rounded": return .rounded; case "mono": return .monospaced; default: return .default }
     }
@@ -28,6 +29,7 @@ struct MoveLogApp: App {
                 ConvoyVoice.shared.store = store          // 1.9: sesli konvoy anonsları
                 PttEngine.shared.store = store            // 1.9-B: telsiz
                 if ConvoyVoice.shared.enabled { ConvoyVoice.shared.start() }
+                if store.gate == .valid { await bekleyenDavetiKabulEt() }
             }
             .environmentObject(store)
             .environmentObject(iap)
@@ -36,7 +38,50 @@ struct MoveLogApp: App {
             .tint(Brand.accent)
             .fontDesign(design)
             .preferredColorScheme(scheme == "light" ? .light : .dark)
+            .onOpenURL { url in davetURLIsle(url) }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL { davetURLIsle(url) }
+            }
+            .onChange(of: store.gate) { _, g in
+                if g == .valid { Task { await bekleyenDavetiKabulEt() } }
+            }
+            .alert(store.davetSonuc, isPresented: Binding(
+                get: { !store.davetSonuc.isEmpty },
+                set: { if !$0 { store.davetSonuc = "" } }
+            )) {
+                Button("OK", role: .cancel) { store.davetSonuc = "" }
+            }
         }
+    }
+
+    /// Pano okunmaz (gizlilik uyarısı çıkmasın). Yalnız URL'den kod.
+    private func davetURLIsle(_ url: URL) {
+        guard let kod = DavetLink.from(url: url) else { return }
+        Task { await davetKoduIsle(kod) }
+    }
+
+    private func davetKoduIsle(_ kod: String) async {
+        if store.gate == .valid {
+            await davetKabulGoster(kod)
+            bekleyenDavet = ""
+        } else {
+            bekleyenDavet = kod
+        }
+    }
+
+    private func bekleyenDavetiKabulEt() async {
+        let kod = bekleyenDavet.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kod.isEmpty, store.gate == .valid else { return }
+        bekleyenDavet = ""
+        await davetKabulGoster(kod)
+    }
+
+    private func davetKabulGoster(_ kod: String) async {
+        let ok = await store.acceptInvite(kod)
+        store.davetSonuc = ok
+            ? L("Arkadaş eklendi 🤝", "Friend added 🤝")
+            : L("Kod geçersiz veya süresi dolmuş.", "Invalid or expired code.")
+        if ok { store.davetYenile += 1 }
     }
 }
 
