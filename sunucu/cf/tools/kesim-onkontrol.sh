@@ -198,8 +198,14 @@ else
     [ "$h" = "200" ] && ok "$ad /health 200" || kir "$ad /health $h (402 = bakiye bitti)"
   }
   # 2026-08-31 GÖREV B: statik mozaik sidecar'ı imaja girdi -> v140→v141, v4→v5.
-  ep_kontrol "movelog-render  " "$RP_EP_RENDER" "$WMAX_RENDER" "$RP_TPL_RENDER" "ghcr.io/nickdegs/movelog-render:v141"
-  ep_kontrol "movelog-tactical" "$RP_EP_TAC"    "$WMAX_TAC"    "$RP_TPL_TAC"    "ghcr.io/nickdegs/movelog-tactical:v5"
+  # 2026-09-14 TAZELEME: bu iki satır o günün sürümlerinde KALMIŞTI; canlı imajlar ilerledi ve
+  # önkontrol bugün koşsa iki hattı da YANLIŞ "kırık" bildirirdi. Güncel değerlerin kaynağı:
+  #   render  v151 — README.md:14 · modal/ghcr-sir-degistir.sh:42 · modal/movelog_render.py IMAJ_ETIKET
+  #                  · render-worker/rp_handler.v151.py (en yeni sürümlü handler)
+  #   tactical v6  — cf/cron/src/gorevler/imaj-surum-bekcisi.ts BILINEN_HEDEF: template egptl6t4pr
+  #                  31.08'den beri v6 (v2 KARO FİKSİ → v4/v5 sidecar → v6 sidecar passthrough)
+  ep_kontrol "movelog-render  " "$RP_EP_RENDER" "$WMAX_RENDER" "$RP_TPL_RENDER" "ghcr.io/nickdegs/movelog-render:v151"
+  ep_kontrol "movelog-tactical" "$RP_EP_TAC"    "$WMAX_TAC"    "$RP_TPL_TAC"    "ghcr.io/nickdegs/movelog-tactical:v6"
   # dispatch worker'ın gördüğü taktik id'si aynı mı
   wid=$(grep -oE 'RUNPOD_ENDPOINT_TAC *= *"[a-z0-9]+"' "$CF_DIR/dispatch/wrangler.toml" | grep -oE '"[a-z0-9]+"' | tr -d '"')
   [ "$wid" = "$RP_EP_TAC" ] && ok "dispatch wrangler.toml RUNPOD_ENDPOINT_TAC = $RP_EP_TAC" \
