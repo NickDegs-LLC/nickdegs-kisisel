@@ -3,6 +3,10 @@ import { izSuz } from '../../ortak/src/izsuzgec'
 export type Env = {
   DB: D1Database; KV: KVNamespace; R2: R2Bucket; RENDER_Q: Queue; ORTAM: string
   RUNPOD_API_KEY: string; RUNPOD_ENDPOINT: string; DISPATCH_SECRET: string
+  // MODAL DALI (2026-09-07): motor seçimi KV `dispatch:motor` bayrağında ('runpod' | 'modal').
+  // Bayrak KV'de olduğu için GERİ DÖNÜŞ YENİDEN DAĞITIM İSTEMEZ.
+  // TAKTİK override (2026-09-14): `dispatch:motor-tac` doluysa yalnız taktik hattı onu izler.
+  MODAL_SECRET?: string
   // TAKTİK DALI (2026-08-30): ayrı CPU endpoint'i + presigned R2 PUT için S3 kimlikleri.
   RUNPOD_ENDPOINT_TAC?: string
   R2_ENDPOINT?: string; R2_ACCESS_KEY_ID?: string; R2_SECRET_ACCESS_KEY?: string; R2_BUCKET?: string
@@ -14,9 +18,9 @@ export type Env = {
 // GEÇİŞ KARARINA kadar motora bırakılır (matched göndermiyoruz -> motor kendi map-match'ini yapar;
 // plan v2 Faz 1 notu). Başarısızlıkta Queue retry (max 3) + KV'ye son hata.
 //
-// İKİ DAL:
-//   mode != 'tactical'  -> movelog-render (GPU, RUNPOD_ENDPOINT)          [DEĞİŞMEDİ]
-//   mode == 'tactical'  -> movelog-tactical (CPU, RUNPOD_ENDPOINT_TAC)    [YENİ]
+// İKİ DAL (motor KV `dispatch:motor` / isteğe bağlı `dispatch:motor-tac`):
+//   mode != 'tactical'  -> movelog-render (GPU, RunPod veya Modal)
+//   mode == 'tactical'  -> movelog-tactical (CPU, RunPod veya Modal)
 // Taktik motorunda R2 kimliği YOKTUR: video presigned PUT ile yüklenir (job.put_url), render-done'u
 // lokal reconcile halleder (render_job.py:802 `TAC_PUT_URL` dalı).
 type Job = Record<string, unknown> & { ride_id?: string }
@@ -140,6 +144,38 @@ async function runpodGonder(env: Env, job: Job): Promise<{ ok: boolean; status: 
   return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
 }
 
+// ---------- MODAL DALI (2026-09-07, taktik 2026-09-14) ----------
+// Modal ucu RunPod'un /run sözleşmesini TAKLİT EDER ({"input": job} alır,
+// {"id":..., "status":"IN_QUEUE"} döner) → çağıran taraf aynı kalır. Geri çağrı
+// (/api/internal/render-done) 3B'de motorun KENDİSİ tarafından yapılır; taktikte
+// put_url + reconcile (RunPod'daki gibi, sır konteynere girmez).
+const MODAL_RUN = 'https://daclen10--movelog-render-run.modal.run'
+const MODAL_TAC_RUN = 'https://daclen10--movelog-tactical-run.modal.run'
+
+async function modalGonder(env: Env, job: Job): Promise<{ ok: boolean; status: number; body: string }> {
+  if (!env.MODAL_SECRET) return { ok: false, status: 0, body: 'MODAL_SECRET yok' }
+  const r = await fetch(MODAL_RUN, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ secret: env.MODAL_SECRET, input: job }),
+  })
+  return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
+}
+
+/** Hangi motor? KV bayrağı — okunamazsa RunPod (arıza ≠ sessiz motor değişimi).
+ *  `dispatch:motor` ana bayrak (iki hat). `dispatch:motor-tac` doluysa yalnız
+ *  taktik onu izler; boşsa taktik de ana bayrağı izler. */
+async function motorSec(env: Env, dal: 'taktik' | 'render' = 'render'): Promise<'runpod' | 'modal'> {
+  try {
+    if (dal === 'taktik') {
+      const tac = String((await env.KV.get('dispatch:motor-tac')) ?? '').replace(/"/g, '')
+      if (tac === 'modal' || tac === 'runpod') return tac
+    }
+    const v = await env.KV.get('dispatch:motor')
+    return String(v ?? '').replace(/"/g, '') === 'modal' ? 'modal' : 'runpod'
+  } catch { return 'runpod' }
+}
+
 // ---------- R2 SigV4 query presign (api/src/routes/grup1.ts:221 ile aynı desen, method parametrik) ----------
 const enc = new TextEncoder()
 const hex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
@@ -197,17 +233,51 @@ function ozelMuzik(m: unknown): boolean {
   return s.startsWith('lib:') || s === 'active' || s === 'upload'
 }
 
-async function taktikGonder(
+type TaktikErteleme = { ok: false; status: number; body: string; erteleme: string }
+type TaktikGirdi = { ok: true; input: Job }
+
+/** grup3.ts:903-916 çözümlemesinin birebir aynısı (öncelik: active → lib → upload+session → stock).
+ *  user sanitizasyonu path traversal koruması (grup3.ts:899). Anahtar yoksa null —
+ *  music_url konmaz, mühürlü kod stok müziğe düşer. */
+function muzikAnahtari(job: Job): string | null {
+  const user = String(job.user ?? '').replace(/[^A-Za-z0-9_-]/g, '')
+  if (!user) return null
+  const ref = String(job.music ?? '').trim()
+  const session = Math.trunc(Number(job.from ?? 0))
+  if (ref === '' || ref === 'active') return `usermusic/${user}/active.m4a`
+  if (ref.startsWith('lib:')) {
+    const mid = ref.slice(4).replace(/[^A-Za-z0-9]/g, '')
+    return mid ? `usermusic/${user}/${mid}.m4a` : null
+  }
+  if (ref === 'upload' && session) return `ridephotos/${user}_${session}/music.m4a`
+  if (ref.startsWith('stock:')) {
+    const ad = ref.slice(6).replace(/[^A-Za-z0-9]/g, '')
+    return ad ? `stockmusic/${ad}.m4a` : null
+  }
+  return null
+}
+
+/** Müzik presign hatası ASLA işi düşürmez (avatar ile aynı). R2'de yoksa alan konmaz. */
+async function muzikPresign(env: Env, job: Job): Promise<string | undefined> {
+  try {
+    const key = muzikAnahtari(job)
+    if (!key) return undefined
+    if (!(await env.R2.head(key))) return undefined
+    return (await r2Presign(env, key, 'GET', 4 * 3600)) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function taktikGirdiHazirla(
   env: Env, job: Job, rid: string,
-): Promise<{ ok: boolean; status: number; body: string; erteleme?: string }> {
-  if (!env.RUNPOD_ENDPOINT_TAC) return { ok: false, status: 0, body: 'RUNPOD_ENDPOINT_TAC yok', erteleme: 'endpoint-yok' }
-  if (ozelMuzik(job.music)) return { ok: false, status: 0, body: `özel müzik (${job.music})`, erteleme: 'ozel-muzik' }
+): Promise<TaktikGirdi | TaktikErteleme> {
   // ALAN ÖN-DENETİMİ — render_job.py:211 `job["vid"]`/`job["user"]` ile KeyError atar, :223 track
-  // yoksa `fetch_track` (Traccar + kimlik) dener; RunPod'da ikisi de YOK. Eksik işi göndermek
+  // yoksa `fetch_track` (Traccar + kimlik) dener; bulutta ikisi de YOK. Eksik işi göndermek
   // = kesin başarısız render + boşa worker parası. Önce burada yakala.
   if (!job.user) return { ok: false, status: 0, body: 'user alanı yok', erteleme: 'user-yok' }
   if (!Array.isArray(job.track) || job.track.length === 0) {
-    return { ok: false, status: 0, body: 'track boş/yok (RunPod Traccar\'a erişemez)', erteleme: 'track-yok' }
+    return { ok: false, status: 0, body: 'track boş/yok (bulut Traccar\'a erişemez)', erteleme: 'track-yok' }
   }
 
   const vid = String(job.vid ?? job.ride_id ?? rid)
@@ -229,11 +299,41 @@ async function taktikGonder(
 
   const input: Job = { ...job, vid, aspect: taktikAspect(job.aspect), put_url }
   if (avatar_url) input.avatar_url = avatar_url
+  return { ok: true, input }
+}
+
+async function taktikGonder(
+  env: Env, job: Job, rid: string,
+): Promise<{ ok: boolean; status: number; body: string; erteleme?: string }> {
+  if (!env.RUNPOD_ENDPOINT_TAC) return { ok: false, status: 0, body: 'RUNPOD_ENDPOINT_TAC yok', erteleme: 'endpoint-yok' }
+  if (ozelMuzik(job.music)) return { ok: false, status: 0, body: `özel müzik (${job.music})`, erteleme: 'ozel-muzik' }
+  const g = await taktikGirdiHazirla(env, job, rid)
+  if (!g.ok) return g
 
   const r = await fetch(`https://api.runpod.ai/v2/${env.RUNPOD_ENDPOINT_TAC}/run`, {
     method: 'POST',
     headers: { authorization: `Bearer ${env.RUNPOD_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ input }),
+    body: JSON.stringify({ input: g.input }),
+  })
+  return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
+}
+
+async function taktikModalGonder(
+  env: Env, job: Job, rid: string,
+): Promise<{ ok: boolean; status: number; body: string; erteleme?: string }> {
+  if (!env.MODAL_SECRET) return { ok: false, status: 0, body: 'MODAL_SECRET yok', erteleme: 'secret-yok' }
+  const g = await taktikGirdiHazirla(env, job, rid)
+  if (!g.ok) return g
+
+  const input: Job = { ...g.input }
+  // ozelMuzik burada İŞİ DÜŞÜRMEZ — presigned GET üret, yoksa alan konmaz (stok müziğe düşer).
+  const music_url = await muzikPresign(env, job)
+  if (music_url) input.music_url = music_url
+
+  const r = await fetch(MODAL_TAC_RUN, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ secret: env.MODAL_SECRET, input }),
   })
   return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
 }
@@ -430,9 +530,22 @@ export default {
           m.ack()
           continue
         }
-        const r = taktik ? await taktikGonder(env, is, rid) : await runpodGonder(env, is)
+        const motor = await motorSec(env, taktik ? 'taktik' : 'render')
+        let r: { ok: boolean; status: number; body: string; erteleme?: string }
+        switch (motor) {
+          case 'modal':
+            r = taktik ? await taktikModalGonder(env, is, rid) : await modalGonder(env, is)
+            break
+          case 'runpod':
+            r = taktik ? await taktikGonder(env, is, rid) : await runpodGonder(env, is)
+            break
+          default: {
+            const _eksik: never = motor
+            throw new Error(`bilinmeyen motor: ${_eksik}`)
+          }
+        }
         await env.KV.put('dispatch:son',
-          JSON.stringify({ rid, status: r.status, dal: taktik ? 'taktik' : 'render', t: simdi() }))
+          JSON.stringify({ rid, status: r.status, dal: taktik ? 'taktik' : 'render', motor, t: simdi() }))
         if (r.ok) { m.ack(); continue }
         // Taktik ertelemeleri (yapılandırma eksik / özel müzik / presign yok): retry İŞE YARAMAZ.
         // İş KAYBOLMASIN -> gövdeyi KV'ye al + ack. Sebep ayrı anahtarda görünür.
