@@ -103,8 +103,10 @@ jobs:
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
         run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          # 2026-09-14: anahtar RUNNER_TEMP'e yazılır. Eskiden ~/.appstoreconnect/private_keys'e yazılıp temizlikte
+          # siliniyordu; kalıcı runner Barış'ın Mac'i olduğu için oradaki TEK kopya yok oldu (.p8 yeniden indirilemez).
+          mkdir -p "$RUNNER_TEMP/asc"
+          ( umask 077; echo "$ASC_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" )
 
       - name: Archive
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.yukle }}
@@ -156,7 +158,7 @@ jobs:
             -archivePath $RUNNER_TEMP/MoveLog.xcarchive \
             -exportPath $RUNNER_TEMP/export \
             -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           echo "✅ Native build TestFlight'a yüklendi"
@@ -183,7 +185,7 @@ jobs:
             "3f83e5d0-92f0-4917-be9d-9fb2ee53eb9a",
           ];
           const pem = fs.readFileSync(
-            path.join(os.homedir(), ".appstoreconnect/private_keys", `AuthKey_${KID}.p8`),
+            path.join(process.env.RUNNER_TEMP, "asc", `AuthKey_${KID}.p8`),
             "utf8"
           );
 
@@ -318,7 +320,7 @@ jobs:
           security delete-keychain movelog-build.keychain 2>/dev/null || true
           rm -f /tmp/movelog-kc-onceki.txt
           rm -f "$RUNNER_TEMP/dist.p12"
-          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          rm -rf "$RUNNER_TEMP/asc"   # yalnız bu işin yazdığı kopya; ~/.appstoreconnect'e DOKUNMA
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/nickdegs.mobileprovision"
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/nickdegs-watch.mobileprovision"
           rm -f "$RUNNER_TEMP/ExportOptions.plist"
