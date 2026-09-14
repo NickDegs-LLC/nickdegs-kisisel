@@ -42,6 +42,7 @@ import { authUser } from '../lib/auth'
 import { BARIS_UID, etkinSahip, getUser, ornekMi, simdi } from '../lib/db'
 import { hata } from '../lib/hata'
 import { svKapali } from '../lib/ortak'
+import { aylikButceLimit, modMaliyet } from '../../../ortak/src/maliyet'
 
 const g = new Hono<AppEnv>()
 
@@ -95,36 +96,11 @@ void DAILY_SV_CAP
 // ÖLÇÜM: D1 `gpu_costs` → 912 GPU saniyesi / 1 adet 3B video (≈15,2 dk). RunPod flex fiyatlarıyla
 // ≈ $0,19-0,28. Kodda `'3d': 0.033` yazıyordu — gerçeğin 6-9 KATI DÜŞÜK. `flat: 0.0` ise
 // `if (maliyet > 0 && ...)` kapısı yüzünden düz/flyover videoyu bütçeye HİÇ SOKMUYORDU.
-// Bütçeler de buna göre yeniden ölçeklendi: eski değerlerle Ultra ayda 157 adet 3B üretebiliyordu
-// (= ~$39 GPU / $24,99 abonelik → zararına). Yeni tavan Ultra 32, Premium 12 adet 3B'ye denk gelir;
-// ikisi de ölçülen gerçek kullanımın (günde 1-3 video) çok üstünde.
-// 🔴 DÜZELTME 05.09 (ikinci tur): İLK ayarım YANLIŞ FİYATA dayanıyordu. Fiyatlar 27.08'de
-// YARIYA indirildi ve canlı — Play API'den DOĞRULANDI: premium.monthly $4,99 · premium.yearly
-// $29,99 · ultra.monthly $9,99 · ultra.yearly $59,99. Ben $9,99/$24,99 varsayıp Ultra'ya
-// $8,00 tavan vermiştim: bu, %15 mağaza kesintisi sonrası net gelirin (%8,49) **%94'ü**.
-// Yani tavanda çalışan bir Ultra abonesi ayda $0,49 bırakıyordu — hiçbir sabit gideri karşılamaz.
-// (Bu, 27.08'de bir kez bulunmuş hatanın tekrarı: fiyat inince tavan gelirin üstünde kalmıştı.)
+// Bedel + aylık tavan artık ortak/src/maliyet.ts (dispatch ile AYNI düğme; motor KV
+// `dispatch:motor`'a göre RunPod/Modal; tavan KV `butce-*-usd` yoksa BUTCE_VARSAYILAN).
 // YENİ KURAL: GPU maliyeti ≤ net gelirin %30'u → katkı marjı ~%66.
-//   premium.monthly net $4,24 → 1,30    ultra.monthly net $8,49 → 2,60
-// 🔴 DÜZELTME (adversaryel doğrulama): 1,30/2,60 YALNIZ "aylık abone + Small Business Program
-// kayıtlı + KDV yok" senaryosunda %30'dur. Yıllık abonede %61'e fırlıyor; SBP kaydı ise
-// DOĞRULANAMADI (otomatik değil, başvuru şart) ve TR'de KDV komisyondan ÖNCE düşülüyor.
-// 1,00/2,00 orta senaryoda %28, EN KÖTÜ senaryoda (SBP'siz + KDV + yıllık) %68 — yani her
-// senaryoda katkı marjı POZİTİF kalır. ⚠️ SBP kaydı yoksa 0,70/1,40'a inilmeli.
-const AYLIK_BUTCE_ULTRA = 2.0               // USD/ay GPU payı
-const AYLIK_BUTCE_PREMIUM = 1.0             // USD/ay GPU payı
-// ÖLÇÜM (D1 gpu_costs, 35 adet 3B video = 41.815 GPU-sn → 1195 sn/video × $0,000314/sn):
-// 3B = $0,375. Önceki 0,25 TEK bir 912 sn'lik örneğe dayanıyordu, %34 düşüktü.
-// flyover kendi kovasına alındı: eskiden `tur` hesabı onu 'flat' sayıyordu (API $0,05),
-// dispatch ise $0,08 ile sayıyordu — aynı video iki farklı fiyattaydı.
-// 🔴 DÜZELTME (adversaryel doğrulama, ÖLÇÜMLE):
-//  · flyover/flat GERÇEKTE 40-60 GPU-sn = $0,013-0,019. Benim 0,08'im 4 KAT fazlaydı ve kendi
-//    "kullanıcıyı ucuz moda yönlendir" stratejimi bozuyordu. Doğru hizalama dispatch'i 0,05'e
-//    İNDİRMEK (grup1'i 0,08'e çıkarmak değil).
-//  · `auto` için hiç ölçüm YOK (Otonom bugüne dek hiç üretilmemiş) → 0,75 uydurmaydı. 3B ile
-//    aynı kovaya alındı; ayrıca `tur` sıralaması düzeltildi (aşağı bak) — eskiden ucuz bir
-//    flat+auto videosu 0,75 ile, yani gerçek maliyetinin ~40 KATI ile cezalanıyordu.
-const MODE_MALIYET: Record<string, number> = { sv: 4.9, auto: 0.38, '3d': 0.38, flyover: 0.05, flat: 0.05 }
+//   premium.monthly $4,99 → net $4,24 → 1,25    ultra.monthly $9,99 → net $8,49 → 2,50
+//   Small Business Program kaydı Barış tarafından teyit edildi → komisyon %15.
 
 // Sokak-limiti mesajı 12 dilde (main.py:2473-2486 birebir)
 const SV_MSG: Record<string, string> = {
@@ -519,7 +495,7 @@ function svGuard(cam: unknown, upl: TrackPt[] | null, frm: number, to: number, l
 // semantiği korunur: araya giren HTTPException'da hiçbir sayaç/hak yazılmaz.
 type Prof = Record<string, unknown>
 async function bumpDailyCap(
-  db: D1Database, user: string, prof: Prof, mode: string, speed: string, cam: string,
+  db: D1Database, kv: KVNamespace, user: string, prof: Prof, mode: string, speed: string, cam: string,
   hakOdendi = false, svKm: number | null = null,
 ): Promise<{ ok: boolean; why: string; stmts: D1PreparedStatement[]; svKredi?: number }> {
   // 🔴 FİKS 05.09: admin ÖNCE tamamen muaftı — "limitsiz VE sayaçsız". Barış admin olduğu için
@@ -559,8 +535,8 @@ async function bumpDailyCap(
   // Sokak maliyeti UZUNLUKLA artar ama pano tavanı yüzünden hak başına $4,90'da durur.
   const maliyet = turMaliyet === 'sv'
     ? Math.min(svKm !== null && svKm > 0 ? svKm * SV_USD_KM : SV_USD_KREDI, SV_USD_KREDI * svKredi)
-    : (MODE_MALIYET[turMaliyet] ?? 0.02)
-  const butce = prof.ultra ? AYLIK_BUTCE_ULTRA : AYLIK_BUTCE_PREMIUM
+    : await modMaliyet(kv, turMaliyet, 0.02)
+  const butce = await aylikButceLimit(kv, !!prof.ultra)
   const harcanan = Number(u[ayk] ?? 0)
   // 🔴 FİKS 05.09 — ÖDENMİŞ HAK İKİ KEZ ÖDETİLİYORDU.
   //  (a) `video_hak`: kullanıcı video paketini SATIN ALIYOR, hak düşülüyor VE üstüne aylık
@@ -1056,7 +1032,7 @@ g.post('/api/rides/generate', authUser, async (c) => {
   const svKm = req.cam === 'pacman'
     ? await svKmOlc(db, user, upl, pyFloat(bget(body, 'from', 0)), pyFloat(bget(body, 'to', nowF)))
     : null
-  const kap = await bumpDailyCap(db, user, prof, req.mode as string, req.speed as string,
+  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string,
     req.cam as string, hakOdendi, svKm)
   if (!kap.ok) kapasiteHatasi(kap.why)
   yaz.push(...kap.stmts)
@@ -1170,7 +1146,7 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
   if (req.cam === 'pacman' && (await svKapali(env))) hata(503, SOKAK_BAKIM_MSG)
 
   const svKm2 = req.cam === 'pacman' ? await svKmOlc(db, user, upl, frm, to) : null
-  const kap = await bumpDailyCap(db, user, prof, req.mode as string, req.speed as string,
+  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string,
     req.cam as string, false, svKm2)
   if (!kap.ok) kapasiteHatasi(kap.why)
   if (req.cam === 'pacman') req.sv_pano = SV_PANO_KREDI * (kap.svKredi ?? 1)

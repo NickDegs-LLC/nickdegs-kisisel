@@ -1,4 +1,5 @@
 import { izSuz } from '../../ortak/src/izsuzgec'
+import { aylikButceLimit, butcePushGovde, modMaliyet, trGunu } from '../../ortak/src/maliyet'
 
 export type Env = {
   DB: D1Database; KV: KVNamespace; R2: R2Bucket; RENDER_Q: Queue; ORTAM: string
@@ -31,10 +32,8 @@ const simdi = () => Math.floor(Date.now() / 1000)
 // GÜNLÜK GPU HARCAMA TAVANI (05.09)
 // ÖLÇÜLEN maliyet: D1 gpu_costs → 912 GPU saniyesi / 1 adet 3B video (≈15,2 dk). RunPod flex
 // fiyatlarıyla ≈ $0,19-0,28. Koddaki eski `MODE_MALIYET['3d'] = 0.033` bunun 6-9 KATI düşüktü;
-// `flat: 0.0` ise bütçeye HİÇ girmiyordu. Buradaki tahminler ölçüme dayanır.
-// grup1.ts MODE_MALIYET ile BİREBİR olmalı — yoksa aynı video iki yolda farklı fiyatlanır.
-// 3B $0,38: 35 videoluk ölçülen kütle (41.815 GPU-sn / 1195 sn-video × $0,000314/sn).
-const MOD_USD: Record<string, number> = { '3d': 0.38, auto: 0.38, flyover: 0.05, flat: 0.05, sv: 4.9 }
+// `flat: 0.0` ise bütçeye HİÇ girmiyordu. Bedel tablosu artık ortak/src/maliyet.ts (api ile aynı
+// düğme; motor KV `dispatch:motor`'a göre RunPod/Modal).
 // Kural: 2,5 × Σ(aylık bütçeler)/30. Bugün Σ ≈ $11,70 → $0,39/gün ortalama; $1,00 patlama payı
 // bırakır. Eski $3,00 = $90/ay, toplam aylık ödeneğin 7,7 katı — fren değildi.
 // 🔴 DÜZELTME (adversaryel doğrulama): $1,00 SAHİBİN KENDİ TEST GÜNÜNÜ keserdi — Barış 05.09'da
@@ -42,9 +41,7 @@ const MOD_USD: Record<string, number> = { '3d': 0.38, auto: 0.38, flyover: 0.05,
 // TEK freni. $1,50 hem $3,00'ın "fren değil" sorununu çözer hem meşru kullanımı kesmez.
 const GUNLUK_LIMIT_VARSAYILAN = 1.5        // USD/gün
 const INCELEME = new Set(['appreview', 'appreview2'])   // App Store inceleme hesapları: tavansız
-const TR_OFS = 3 * 3600
-
-function trGunu(ts: number): string { return new Date((ts + TR_OFS) * 1000).toISOString().slice(0, 10) }
+const PARK_TTL = 7 * 86400
 
 /** Bekçi alarmı → KV 'bildirim:bekleyen' (tüketicisi: movelog-cron bildirim-kuyruk görevi). */
 async function bildirimYaz(env: Env, msg: string): Promise<void> {
@@ -54,20 +51,21 @@ async function bildirimYaz(env: Env, msg: string): Promise<void> {
   } catch { /* yut */ }
 }
 
-// AYLIK KULLANICI BÜTÇESİ — varsayılanlar grup1.ts ile aynı; KV ile deploy'suz ayarlanır.
+// AYLIK KULLANICI BÜTÇESİ — varsayılanlar ortak/src/maliyet.ts (api ile aynı düğme);
+// KV `butce-ultra-usd` / `butce-premium-usd` ile deploy'suz ayarlanır.
 // NEDEN BURADA: `grup1.bumpDailyCap` YALNIZ `/api/rides/generate` yolunda çalışıyor. Otomatik
 // üretim (activity-detect), onarım (video-butunluk) ve bekçi yolları HİÇBİR kullanıcı bütçesine
 // girmiyordu — yani abonelik başına maliyet üst sınırı fiilen YOKTU. Cron tarafı işleri
 // `oto: true` ile işaretliyor; hesap tek kapıda (burada) tutuluyor, çift sayım olmuyor.
-const BUTCE_ULTRA_VARSAYILAN = 2.0         // grup1.AYLIK_BUTCE_ULTRA ile aynı
-const BUTCE_PREMIUM_VARSAYILAN = 1.0       // grup1.AYLIK_BUTCE_PREMIUM ile aynı
 
-async function kvSayi(env: Env, anahtar: string, varsayilan: number): Promise<number> {
-  try {
-    const v = await env.KV.get(anahtar)
-    const n = v === null ? NaN : parseFloat(v)
-    return Number.isFinite(n) && n >= 0 ? n : varsayilan
-  } catch { return varsayilan }
+/** Park gövdesi + sebep. kuyruk-bekçisi önce `dispatch:park-sebep:{rid}` okur. */
+async function parkEt(
+  env: Env, rid: string, govde: unknown, sebep: string, ekstra: Record<string, unknown> = {},
+): Promise<void> {
+  const t = simdi()
+  await env.KV.put(`dispatch:bekleyen:${rid}`, JSON.stringify(govde), { expirationTtl: PARK_TTL })
+  await env.KV.put(`dispatch:park-sebep:${rid}`,
+    JSON.stringify({ t, sebep, ...ekstra }), { expirationTtl: PARK_TTL })
 }
 
 /** Otomatik işin kullanıcı aylık GPU bütçesine sığıp sığmadığı. Admin: limitsiz ama SAYILIR. */
@@ -77,9 +75,7 @@ async function aylikButce(
   const u = await env.DB.prepare('SELECT premium, ultra, admin FROM users WHERE uid = ?1')
     .bind(uid).first<{ premium: number | null; ultra: number | null; admin: number | null }>()
   if (!u) return { ok: true }                                   // kullanıcı yoksa engelleme
-  const butce = u.ultra
-    ? await kvSayi(env, 'butce-ultra-usd', BUTCE_ULTRA_VARSAYILAN)
-    : await kvSayi(env, 'butce-premium-usd', BUTCE_PREMIUM_VARSAYILAN)
+  const butce = await aylikButceLimit(env.KV, !!u.ultra)
   // ⚠️ grup1.ts TR gününe göre ay üretiyor (trDay). Burada UTC kullanılırsa ayın 1'i
   // 00:00-03:00 TR arası İKİ FARKLI kovaya yazılır ve bütçe sıfırlanmış gibi görünür.
   const ay = 'ay_' + trGunu(simdi()).slice(0, 7)
@@ -118,7 +114,7 @@ async function butceKapisi(
     // grup1.ts'teki `tur` sıralamasıyla aynı: pacman -> sv, speed=auto -> auto, sonra mod.
     // grup1.ts `turMaliyet` ile aynı: pacman -> sv, 3d -> 3d, auto -> auto, sonra mod.
     const mod = String(jb?.cam === 'pacman' ? 'sv' : jb?.mode === '3d' ? '3d' : jb?.speed === 'auto' ? 'auto' : (jb?.mode ?? 'flyover'))
-    const bedel = MOD_USD[mod] ?? 0.1
+    const bedel = await modMaliyet(env.KV, mod, 0.1)
     if (harcanan + bedel > limit) return { ok: false, harcanan, limit, tur: 'gunluk' }
     // OTOMATİK işler (cron/onarım/bekçi) kullanıcının AYLIK bütçesine de girer — API yolu
     // kendi hesabını grup1.bumpDailyCap'te tutuyor, burada çift saymıyoruz.
@@ -379,9 +375,29 @@ function izsiz(j: Job): boolean {
   return !!String(j.user ?? '') && Math.trunc(Number(j.from ?? 0)) > 0 && Math.trunc(Number(j.to ?? 0)) > 0
 }
 
+/** Oto işte bütçe push'u dönem başına en fazla 1 kez. Manuel işte her zaman bildir (Türkçe sebep). */
+async function butceKullaniciBildir(
+  env: Env, uid: string, oto: boolean, tur: 'aylik' | 'gunluk',
+): Promise<{ bildir: boolean; govde?: string }> {
+  if (!uid) return { bildir: false }
+  if (!oto) return { bildir: true }            // kullanıcının kendi bastığı iş: bugünkü davranış
+  const gun = trGunu(simdi())
+  const anahtar = tur === 'aylik'
+    ? `bildirim:butce:${uid}:aylik:${gun.slice(0, 7)}`
+    : `bildirim:butce:${uid}:gunluk:${gun}`
+  if ((await env.KV.get(anahtar)) !== null) return { bildir: false }
+  const pr = await env.DB.prepare('SELECT lang FROM users WHERE uid = ?1').bind(uid)
+    .first<{ lang: string | null }>()
+  await env.KV.put(anahtar, String(simdi()), { expirationTtl: tur === 'aylik' ? 40 * 86400 : 36 * 3600 })
+  return { bildir: true, govde: butcePushGovde(pr?.lang, tur) }
+}
+
 /** pending → failed taşı + kullanıcıya bildirim kuyruğa (api render-failed ucuyla aynı sözleşme). */
-/** pending kilidini AÇ + hata kartı + kullanıcı bildirimi. Ortak yol (izsiz / bütçe). */
-async function isiBitir(env: Env, j: Job, rid: string, sebep: string, iz: string, bildir = true): Promise<void> {
+/** pending kilidini AÇ + hata kartı + kullanıcı bildirimi. Ortak yol (izsiz / bütçe).
+ *  `pushGovde` verilirse push gövdesi o olur; failed_videos.reason hep `sebep` (Türkçe kalır). */
+async function isiBitir(
+  env: Env, j: Job, rid: string, sebep: string, iz: string, bildir = true, pushGovde?: string,
+): Promise<void> {
   const uid = String(j.user ?? '') || null
   const now = simdi()
   const pv = await env.DB.prepare('SELECT date, ts, to_ts, ride_type, mode FROM pending_videos WHERE vid = ?1')
@@ -397,7 +413,7 @@ async function isiBitir(env: Env, j: Job, rid: string, sebep: string, iz: string
   ])
   if (uid && bildir) {
     await env.KV.put(`push:bekleyen:${iz}_${rid.split('/').join('_')}_${now}`,
-      JSON.stringify({ user: uid, title: 'Video oluşturulamadı', body: sebep, ts: now, route: 'videos' }),
+      JSON.stringify({ user: uid, title: 'Video oluşturulamadı', body: pushGovde ?? sebep, ts: now, route: 'videos' }),
       { expirationTtl: 7 * 86400 })
   }
   await env.KV.put(`dispatch:${iz}:${rid}`, JSON.stringify({ t: now, uid }), { expirationTtl: 7 * 86400 })
@@ -497,21 +513,22 @@ export default {
       if (!taktik) {
         const kapi = await butceKapisi(env, m.body, rid)
         if (!kapi.ok) {
-          // İş KAYBOLMUYOR: gövde park edilir, tavan sıfırlanınca (ertesi gün) yeniden gönderilebilir.
-          await env.KV.put(`dispatch:bekleyen:${rid}`, JSON.stringify(m.body), { expirationTtl: 7 * 86400 })
+          // İş KAYBOLMUYOR: gövde park edilir, tavan sıfırlanınca (ertesi gün / ay) yeniden gönderilebilir.
+          const parkSebep = kapi.tur === 'aylik' ? 'butce-aylik' : 'butce-gunluk'
+          await parkEt(env, rid, m.body, parkSebep, { harcanan: kapi.harcanan, limit: kapi.limit })
           await env.KV.put(`dispatch:butce:${rid}`,
-            JSON.stringify({ t: simdi(), harcanan: kapi.harcanan, limit: kapi.limit }), { expirationTtl: 7 * 86400 })
+            JSON.stringify({ t: simdi(), harcanan: kapi.harcanan, limit: kapi.limit, tur: kapi.tur }), { expirationTtl: PARK_TTL })
           // 🔴 FİKS 05.09: burada `pending_videos` TEMİZLENMİYORDU → kullanıcı SONSUZ "Hazırlanıyor"
           // görürdü (aynı tuzak 4 satır aşağıda `izsiz` yolu için zaten biliniyordu). Tavan ne
           // kadar sıkılaşırsa bu yol o kadar sık tetiklenir; kilit açılmadan tavan düşürülemez.
-          // OTOMATİK iş bütçeye takıldıysa kullanıcıyı RAHATSIZ ETME: o videoyu zaten
-          // istememişti, "oluşturulamadı" bildirimi gürültüdür. Yalnız kilidi aç.
-          // Kullanıcının kendi bastığı işte sebep gösterilir.
-          await isiBitir(env, m.body ?? {}, rid,
-            kapi.tur === 'aylik'
-              ? 'Bu ayki video payın doldu. Ayın 1\'inde sıfırlanır.'
-              : 'Günlük üretim kapasitesi doldu, yarın tekrar dene.',
-            'butce', !(m.body as Record<string, unknown> | undefined)?.oto)
+          // 🔴 FİKS 14.09: oto işte de bütçe mesajını push et — ama kullanıcı başına dönem başına
+          // EN FAZLA 1 KEZ (KV bildirim:butce:{uid}:aylik|gunluk:…). Manuel işte davranış aynı.
+          const jb = (m.body ?? {}) as Record<string, unknown>
+          const sebepTr = kapi.tur === 'aylik'
+            ? 'Bu ayki video payın doldu. Ayın 1\'inde sıfırlanır.'
+            : 'Günlük üretim kapasitesi doldu, yarın tekrar dene.'
+          const push = await butceKullaniciBildir(env, String(jb.user ?? ''), !!jb.oto, kapi.tur)
+          await isiBitir(env, jb as Job, rid, sebepTr, 'butce', push.bildir, push.govde)
           await bildirimYaz(env,
             (kapi.tur === 'aylik'
               ? `💸 Kullanıcının AYLIK GPU bütçesi doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `
@@ -550,16 +567,17 @@ export default {
         // Taktik ertelemeleri (yapılandırma eksik / özel müzik / presign yok): retry İŞE YARAMAZ.
         // İş KAYBOLMASIN -> gövdeyi KV'ye al + ack. Sebep ayrı anahtarda görünür.
         if (taktik && (r as { erteleme?: string }).erteleme) {
-          const sebep = (r as { erteleme?: string }).erteleme
-          await env.KV.put(`dispatch:bekleyen:${rid}`, JSON.stringify(m.body), { expirationTtl: 7 * 86400 })
+          const sebep = (r as { erteleme?: string }).erteleme || 'endpoint-yok'
+          await parkEt(env, rid, m.body, sebep, { not: r.body })
+          // UYUMLULUK: eski bekçi `dispatch:taktik:ertelendi` okuyor — yazılmaya devam.
           await env.KV.put(`dispatch:taktik:ertelendi:${rid}`,
-            JSON.stringify({ t: simdi(), sebep, not: r.body }), { expirationTtl: 7 * 86400 })
+            JSON.stringify({ t: simdi(), sebep, not: r.body }), { expirationTtl: PARK_TTL })
           m.ack()
           continue
         }
         // 402 = bakiye yok -> retry İSRAF, bekçi/bakiye düzelince yeniden kuyruklanır; kalıcı kaydet
         if (r.status === 402) {
-          await env.KV.put(`dispatch:bekleyen:${rid}`, JSON.stringify(m.body), { expirationTtl: 7 * 86400 })
+          await parkEt(env, rid, m.body, 'bakiye')
           m.ack()
           continue
         }

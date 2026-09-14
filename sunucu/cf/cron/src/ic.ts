@@ -273,7 +273,7 @@ export async function renderDone(env: Env, body: Record<string, unknown>): Promi
 }
 
 /** main.py:1243 render-failed — pencere pending'ten taşınır + kullanıcı push'u. */
-export async function renderFailed(env: Env, rid: string, user: string | null, reason: string): Promise<void> {
+export async function renderFailed(env: Env, rid: string, user: string | null, reason: string, bildir = true): Promise<void> {
   if (!rid) return
   const now = simdi()
   const pv = await env.DB.prepare('SELECT date, ts, to_ts, ride_type, mode FROM pending_videos WHERE vid = ?1')
@@ -287,7 +287,7 @@ export async function renderFailed(env: Env, rid: string, user: string | null, r
       .bind(rid, user, reason.trim() || 'GPS verisi yetersiz', now,
         pv?.date ?? null, pv?.ts ?? null, pv?.to_ts ?? null, pv?.ride_type ?? null, pv?.mode ?? null, now),
   ])
-  if (user) {
+  if (user && bildir) {
     const pts = simdi()
     await pushreq(env, `fail_${rid.split('/').join('_')}_${pts}`,
       { user, title: 'Video oluşturulamadı', body: reason.trim() || 'Bu rota için yeterli GPS verisi yok.', ts: pts })
