@@ -1,0 +1,9 @@
+# app.nickdegs.com — sunucusuz yönlendirici (2026-09-14)
+# Eskiden bu alan adı doğrudan sunucudaki nginx'e bakıyordu (A 169.58.124.139, gri bulut):
+# sunucu kapanınca davet linkleri ölüyordu ve nginx 302'si `?invite=` kodunu düşürüyordu.
+name = "movelog-app-yonlendir"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+# DNS geçişi (A kaydı silinip bu worker'a özel alan adı bağlanınca) aşağıdaki satır açılır:
+# routes = [{ pattern = "app.nickdegs.com", custom_domain = true }]
