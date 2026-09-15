@@ -24,6 +24,16 @@ const AASA = {
   },
 }
 
+// Parmak izi = Play uygulama İMZA anahtarı (androidpublisher generatedApks, versionCode 1789402801, 15.09).
+const ASSETLINKS = [{
+  relation: ['delegate_permission/common.handle_all_urls'],
+  target: {
+    namespace: 'android_app',
+    package_name: 'com.nickdegs.movelog',
+    sha256_cert_fingerprints: ['F9:A4:01:66:F8:37:BC:BC:BE:7C:79:55:41:2B:64:12:44:6C:66:61:B1:2F:0E:F9:B2:9E:C9:24:49:EA:1D:B6'],
+  },
+}]
+
 export default {
   async fetch(req) {
     const u = new URL(req.url)
@@ -33,8 +43,8 @@ export default {
     if (u.pathname === '/.well-known/apple-app-site-association') {
       return json(AASA)
     }
-    // Play Digital Asset Links (assetlinks.json) şimdilik 404 —
-    // uygulama imza SHA-256 parmak izi bilinmiyor; uydurma içerik sunma.
+    // Play Digital Asset Links — Android App Links doğrulaması (manifest autoVerify).
+    if (u.pathname === '/.well-known/assetlinks.json') return json(ASSETLINKS)
     if (u.pathname.startsWith('/.well-known/')) return new Response('not found', { status: 404 })
 
     const invite = (u.searchParams.get('invite') || '').trim()
