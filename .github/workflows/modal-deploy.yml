@@ -1,0 +1,104 @@
+# Modal render uygulamaları → dağıtım (2026-09-15). Eskiden Mac'ten `modal deploy`; artık Mac gerekmez.
+# push (main): movelog_render.py / movelog_tactical.py değişince o uygulama dağıtılır + saglik() koşar.
+# Sırlar: MODAL_TOKEN_ID / MODAL_TOKEN_SECRET (daclen10 çalışma alanı). Modal sırları (ghcr, movelog-*) Modal'da durur.
+name: Modal render → dağıtım
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sunucu/modal/movelog_render.py'
+      - 'sunucu/modal/movelog_tactical.py'
+  workflow_dispatch:
+    inputs:
+      uygulama:
+        description: 'Dağıtılacak Modal uygulaması'
+        required: true
+        type: choice
+        options: [render, tactical, ikisi]
+      saglik:
+        description: 'Dağıtımdan sonra saglik() koş (3B: kısa T4 GPU)'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: modal-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+  MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+jobs:
+  dagit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Modal istemcisi
+        run: pip install --quiet modal==1.5.5
+
+      - name: Plan
+        id: plan
+        env:
+          OLAY: ${{ github.event_name }}
+          ONCE: ${{ github.event.before }}
+          SECIM: ${{ inputs.uygulama }}
+          SAGLIK: ${{ inputs.saglik }}
+        run: |
+          set -euo pipefail
+          if [ "$OLAY" = "workflow_dispatch" ]; then
+            case "$SECIM" in render) U="render" ;; tactical) U="tactical" ;; ikisi) U="render tactical" ;; esac
+            S="$SAGLIK"
+          else
+            DEG=$(git diff --name-only "$ONCE" "$GITHUB_SHA" -- sunucu/modal)
+            U=""
+            echo "$DEG" | grep -qx 'sunucu/modal/movelog_render.py' && U="$U render"
+            echo "$DEG" | grep -qx 'sunucu/modal/movelog_tactical.py' && U="$U tactical"
+            S="true"
+          fi
+          echo "uygulamalar=$U" >> "$GITHUB_OUTPUT"
+          echo "saglik=$S" >> "$GITHUB_OUTPUT"
+          echo "- Uygulama: ${U:-yok} · sağlık: $S" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: modal deploy
+        if: steps.plan.outputs.uygulamalar != ''
+        env:
+          U: ${{ steps.plan.outputs.uygulamalar }}
+        run: |
+          set -euo pipefail
+          for u in $U; do
+            echo "▶ movelog_$u.py"
+            modal deploy "sunucu/modal/movelog_$u.py"
+            echo "- ✅ movelog-$u dağıtıldı" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: saglik()
+        if: steps.plan.outputs.uygulamalar != '' && steps.plan.outputs.saglik == 'true'
+        env:
+          U: ${{ steps.plan.outputs.uygulamalar }}
+        run: |
+          set -euo pipefail
+          for u in $U; do
+            python - "$u" <<'PY'
+          import json, sys, modal
+          u = sys.argv[1]
+          r = modal.Function.from_name(f"movelog-{u}", "saglik").remote()
+          ok = bool(r.get("hepsi_ok")) if isinstance(r, dict) else False
+          print(f"movelog-{u} saglik:", json.dumps(r, ensure_ascii=False, default=str)[:1500])
+          sys.exit(0 if ok else 1)
+          PY
+            echo "- ✅ movelog-$u saglik hepsi_ok" >> "$GITHUB_STEP_SUMMARY"
+          done

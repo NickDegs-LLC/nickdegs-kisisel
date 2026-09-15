@@ -6,9 +6,9 @@
 #   ⚠️ Kural: migration dosyaları idempotent yazılır (CREATE ... IF NOT EXISTS) — yeniden koşum zararsız olsun.
 # workflow_dispatch: worker listesi ve/veya tek bir migration dosyası elle verilir.
 #
-# harita-katman BİLEREK YOK: deploy.sh önek/KV kimliğini sır dosyalarından doldurur; düz
-# `wrangler deploy` yer tutucu değerlerle canlı harita katmanını bozar.
-# Sırlar: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (repo secrets). Worker sırları Cloudflare'de durur.
+# harita-katman düz `wrangler deploy` ile DAĞITILMAZ (yer tutucu önek/KV canlıyı bozar) → kendi deploy.sh'ı
+# HARITA_UC_ONEK / MOVELOG_KEY sırlarıyla koşar; KV şalterlerini yalnız YOKSA tohumlar (15.09).
+# Sırlar: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, HARITA_UC_ONEK, MOVELOG_KEY (repo secrets).
 name: Cloudflare Workers → dağıtım
 
 on:
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       workerlar:
-        description: 'Worker klasörleri, boşlukla (api gps dispatch cron app-yonlendir movelog-karo)'
+        description: 'Worker klasörleri, boşlukla (api gps dispatch cron app-yonlendir movelog-karo harita-katman)'
         required: false
         default: ''
       d1_dosya:
@@ -61,7 +61,7 @@ jobs:
           ELLE_D1: ${{ inputs.d1_dosya }}
         run: |
           set -euo pipefail
-          IZINLI="api gps dispatch cron app-yonlendir movelog-karo"
+          IZINLI="api gps dispatch cron app-yonlendir movelog-karo harita-katman"
           if [ "$OLAY" = "workflow_dispatch" ]; then
             W="$ELLE_W"; D1="$ELLE_D1"
           else
@@ -114,10 +114,17 @@ jobs:
         working-directory: sunucu/cf
         env:
           W: ${{ steps.plan.outputs.workerlar }}
+          HARITA_UC_ONEK: ${{ secrets.HARITA_UC_ONEK }}
+          MOVELOG_KEY: ${{ secrets.MOVELOG_KEY }}
+          HARITA_KV_ID: 7e558455c099483abb87a2afbffca190
         run: |
           set -euo pipefail
           for w in $W; do
             echo "▶ $w"
-            (cd "$w" && npx --yes wrangler@4 deploy 2>&1 | grep -vE 'telemetry')
+            if [ "$w" = "harita-katman" ]; then
+              bash harita-katman/deploy.sh 2>&1 | grep -vE 'telemetry'
+            else
+              (cd "$w" && npx --yes wrangler@4 deploy 2>&1 | grep -vE 'telemetry')
+            fi
             echo "- ✅ $w" >> "$GITHUB_STEP_SUMMARY"
           done

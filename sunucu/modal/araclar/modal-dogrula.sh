@@ -1,6 +1,6 @@
 #!/bin/bash
-# Sır dizini: Mac'te ~/.nickdegs/anahtarlar/movelog-sunucu, yoksa sunucuda /opt/matrix/secrets
-SIR_DIZIN="${SIR_DIZIN:-$HOME/.nickdegs/anahtarlar/movelog-sunucu}"; [ -d "$SIR_DIZIN" ] || SIR_DIZIN=/opt/matrix/secrets
+# Sır dizini: Mac'te ~/.nickdegs/anahtarlar/movelog-sunucu
+SIR_DIZIN="${SIR_DIZIN:-$HOME/.nickdegs/anahtarlar/movelog-sunucu}"
 # Kullanım: modal-dogrula.sh [taktik|render]  — bayrak çevrildikten sonraki ilk işi D1/KV/R2 izleriyle doğrular (salt-okuma)
 set -a; . $SIR_DIZIN/movelog-cf.conf; set +a
 A=https://api.cloudflare.com/client/v4/accounts/$MOVELOG_CF_ACCOUNT_ID; H="Authorization: Bearer $MOVELOG_CF_TOKEN"

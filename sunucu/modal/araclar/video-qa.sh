@@ -1,7 +1,7 @@
 #!/bin/bash
 # Gerekir: ffmpeg/ffprobe + rclone (sunucuda var; Mac'te brew install ffmpeg).
-# Sır dizini: Mac'te ~/.nickdegs/anahtarlar/movelog-sunucu, yoksa sunucuda /opt/matrix/secrets
-SIR_DIZIN="${SIR_DIZIN:-$HOME/.nickdegs/anahtarlar/movelog-sunucu}"; [ -d "$SIR_DIZIN" ] || SIR_DIZIN=/opt/matrix/secrets
+# Sır dizini: Mac'te ~/.nickdegs/anahtarlar/movelog-sunucu
+SIR_DIZIN="${SIR_DIZIN:-$HOME/.nickdegs/anahtarlar/movelog-sunucu}"
 # kullanım: video-qa.sh <r2_key>  — R2'den indir, ölç, sil (salt-okuma)
 set -a; . $SIR_DIZIN/movelog-r2.conf; set +a
 export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \

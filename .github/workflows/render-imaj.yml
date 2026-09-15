@@ -1,0 +1,106 @@
+# Render motoru imajı → ghcr (2026-09-15). Eskiden sunucuda `docker build/push` idi; sunucu artık köprü.
+# Zincir ARTIMLI: Dockerfile.vNNN `FROM ${BASE}` (bir önceki imaj) + birkaç COPY → hızlı derlenir.
+# Bu iş yalnız imajı üretir; canlıya alma = sunucu/modal/movelog_*.py IMAJ etiketini güncelle → main
+# (modal-deploy.yml). RunPod yedeği kullanılırsa şablon imajı ayrıca güncellenir.
+name: Render motoru imajı → ghcr
+
+on:
+  workflow_dispatch:
+    inputs:
+      motor:
+        description: 'render (3B, sunucu/render-worker) | tactical (taktik, sunucu/cf/tactical-runpod)'
+        required: true
+        type: choice
+        options: [render, tactical]
+      dockerfile:
+        description: 'Dockerfile adı (ör. Dockerfile.v152)'
+        required: true
+      etiket:
+        description: 'İmaj etiketi (ör. v152)'
+        required: true
+      base:
+        description: 'BASE build-arg (boş = Dockerfile varsayılanı)'
+        required: false
+        default: ''
+      ustune_yaz:
+        description: 'Etiket ghcr''de varsa üzerine yaz'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: render-imaj-${{ inputs.motor }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  derle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Girdi denetimi
+        id: g
+        env:
+          MOTOR: ${{ inputs.motor }}
+          DF: ${{ inputs.dockerfile }}
+          ET: ${{ inputs.etiket }}
+          BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          case "$MOTOR" in
+            render) CTX=sunucu/render-worker ;;
+            tactical) CTX=sunucu/cf/tactical-runpod ;;
+            *) echo "::error::motor render|tactical"; exit 1 ;;
+          esac
+          [[ "$DF" =~ ^Dockerfile(\.[A-Za-z0-9_-]+)?$ ]] || { echo "::error::geçersiz dockerfile adı"; exit 1; }
+          [[ "$ET" =~ ^v[0-9]+[A-Za-z0-9._-]*$ ]] || { echo "::error::etiket vNNN biçiminde olmalı"; exit 1; }
+          [ -f "$CTX/$DF" ] || { echo "::error::$CTX/$DF yok"; exit 1; }
+          if [ -n "$BASE" ] && ! [[ "$BASE" =~ ^ghcr\.io/nickdegs/movelog-(render|tactical):[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::BASE yalnız ghcr.io/nickdegs/movelog-* olabilir"; exit 1
+          fi
+          echo "ctx=$CTX" >> "$GITHUB_OUTPUT"
+          echo "imaj=ghcr.io/nickdegs/movelog-$MOTOR:$ET" >> "$GITHUB_OUTPUT"
+
+      - name: Disk aç (tactical tabanı ~10 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af >/dev/null
+          df -h /
+
+      - name: ghcr giriş
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u nickdegs --password-stdin
+
+      - name: Etiket çakışması
+        if: ${{ !inputs.ustune_yaz }}
+        env:
+          IMAJ: ${{ steps.g.outputs.imaj }}
+        run: |
+          if docker manifest inspect "$IMAJ" >/dev/null 2>&1; then
+            echo "::error::$IMAJ zaten var — bilerek yazılacaksa ustune_yaz=true"; exit 1
+          fi
+
+      - name: Derle + gönder
+        env:
+          CTX: ${{ steps.g.outputs.ctx }}
+          DF: ${{ inputs.dockerfile }}
+          IMAJ: ${{ steps.g.outputs.imaj }}
+          BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ -n "$BASE" ]; then ARGS=(--build-arg "BASE=$BASE"); fi
+          docker build "${ARGS[@]}" -f "$CTX/$DF" -t "$IMAJ" "$CTX"
+          docker push "$IMAJ"
+          {
+            echo "- ✅ \`$IMAJ\`"
+            echo "- Canlıya alma: \`sunucu/modal/movelog_*.py\` içindeki IMAJ etiketini güncelle → main (modal-deploy)"
+          } >> "$GITHUB_STEP_SUMMARY"
