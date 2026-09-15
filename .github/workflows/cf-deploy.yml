@@ -1,0 +1,123 @@
+# Cloudflare Workers → dağıtım (2026-09-15, Barış: "Mac kapanırsa ne olacak").
+# GitHub'ın bulut runner'ında çalışır (self-hosted = Barış'ın Mac'i → Mac kapalıyken bekler; bu iş onu gerektirmez).
+#
+# push (main, sunucu/cf/**): yalnız DEĞİŞEN worker'lar dağıtılır; bu push'ta EKLENEN
+#   sunucu/cf/db/migrations/*.sql dosyaları dağıtımdan ÖNCE movelog-db'ye uygulanır.
+#   ⚠️ Kural: migration dosyaları idempotent yazılır (CREATE ... IF NOT EXISTS) — yeniden koşum zararsız olsun.
+# workflow_dispatch: worker listesi ve/veya tek bir migration dosyası elle verilir.
+#
+# harita-katman BİLEREK YOK: deploy.sh önek/KV kimliğini sır dosyalarından doldurur; düz
+# `wrangler deploy` yer tutucu değerlerle canlı harita katmanını bozar.
+# Sırlar: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (repo secrets). Worker sırları Cloudflare'de durur.
+name: Cloudflare Workers → dağıtım
+
+on:
+  push:
+    branches: [main]
+    paths: ['sunucu/cf/**']
+  workflow_dispatch:
+    inputs:
+      workerlar:
+        description: 'Worker klasörleri, boşlukla (api gps dispatch cron app-yonlendir movelog-karo)'
+        required: false
+        default: ''
+      d1_dosya:
+        description: 'Önce uygulanacak migration (ör. sunucu/cf/db/migrations/0006_iap_bildirim.sql)'
+        required: false
+        default: ''
+
+concurrency:
+  group: cf-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  dagit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Plan (hangi worker / migration)
+        id: plan
+        env:
+          OLAY: ${{ github.event_name }}
+          ONCE: ${{ github.event.before }}
+          ELLE_W: ${{ inputs.workerlar }}
+          ELLE_D1: ${{ inputs.d1_dosya }}
+        run: |
+          set -euo pipefail
+          IZINLI="api gps dispatch cron app-yonlendir movelog-karo"
+          if [ "$OLAY" = "workflow_dispatch" ]; then
+            W="$ELLE_W"; D1="$ELLE_D1"
+          else
+            if [ -z "$ONCE" ] || [ "$ONCE" = "0000000000000000000000000000000000000000" ]; then
+              echo "::error::önceki commit yok — workflow_dispatch ile elle dağıt"; exit 1
+            fi
+            DEG=$(git diff --name-only "$ONCE" "$GITHUB_SHA" -- sunucu/cf)
+            W=""
+            for w in $IZINLI; do
+              if echo "$DEG" | grep -q "^sunucu/cf/$w/"; then W="$W $w"; fi
+            done
+            if echo "$DEG" | grep -qE '^sunucu/cf/(ortak/|package(-lock)?\.json$|tsconfig\.json$)'; then
+              W="$W api gps dispatch cron"
+            fi
+            D1=$(git diff --name-only --diff-filter=A "$ONCE" "$GITHUB_SHA" -- sunucu/cf/db/migrations | grep '\.sql$' | sort | tr '\n' ' ' || true)
+          fi
+          W=$(echo $W | tr ' ' '\n' | awk 'NF && !g[$0]++' | tr '\n' ' ')
+          for w in $W; do
+            case " $IZINLI " in *" $w "*) ;; *) echo "::error::izinsiz worker: $w"; exit 1 ;; esac
+          done
+          for f in $D1; do
+            case "$f" in sunucu/cf/db/migrations/*.sql) [ -f "$f" ] || { echo "::error::dosya yok: $f"; exit 1; } ;;
+              *) echo "::error::izinsiz dosya: $f"; exit 1 ;; esac
+          done
+          echo "workerlar=$W" >> "$GITHUB_OUTPUT"
+          echo "d1=$D1" >> "$GITHUB_OUTPUT"
+          echo "### Plan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: ${W:-yok}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- D1: ${D1:-yok}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bağımlılıklar + typecheck
+        if: steps.plan.outputs.workerlar != '' || steps.plan.outputs.d1 != ''
+        working-directory: sunucu/cf
+        run: npm ci --no-audit --no-fund && npm run typecheck
+
+      - name: D1 migration (movelog-db)
+        if: steps.plan.outputs.d1 != ''
+        working-directory: sunucu/cf/api
+        env:
+          D1: ${{ steps.plan.outputs.d1 }}
+        run: |
+          set -euo pipefail
+          for f in $D1; do
+            echo "▶ $f"
+            npx --yes wrangler@4 d1 execute movelog-db --remote --file "$GITHUB_WORKSPACE/$f"
+          done
+
+      - name: Worker dağıtımı
+        if: steps.plan.outputs.workerlar != ''
+        working-directory: sunucu/cf
+        env:
+          W: ${{ steps.plan.outputs.workerlar }}
+        run: |
+          set -euo pipefail
+          for w in $W; do
+            echo "▶ $w"
+            (cd "$w" && npx --yes wrangler@4 deploy 2>&1 | grep -vE 'telemetry')
+            echo "- ✅ $w" >> "$GITHUB_STEP_SUMMARY"
+          done
