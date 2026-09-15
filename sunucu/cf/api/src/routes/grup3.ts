@@ -149,7 +149,7 @@ async function uyeBildir(env: Env, username: string, isim: string | null, yontem
 // ---------- RS256 (Apple/Google ID token) doğrulama ----------
 
 /** main.py:560 _verify_apple_rs256 eşleniği — WebCrypto RSASSA-PKCS1-v1_5/SHA-256 (jenerik, Google da kullanır). */
-async function rs256Dogrula(token: string, jwk: { n?: string; e?: string }): Promise<boolean> {
+export async function rs256Dogrula(token: string, jwk: { n?: string; e?: string }): Promise<boolean> {
   try {
     const [h, p, s] = token.split('.')
     const key = await crypto.subtle.importKey(
@@ -163,7 +163,7 @@ async function rs256Dogrula(token: string, jwk: { n?: string; e?: string }): Pro
 
 /** JWKS getir — KV cache TTL 3600 (main.py:551/626'daki 1 saatlik bellek cache eşleniği).
  *  fetch/parse hatası Python'daki gibi yukarı fırlar (→ text/plain 500). */
-async function jwksGetir(env: Env, kvAnahtar: string, url: string): Promise<Array<{ kid?: string; n?: string; e?: string }>> {
+export async function jwksGetir(env: Env, kvAnahtar: string, url: string): Promise<Array<{ kid?: string; n?: string; e?: string }>> {
   try {
     const cached = (await env.KV.get(kvAnahtar, 'json')) as Array<{ kid?: string; n?: string; e?: string }> | null
     if (Array.isArray(cached) && cached.length) return cached
