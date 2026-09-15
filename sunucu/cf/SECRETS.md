@@ -111,3 +111,8 @@ alındı (scope=firebase.messaging, expires_in 3599) — token isteği push değ
   movelog-dispatch'e 'golge:' önek koruması eklendi — golge işler RunPod'a GİTMEZ, KV `dispatch:golge:*`).
 - Aday ek sırlar (Barış kararı bekler): JWT_SECRET (cron video-kontrol teslim testi),
   ASC_KEY_ID/ASC_ISSUER_ID/ASC_APP_ID/ASC_P8 (yorum-watch + review-state).
+
+## movelog-karo (2026-09-15)
+| Sır | Worker | Kaynak | Not |
+|---|---|---|---|
+| HARITA_ONEK | movelog-karo | Mac `~/.nickdegs/anahtarlar/movelog-sunucu/harita-uc.conf` → `HARITA_UC_ONEK` | harita-katman önekli karo yolu; service binding ile kullanılır, istemciye açılmaz. KV `mapconfig.tiles` = `https://karo.nickdegs.com/sat/{z}/{x}/{y}.jpg` |

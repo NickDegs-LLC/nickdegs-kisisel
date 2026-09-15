@@ -1,0 +1,15 @@
+# movelog-karo — Android harita sohbeti (osmdroid) için SUNUCUSUZ uydu karosu (15.09).
+# KV `mapconfig.tiles` → https://karo.nickdegs.com/sat/{z}/{x}/{y}.jpg
+# Karo harita-katman'dan SERVICE BINDING ile alınır: önek istemciye açılmaz, sunucuya hiç gidilmez.
+# Veri üretmez, harita katmanına yazmaz — salt-okur tüketici.
+# Sır: HARITA_ONEK (Mac ~/.nickdegs/anahtarlar/movelog-sunucu/harita-uc.conf → HARITA_UC_ONEK)
+#   printf %s "$HARITA_UC_ONEK" | npx wrangler@4 secret put HARITA_ONEK
+name = "movelog-karo"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+routes = [{ pattern = "karo.nickdegs.com", custom_domain = true }]
+
+[[services]]
+binding = "HARITA"
+service = "harita-katman"
