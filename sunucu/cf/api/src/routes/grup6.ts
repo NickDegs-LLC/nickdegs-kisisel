@@ -1,10 +1,13 @@
 // grup6 — api/iap + api/integrity + api/attest + api/local-renders + api/groupvideo +
-//         api/safety + api/routes (15 uç) — main.py birebir portu (sözleşme: cf/contracts/grup6.json)
+//         api/safety + api/routes (main.py birebir) + App Store/Play sunucu-sunucu bildirimleri
+//         (sözleşme: cf/contracts/grup6.json; bildirim uçları yeni)
 //
 // Kapsanan uçlar (TAM yol; mount kökü '/'):
 //   POST   /api/iap/verify          — StoreKit2 JWS: WebCrypto ES256 + elle x5c zincir doğrulama (pinli Apple Root G3)
 //   POST   /api/iap/google          — Play abonelik: SA RS256 JWT (WebCrypto) + androidpublisher fetch
 //   POST   /api/iap/google/boost    — Play consumable; idempotensi anahtarı orderId; sku encodeURIComponent'li
+//   POST   /api/iap/apple/bildirim  — App Store Server Notifications V2 (auth YOK; JWS + pinli Root G3)
+//   POST   /api/iap/google/bildirim — Play RTDN Pub/Sub push (OIDC Bearer; JWKS jwks:google)
 //   GET    /api/integrity/nonce     — KV integrity_nonce:{uid} (TTL 600)
 //   POST   /api/integrity           — Play Integrity decode; FAIL-OPEN; sayaçlar D1 integrity_stats
 //   GET    /api/attest/challenge    — KV attest_challenge:{uid} (TTL 600)
@@ -33,6 +36,11 @@ import { authUser, b64uDecode, b64uEncode } from '../lib/auth'
 import { getUser, jsonGet, jsonSet, simdi } from '../lib/db'
 import { Hata, hata } from '../lib/hata'
 import { adminq as adminqLib, pushq as pushqLib, svKapali } from '../lib/ortak'
+import { jwksGetir, rs256Dogrula } from './grup3'
+import {
+  abonelikUygula, appleAboneDurum, bildirimKararOku, bildirimKaydet, bildirimTekrar,
+  googleAboneDurum, kullaniciAdi,
+} from '../lib/iap-abonelik'
 
 const g = new Hono<AppEnv>()
 const enc = new TextEncoder()
@@ -48,6 +56,7 @@ const VIDEO_IDS: Record<string, number> = { 'com.nickdegs.kisisel.video.uclu': 3
 const ULTRA_IDS = new Set(['com.nickdegs.kisisel.ultra.monthly', 'com.nickdegs.kisisel.ultra.yearly'])
 const SUB_IDS = new Set(['com.nickdegs.kisisel.premium.monthly', 'com.nickdegs.kisisel.premium.yearly', ...ULTRA_IDS])
 const ANDROID_PKG = 'com.nickdegs.movelog'
+// İnceleme hesapları DOKUNMA = appreview/appreview2 — lib/iap-abonelik.ts (cron premium-suresi.ts ile AYNEN aynı)
 const ANDROID_BOOST_SKU = 'boost_daily2x'
 // ANDROID TÜKETİLEBİLİR PAKETLER (Android 1.61, 2026-08-31) — main.py'de YOKTU (Google dalında yalnız
 // boost vardı). Apple ürünlerinin Play karşılıkları; adlar birebir eşlenik (…video.uclu → video_uclu).
@@ -610,6 +619,13 @@ g.post('/api/iap/verify', authUser, async (c) => {
         `💰 Move Log Abonelik\n${ad} → ${ultra ? 'ULTRA' : 'Premium'} · iOS${deneme}\n` +
         `Ürün: ${pid.split('.').pop()} · bitiş ${expS}\nToplam: ${say.abone} abone · ${say.n} üye`)
     }
+    // Bildirim eşleşmesi: originalTransactionId yenilemelerde sabit kalır, transactionId değişir.
+    const orig = pyStr(p.originalTransactionId)
+    if (orig && orig !== tid) {
+      await db.prepare(
+        'INSERT OR IGNORE INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(orig, user, pid, ts).run()
+    }
     return c.json({ ok: true, premium: true })
   }
 
@@ -760,6 +776,313 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
 
   const sayac = await boostArtir(db, user)
   return c.json({ ok: true, boost_mult: 1 + sayac })       // admin bildirimi YOK (iOS'tan farklı)
+})
+
+// ---------------------------------------------------------------------------
+// App Store Server Notifications V2 + Play RTDN
+// ---------------------------------------------------------------------------
+const RTDN_AUD_VARSAYILAN = 'https://kisisel-api.nickdegs.com/api/iap/google/bildirim'
+const RTDN_SA_VARSAYILAN = 'movelog-deploy@move-log-500805.iam.gserviceaccount.com'
+const GOOGLE_ISS = new Set(['https://accounts.google.com', 'accounts.google.com'])
+
+function tuketilebilirMi(pid: string): boolean {
+  return Object.hasOwn(SOKAK_IDS, pid) || Object.hasOwn(VIDEO_IDS, pid) || pid === BOOST_2X_ID
+}
+
+function epochMs(v: unknown): number {
+  if (!pyTruthy(v)) return 0
+  const n = Math.floor(Number(v) / 1000)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function rfc3339Sn(iso: string): number {
+  if (!iso) return 0
+  const t = Math.floor(Date.parse(iso) / 1000)
+  return Number.isFinite(t) && t > 0 ? t : 0
+}
+
+function pubsubDataCoz(b64: string): Record<string, unknown> {
+  let s = b64.replace(/-/g, '+').replace(/_/g, '/')
+  s += '='.repeat((4 - (s.length % 4)) % 4)
+  return nesne(JSON.parse(td.decode(stdB64Decode(s))))
+}
+
+function hataKisa(e: unknown): string {
+  return ('hata:' + String(e)).replace(/\s+/g, ' ').slice(0, 80)
+}
+
+async function rtdnOidcDogrula(env: Env, auth: string | undefined): Promise<boolean> {
+  if (!auth || !auth.startsWith('Bearer ')) return false
+  const tok = auth.slice(7).trim()
+  if (!tok) return false
+  const parca = tok.split('.')
+  if (parca.length !== 3) return false
+  let header: Record<string, unknown>
+  let payload: Record<string, unknown>
+  try {
+    header = JSON.parse(td.decode(b64uDecode(parca[0]))) as Record<string, unknown>
+    payload = JSON.parse(td.decode(b64uDecode(parca[1]))) as Record<string, unknown>
+  } catch {
+    return false
+  }
+  if (header.alg !== 'RS256') return false
+  const keys = await jwksGetir(env, 'jwks:google', 'https://www.googleapis.com/oauth2/v3/certs')
+  const jwk = keys.find((k) => k.kid === header.kid)
+  if (!jwk || !(await rs256Dogrula(tok, jwk))) return false
+  if (!GOOGLE_ISS.has(pyStr(payload.iss))) return false
+  const audBeklenen = env.RTDN_AUD || RTDN_AUD_VARSAYILAN
+  const audRaw = payload.aud
+  const audler = Array.isArray(audRaw) ? audRaw.map((a) => String(a)) : [pyStr(audRaw)]
+  if (!audler.includes(audBeklenen)) return false
+  if (pyStr(payload.email) !== (env.RTDN_SA || RTDN_SA_VARSAYILAN)) return false
+  if (payload.email_verified !== true) return false
+  if (Number(payload.exp ?? 0) <= simdi()) return false
+  return true
+}
+
+async function googleSubV2(env: Env, tok: string): Promise<{ status: number; d: Record<string, unknown> | null }> {
+  const at = await saErisimToken(env, 'androidpublisher')
+  if (!at) return { status: 503, d: null }
+  try {
+    const r = await fetch(
+      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${ANDROID_PKG}/purchases/subscriptionsv2/tokens/${encodeURIComponent(tok)}`,
+      { headers: { Authorization: 'Bearer ' + at } })
+    let d: Record<string, unknown> | null = null
+    try { d = nesne(await r.json()) } catch { d = null }
+    return { status: r.status, d }
+  } catch {
+    return { status: 0, d: null }   // ağ → çağıran 500 (Pub/Sub yeniden dener)
+  }
+}
+
+function googleMaxBitis(d: Record<string, unknown>): number {
+  const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
+  let m = 0
+  for (const li of lineItems) {
+    const t = rfc3339Sn(pyStr(nesne(li).expiryTime))
+    if (t > m) m = t
+  }
+  return m
+}
+
+function googleUltraMi(d: Record<string, unknown>): boolean {
+  const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
+  return lineItems.some((li) => pyStr(nesne(li).productId).includes('ultra'))
+}
+
+async function iapUidBul(db: D1Database, ...tidler: string[]): Promise<string | null> {
+  const dolu = tidler.filter(Boolean)
+  if (!dolu.length) return null
+  const yer = dolu.map(() => '?').join(',')
+  const r = await db.prepare(`SELECT uid FROM iap_transactions WHERE tid IN (${yer}) LIMIT 1`)
+    .bind(...dolu).first<{ uid: string }>()
+  return r?.uid ?? null
+}
+
+// ---------- POST /api/iap/apple/bildirim — App Store Server Notifications V2 (auth YOK) ----------
+g.post('/api/iap/apple/bildirim', async (c) => {
+  const body = await bodyAl(c)
+  const p = await storekitJwsDogrula(pyStr(body.signedPayload))
+  if (!p) hata(401, 'geçersiz veya doğrulanamayan bildirim')
+  const data = nesne(p.data)
+  if (pyStr(data.bundleId) !== IAP_BUNDLE_ID) hata(400, 'bundleId uyuşmuyor')
+  const uuid = pyStr(p.notificationUUID)
+  if (!uuid) hata(400, 'notificationUUID yok')
+  const db = c.env.DB
+  const eski = await bildirimKararOku(db, uuid)
+  if (bildirimTekrar(eski)) return c.json({ ok: true, tekrar: true })
+  const tip = pyStr(p.notificationType)
+  const alt = pyStr(p.subtype) || null
+  const ortam = pyStr(data.environment) || null
+  const kaydet = (satir: { uid?: string | null; pid?: string | null; karar: string; bitis?: number | null }) =>
+    bildirimKaydet(db, { id: uuid, platform: 'apple', tip, alt_tip: alt, ortam, ...satir })
+  try {
+    if (ortam === 'Sandbox') {
+      await kaydet({ karar: 'yok-sayildi:sandbox' })
+      return c.json({ ok: true })
+    }
+    if (tip === 'TEST') {
+      await kaydet({ karar: 'yok-sayildi:test' })
+      return c.json({ ok: true })
+    }
+    const txJws = pyStr(data.signedTransactionInfo)
+    const tx = txJws ? await storekitJwsDogrula(txJws) : null
+    if (!tx) hata(400, 'signedTransactionInfo doğrulanamadı')
+    let renewal: Record<string, unknown> = {}
+    const renJws = pyStr(data.signedRenewalInfo)
+    if (renJws) {
+      const r = await storekitJwsDogrula(renJws)
+      if (r) renewal = r
+    }
+    const tid = pyStr(tx.transactionId)
+    const orig = pyStr(tx.originalTransactionId)
+    const pid = pyStr(tx.productId)
+    const uid = await iapUidBul(db, orig, tid)
+    if (!uid) {
+      await kaydet({ pid, karar: 'kullanici-yok' })
+      await adminq(c.env, `💳 Move Log bildirim: kullanıcı yok · apple · ${tip}`)
+      return c.json({ ok: true })
+    }
+    const ts = simdi()
+    if (tid) {
+      await db.prepare(
+        'INSERT OR IGNORE INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(tid, uid, pid || 'apple', ts).run()
+    }
+    const prof = await getUser(db, uid)
+    const ad = kullaniciAdi(prof?.name, uid)
+    if (SUB_IDS.has(pid)) {
+      const exp = epochMs(tx.expiresDate)
+      const grace = epochMs(renewal.gracePeriodExpiresDate)
+      const dur = appleAboneDurum(tip, tx.revocationDate, exp, grace, ts)
+      const karar = await abonelikUygula(db, uid, {
+        aktif: dur.aktif, ultra: ULTRA_IDS.has(pid), bitis: dur.bitis,
+      }, { env: c.env, ad, platform: 'apple', tip })
+      await kaydet({ uid, pid, karar, bitis: dur.bitis })
+      return c.json({ ok: true })
+    }
+    if (tuketilebilirMi(pid) && (tip === 'REFUND' || tip === 'REVOKE')) {
+      await kaydet({ uid, pid, karar: 'yok-sayildi:tuketilebilir-iade' })
+      await adminq(c.env, `💸 Move Log iade: ${ad} · ${pid.split('.').pop() || pid}`)
+      return c.json({ ok: true })
+    }
+    await kaydet({ uid, pid, karar: 'yok-sayildi:' + (tip || 'bilinmeyen') })
+    return c.json({ ok: true })
+  } catch (e) {
+    if (e instanceof Hata) throw e
+    try { await kaydet({ karar: hataKisa(e) }) } catch { /* yazılamazsa da 500 */ }
+    hata(500, 'bildirim işlenemedi')
+  }
+})
+
+// ---------- POST /api/iap/google/bildirim — Play RTDN (Pub/Sub push, OIDC zorunlu) ----------
+g.post('/api/iap/google/bildirim', async (c) => {
+  if (!(await rtdnOidcDogrula(c.env, c.req.header('Authorization')))) hata(401, 'geçersiz RTDN token')
+  const body = await bodyAl(c)
+  const msg = nesne(body.message)
+  const mid = pyStr(msg.messageId) || pyStr(msg.message_id)
+  if (!mid) hata(400, 'messageId yok')
+  const db = c.env.DB
+  const eski = await bildirimKararOku(db, mid)
+  if (bildirimTekrar(eski)) return c.json({ ok: true, tekrar: true })
+  const kaydet = (satir: { tip?: string | null; alt_tip?: string | null; uid?: string | null; pid?: string | null; karar: string; bitis?: number | null }) =>
+    bildirimKaydet(db, { id: mid, platform: 'google', ...satir })
+  try {
+    let dev: Record<string, unknown>
+    try {
+      dev = pubsubDataCoz(pyStr(msg.data))
+    } catch {
+      await kaydet({ karar: 'yok-sayildi:govde' })
+      return c.json({ ok: true })
+    }
+    if (pyStr(dev.packageName) !== ANDROID_PKG) {
+      await kaydet({ tip: 'paket', karar: 'yok-sayildi:paket' })
+      return c.json({ ok: true })
+    }
+    if ('testNotification' in dev && dev.testNotification !== undefined && dev.testNotification !== null) {
+      await kaydet({ tip: 'test', karar: 'yok-sayildi:test' })
+      return c.json({ ok: true })
+    }
+    if (pyTruthy(dev.oneTimeProductNotification)) {
+      const ot = nesne(dev.oneTimeProductNotification)
+      await kaydet({
+        tip: 'tek-seferlik', alt_tip: pyStr(ot.sku) || pyStr(ot.notificationType) || null,
+        pid: pyStr(ot.sku) || null, karar: 'yok-sayildi:tek-seferlik',
+      })
+      return c.json({ ok: true })
+    }
+    if (pyTruthy(dev.voidedPurchaseNotification)) {
+      const v = nesne(dev.voidedPurchaseNotification)
+      const tok = pyStr(v.purchaseToken)
+      const ptype = v.productType
+      const abone = ptype === 1 || ptype === '1' || ptype === 'PRODUCT_TYPE_SUBSCRIPTION'
+      const uid = tok ? await iapUidBul(db, tok) : null
+      if (abone) {
+        if (!uid) {
+          await kaydet({ tip: 'voided', alt_tip: pyStr(v.orderId) || null, pid: tok || null, karar: 'kullanici-yok' })
+          await adminq(c.env, `💳 Move Log bildirim: kullanıcı yok · google · voided`)
+          return c.json({ ok: true })
+        }
+        const now = simdi()
+        const prof = await getUser(db, uid)
+        const ad = kullaniciAdi(prof?.name, uid)
+        // İade çoğunlukla dönem ORTASINDA gelir: bitiş=şimdi alınırsa premium_until (dönem sonu)
+        // "başka hak" korumasına takılır ve iade hiç düşürmez. Bu aboneliğin kendi bitişi Play'den
+        // okunur; okunamazsa şimdi kullanılır (koruma devrede kalır) ve Barış'a elle kontrol notu gider.
+        const play = await googleSubV2(c.env, tok)
+        const kendiBitis = play.status === 200 && play.d ? googleMaxBitis(play.d) : 0
+        const bitis = kendiBitis || now
+        const karar = await abonelikUygula(db, uid, { aktif: false, ultra: false, bitis, zorlaPasif: true },
+          { env: c.env, ad, platform: 'google', tip: 'voided' })
+        if (!kendiBitis && karar !== 'dusuruldu')
+          await adminq(c.env, `💸 Move Log iade (abonelik) elle kontrol: ${ad} · bitiş okunamadı (${play.status}) · ${karar}`)
+        await kaydet({ tip: 'voided', alt_tip: pyStr(v.orderId) || null, uid, pid: tok || null, karar, bitis })
+        return c.json({ ok: true })
+      }
+      // productType 2 (tek seferlik) — otomatik düşme YOK
+      const prof = uid ? await getUser(db, uid) : null
+      const ad = uid ? kullaniciAdi(prof?.name, uid) : '?'
+      await kaydet({ tip: 'voided', alt_tip: pyStr(v.orderId) || null, uid, pid: tok || null, karar: 'yok-sayildi:tuketilebilir-iade' })
+      await adminq(c.env, `💸 Move Log iade: ${ad} · ${pyStr(v.orderId) || tok || 'google'}`)
+      return c.json({ ok: true })
+    }
+    if (pyTruthy(dev.subscriptionNotification)) {
+      const sn = nesne(dev.subscriptionNotification)
+      const tok = pyStr(sn.purchaseToken)
+      const subId = pyStr(sn.subscriptionId)
+      const ntype = sn.notificationType === undefined ? '' : String(sn.notificationType)
+      if (!tok) {
+        await kaydet({ tip: ntype || 'sub', alt_tip: subId || null, karar: 'yok-sayildi:token-yok' })
+        return c.json({ ok: true })
+      }
+      const play = await googleSubV2(c.env, tok)
+      if (play.status === 404 || play.status === 410) {
+        await kaydet({ tip: ntype || 'sub', alt_tip: subId || null, pid: tok, karar: 'yok-sayildi:token-yok' })
+        return c.json({ ok: true })
+      }
+      if (play.status !== 200 || !play.d) hata(500, 'Play abonelik doğrulanamadı')   // 5xx/ağ/503 → Pub/Sub yeniden dener
+      const d = play.d
+      let uid = await iapUidBul(db, tok)
+      const linked = pyStr(d.linkedPurchaseToken)
+      if (!uid && linked) {
+        uid = await iapUidBul(db, linked)
+        if (uid) {
+          const ts = simdi()
+          await db.prepare(
+            "INSERT OR IGNORE INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, 'google-sub', ?3, ?3, ?3)")
+            .bind(tok, uid, ts).run()
+        }
+      }
+      if (!uid) {
+        await kaydet({ tip: ntype || 'sub', alt_tip: subId || null, pid: tok, karar: 'kullanici-yok' })
+        await adminq(c.env, `💳 Move Log bildirim: kullanıcı yok · google · ${ntype || 'sub'}`)
+        return c.json({ ok: true })
+      }
+      const bitis = googleMaxBitis(d)
+      const now = simdi()
+      const durum = googleAboneDurum(pyStr(d.subscriptionState), bitis, now)
+      if (durum === 'pending' || durum === 'bilinmiyor') {
+        await kaydet({
+          tip: ntype || 'sub', alt_tip: subId || null, uid, pid: tok,
+          karar: durum === 'pending' ? 'yok-sayildi:pending' : 'yok-sayildi:durum-' + pyStr(d.subscriptionState),
+          bitis,
+        })
+        return c.json({ ok: true })
+      }
+      const prof = await getUser(db, uid)
+      const karar = await abonelikUygula(db, uid, {
+        aktif: durum === 'aktif', ultra: googleUltraMi(d), bitis,
+      }, { env: c.env, ad: kullaniciAdi(prof?.name, uid), platform: 'google', tip: ntype || 'sub' })
+      await kaydet({ tip: ntype || 'sub', alt_tip: subId || null, uid, pid: tok, karar, bitis })
+      return c.json({ ok: true })
+    }
+    await kaydet({ karar: 'yok-sayildi:bos' })
+    return c.json({ ok: true })
+  } catch (e) {
+    if (e instanceof Hata) throw e
+    try { await kaydet({ karar: hataKisa(e) }) } catch { /* yazılamazsa da 500 */ }
+    hata(500, 'bildirim işlenemedi')
+  }
 })
 
 // ---------- GET /api/integrity/nonce (main.py:1746-1751) ----------

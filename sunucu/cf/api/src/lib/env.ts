@@ -20,6 +20,12 @@ export type Env = {
   RENDER_DONE_SECRET?: string    // iç uçlar (register-ride/render-done/render-failed/internal-music); boşsa FAIL-CLOSED (403)
   GIFT_ADMIN_SECRET?: string     // admin uçları (announce/broadcast/costs/gencodes); boşsa FAIL-CLOSED (403)
 
+  // Play RTDN (Pub/Sub OIDC). Boşsa uç varsayılanları kullanır:
+  //   aud = https://kisisel-api.nickdegs.com/api/iap/google/bildirim
+  //   sa  = movelog-deploy@move-log-500805.iam.gserviceaccount.com
+  RTDN_AUD?: string
+  RTDN_SA?: string
+
   // grup dönüş notlarından eklenen opsiyonel sırlar (SECRETS.md kayıtlı; boşsa ilgili uçlar
   // fail-closed / 503 dalına düşer — gruplar kendi denetimlerinde bu davranışı doğruladı)
   USERS?: string                 // "kullanici:parola,..." (main.py:46 APP_USERS — grup3 login)
