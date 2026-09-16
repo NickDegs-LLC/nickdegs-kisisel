@@ -52,7 +52,6 @@ private sealed class Route {
     object IdeaBox : Route()
     object GroupVideo : Route()
     object Convoy : Route()
-    data class Live(val friend: String, val name: String) : Route()
 }
 
 @Composable
@@ -74,7 +73,6 @@ fun CommunityScreen(store: Store) {
         is Route.IdeaBox -> IdeaBoxView(store) { route = Route.Hub }
         is Route.GroupVideo -> GroupVideoView(store) { route = Route.Hub }
         is Route.Convoy -> ConvoyVoiceView(store) { route = Route.Hub }
-        is Route.Live -> LiveTrackView(store, r.friend, r.name) { route = Route.Hub }
     }
 }
 
@@ -597,43 +595,8 @@ private fun SharedView(store: Store, onBack: () -> Unit) {
     }
 }
 
-// ---------------- CANLI TAKİP ----------------
-@Composable
-private fun LiveTrackView(store: Store, friend: String, name: String, onBack: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var tel by remember { mutableStateOf<LiveTelemetry?>(null) }
-    LaunchedEffect(friend) {
-        store.liveStart(friend)
-        while (true) {
-            store.hrRequest(friend)          // anlık nabız: bakıldıkça arkadaşın saatini kısa ölçüme uyandır (kapanınca durur)
-            tel = store.liveGet(friend)
-            delay(5000)
-        }
-    }
-    Column(Modifier.fillMaxSize().background(Brand.bg)) {
-        Bar(L("$name — Canlı", "$name — Live"), onBack)
-        val t = tel
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (t == null) { CircularProgressIndicator(color = Brand.accent); return@Column }
-            val ago = when {
-                t.age < 60 -> L("az önce", "just now")
-                t.age < 3600 -> L("${t.age / 60} dk önce", "${t.age / 60} min ago")
-                t.age < 86400 -> L("${t.age / 3600} saat önce", "${t.age / 3600} h ago")
-                else -> L("${t.age / 86400} gün önce", "${t.age / 86400} d ago")
-            }
-            Text(if (t.age < 120) L("● Canlı", "● Live") else L("Son görülme: $ago", "Last seen: $ago"),
-                color = if (t.age < 120) Color(0xFF34C759) else gold, fontWeight = FontWeight.SemiBold)
-            WrapStat(L("Hız", "Speed"), "${"%.0f".format(t.spd)} km/h")
-            t.hr?.let { WrapStat(L("Nabız", "Heart rate"), "$it bpm") }
-            WrapStat(L("Bugün", "Today"), "${"%.1f".format(t.todayKm)} km")
-            t.batt?.let { WrapStat(L("Batarya", "Battery"), "%$it") }
-            Button(onClick = { scope.launch { store.liveWave(friend) } },
-                colors = ButtonDefaults.buttonColors(containerColor = Brand.accent), modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.WavingHand, null); Spacer(Modifier.width(8.dp)); Text(L("El salla", "Wave"))
-            }
-        }
-    }
-}
+// 16.09: CANLI TAKİP (arkadaşı canlı izleme) KALDIRILDI — Barış: harita/canlı takip her iki
+// platformdan da çıkıyor. Bu görünüm zaten hiçbir yerden çağrılmıyordu (ölü kod).
 
 // ---------------- TELSİZ (PTT) — kaydet ve kulübe gönder ----------------
 @Composable

@@ -50,6 +50,18 @@ fun RoutesScreen(store: Store) {
     var uploading by remember { mutableStateOf(false) }
     var typeMenuFor by remember { mutableStateOf<String?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    var recording by remember { mutableStateOf(com.nickdegs.movelog.TrackingService.active) }
+    // konum izni verilince kaydı başlat (eskiden MapPane içindeydi)
+    val perm = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { res ->
+        if (res[android.Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            scope.launch {
+                val t = store.trackerInfo()
+                if (t != null) { com.nickdegs.movelog.TrackingService.start(ctx, t.first, t.second); recording = true }
+            }
+        }
+    }
     LaunchedEffect(Unit) { rides = store.rides(); loaded = true }
 
     // GPX/TCX dosya seçici (akıllı saat/Strava) -> yükle -> üretim sheet'i
@@ -79,6 +91,23 @@ fun RoutesScreen(store: Store) {
                 if (uploading) CircularProgressIndicator(Modifier.size(20.dp), color = Brand.accent, strokeWidth = 2.dp)
                 else Icon(Icons.Filled.FileUpload, L("GPX/TCX yükle", "Upload GPX/TCX"), tint = Brand.accent)
             }
+        }
+        // GEZİ KAYDI (16.09): Harita paneli kaldırıldı; "Rota kaydını başlat / durdur" düğmesi
+        // oradan buraya taşındı — kaydı başlatmanın tek yolu oydu. Davranış birebir aynı.
+        Button(
+            onClick = {
+                if (recording) { com.nickdegs.movelog.TrackingService.stop(ctx); recording = false }
+                else perm.launch(arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.POST_NOTIFICATIONS))
+            },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (recording) Color(0xFFFF3B30) else Brand.accent),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        ) {
+            Icon(if (recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord, null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (recording) L("Kaydı durdur", "Stop recording") else L("Rota kaydını başlat", "Start recording"))
         }
         if (loaded && rides.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

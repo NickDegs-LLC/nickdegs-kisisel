@@ -89,13 +89,14 @@ fun MoveLogApp(store: Store) {
     }
 
     var sel by remember { mutableStateOf(0) }
-    // Bildirim dokunma -> ilgili sekme (route: voice/chat/map->Harita, videos->Videolar, friends/wave->Topluluk)
+    // Bildirim dokunma -> ilgili sekme (chat->Sohbet, videos->Videolar, voice/friends/wave->Topluluk)
+    // 16.09: harita sekmesi kalktı; telsiz/sesli mesaj Topluluk sekmesinde olduğu için voice oraya gider.
     LaunchedEffect(com.nickdegs.movelog.AppNav.route) {
         val r = com.nickdegs.movelog.AppNav.route ?: return@LaunchedEffect
         when (r.substringBefore(":")) {
             "videos" -> sel = 1
-            "voice", "chat", "map" -> sel = 3
-            "friends", "wave" -> sel = 4
+            "chat", "map" -> sel = 3
+            "voice", "friends", "wave" -> sel = 4
             "profile" -> sel = 5
         }
         com.nickdegs.movelog.AppNav.route = null
@@ -104,7 +105,7 @@ fun MoveLogApp(store: Store) {
         Tab(L("Rotalar", "Routes"), Icons.Filled.Map),
         Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
-        Tab(L("Harita", "Map"), Icons.Filled.LocationOn),
+        Tab(L("Sohbet", "Chat"), Icons.AutoMirrored.Filled.Chat),
         Tab(L("Topluluk", "Community"), Icons.Filled.Groups),
         Tab(L("Profil", "Profile"), Icons.Filled.Person),
     )
@@ -134,7 +135,7 @@ fun MoveLogApp(store: Store) {
                 0 -> RoutesScreen(store)
                 1 -> VideosScreen(store)
                 2 -> SummariesScreen(store)
-                3 -> MapChatScreen(store)
+                3 -> ChatScreen(store)
                 4 -> CommunityScreen(store)
                 else -> ProfileScreen(store)
             }
