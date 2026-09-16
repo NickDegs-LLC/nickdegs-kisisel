@@ -3,8 +3,13 @@ import SwiftUI
 // MARK: - Launch ortamı (ekran görüntüsü/demo için)
 enum AppEnv {
     static let args = CommandLine.arguments
-    static var demo: Bool { args.contains("DEMO") }
-    static var screen: String? { args.first(where: { $0.hasPrefix("SCREEN=") })?.replacingOccurrences(of: "SCREEN=", with: "") }
+    // 16.09: CommandLine "DEMO" bayragi SIMULATORDE guvenilir gecmiyor (Store.init icindeki
+    // 05.09 tarihli yorum bunu zaten tespit etmis ve -nd_qa_demo UserDefaults bayragini eklemis).
+    // demo YALNIZ args'a bakarsa cekim modunda izin korumalari ve DemoData DEVREYE GIRMEZ.
+    // Bu yuzden iki kaynak birlestirildi: App Store derlemesinde ikisi de false kalir.
+    static var demo: Bool { args.contains("DEMO") || UserDefaults.standard.bool(forKey: "nd_qa_demo") }
+    static var screen: String? { args.first(where: { $0.hasPrefix("SCREEN=") })?.replacingOccurrences(of: "SCREEN=", with: "")
+        ?? UserDefaults.standard.string(forKey: "nd_qa_screen") }
     static var langOverride: String? { args.first(where: { $0.hasPrefix("LANG=") })?.replacingOccurrences(of: "LANG=", with: "") }
     // Yalnızca otomasyon/CI doğrulaması için (App Store kullanıcıları launch-arg geçmez): AUTOLOGIN=kullanıcı:parola
     static var autoLogin: (user: String, pass: String)? {

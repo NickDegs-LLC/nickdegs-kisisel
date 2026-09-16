@@ -13,6 +13,9 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     func request() {
+        // 16.09 ÇEKİM KURALI (Barış): mağaza ekran görüntülerinde izin penceresi ASLA görünmemeli.
+        // DEMO (çekim/simülatör) modunda konum izni HİÇ istenmez. Gerçek kullanıcıda davranış AYNI.
+        if AppEnv.demo { return }
         switch mgr.authorizationStatus {
         case .notDetermined: mgr.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways: mgr.startUpdatingLocation()
