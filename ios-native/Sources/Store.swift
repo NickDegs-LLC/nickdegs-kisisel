@@ -862,14 +862,12 @@ enum DavetLink {
         return false
     }
     // Uygulama içi duyuru (admin panelinden)
-    func announcement() async -> Announcement? {
-        guard let d = try? await req("/api/announcement"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              let a = o["announcement"] as? [String:Any],
-              let t = a["title"] as? String, !t.isEmpty else { return nil }
-        return Announcement(title: t, body: a["body"] as? String ?? "",
-                            url: a["url"] as? String ?? "", ts: (a["ts"] as? Int) ?? 0)
-    }
+    // 16.09 (Barış: "Move log yenilendi bildirimini komple kökünden kapat. Artık yayında
+    // uygulama zaten."): uygulama içi duyuru bandı TAMAMEN KAPALI — yalnız çekim modunda değil,
+    // TÜM kullanıcılarda. Sunucu tarafı (D1 config['announcement'].active) ayrıca kapatıldı;
+    // burası istemcideki ikinci emniyet. Geri açmak için: alttaki gövdeyi eski hâline döndür.
+    func announcement() async -> Announcement? { nil }
+
     // Hediye kodu → premium (sunucu doğrular)
     @discardableResult
     func redeem(_ code: String) async -> Bool {
