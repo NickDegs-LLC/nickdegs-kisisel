@@ -193,7 +193,10 @@ enum DavetLink {
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, resp) = try await URLSession.shared.data(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode == 401 { await MainActor.run { self.logout() } }
+        // 16.09 ÇEKİM: DEMO modunda token YOK; sunucu 401 döndüğü an bu otomatik logout
+        // gate'i .needLogin yapıp RootView'ı kapatıyordu (mağaza karelerinde hep giriş ekranı
+        // çıkmasının sebebi buydu). Demo dışında davranış AYNEN korunur.
+        if let h = resp as? HTTPURLResponse, h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.logout() } }
         return data
     }
 
@@ -757,7 +760,7 @@ enum DavetLink {
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, resp) = try await URLSession.shared.data(for: r)
         let kod = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if kod == 401 { await MainActor.run { self.logout() } }
+        if kod == 401, !AppEnv.demo { await MainActor.run { self.logout() } }
         return (data, kod)
     }
     // GPX/TCX dosyası yükle (ham body) -> backend parse eder, Rotalar'a ekler. (from,to) döner.
