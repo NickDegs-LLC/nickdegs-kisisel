@@ -576,6 +576,9 @@ enum DavetLink {
         _ = try? await req("/api/profile", method: "PUT", body: ["name": name])
     }
     func registerPush() async {
+        // DEMO/çekim modunda sunucuya push token göndermenin anlamı yok (izin penceresinin
+        // kaynağı burası DEĞİL — o Push.swift/AppDelegate içinde kapatıldı).
+        if AppEnv.demo { return }
         guard !token.isEmpty, let t = UserDefaults.standard.string(forKey: "nd_apns") else { return }
         _ = try? await req("/api/pushtoken", method: "POST", body: ["token": t])
     }

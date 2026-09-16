@@ -37,8 +37,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // (content-available) alert iznine İHTİYAÇ DUYMAZ — bildirim iznini reddeden kullanıcıda
         // telsiz uyandırması, canlı takip, nabız-peek ve oto-takip re-arm'ının TAMAMI ölüyordu.
         // Kayıt artık koşulsuz; izin yalnız GÖRÜNÜR bildirimi etkiler.
-        DispatchQueue.main.async { application.registerForRemoteNotifications() }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // 16.09 ÇEKİM KURALI (Barış): mağaza ekran görüntülerinde bildirim izni penceresi ASLA
+        // görünmemeli — App Store red sebebi. DEMO (çekim/simülatör) modunda izin HİÇ istenmez
+        // ve uzak bildirim kaydı yapılmaz. GERÇEK kullanıcıda davranış AYNEN eskisi gibi kalır.
+        if !AppEnv.demo {
+            DispatchQueue.main.async { application.registerForRemoteNotifications() }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        }
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

@@ -23,6 +23,13 @@ struct TelsizTab: View {
                 ChatListView()
             }
         }
+        // ÇEKİM/QA: SCREEN=chat -> Sohbet, SCREEN=gps|map -> Telsiz. Yalnız DEMO modunda,
+        // gerçek kullanıcının kaydettiği segment tercihine DOKUNMAZ.
+        .onAppear {
+            guard AppEnv.demo, let s = AppEnv.screen else { return }
+            if s == "chat" { seg = 1 }
+            else if s == "gps" || s == "map" { seg = 0 }
+        }
     }
 }
 
