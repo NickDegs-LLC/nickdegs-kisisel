@@ -57,17 +57,13 @@ struct ProfileView: View {
     @State private var showBadges = false
     @State private var showWrapped = false
     @State private var showSharedRoutes = false
-    @State private var liveFriend: Friend? = nil
-    @State private var pairTalkFriend: Friend? = nil                  // 📻 davet gönderen taraf
     // 05.09 — arkadaşlıktan çıkarma + davet akışı (ikisi de sunucuda vardı, istemcide yoktu)
     @State private var silinecekArkadas: Friend? = nil
     @State private var davetKod = ""
     @State private var davetPaylas = false
     @State private var davetGirisAcik = false
     @State private var davetGirisi = ""
-    @State private var vcIncoming: (from: String, name: String)? = nil // gelen canlı-telsiz daveti
-    @State private var vcJoinPeer: Friend? = nil                       // kabul sonrası katılım
-    @State private var pttBusyFriends: Set<String> = []                // şu an bana konuşan arkadaşlar
+    // 16.09: telsiz (bas-konuş, canlı telsiz daveti) durumları TELSİZ sekmesine taşındı.
 
     var body: some View {
         NavigationStack {
@@ -199,42 +195,8 @@ struct ProfileView: View {
                                     if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
                                 }
                                 Spacer()
-                                // ÇİFTLER: basılı tut, konuş -> arkadaşa sesli mesaj (ücretsiz, kulüp gerekmez)
-                                // PTT ÇAKIŞMA KİLİDİ: arkadaş şu an bana konuşuyorsa buton pasif ("konuşuyor")
-                                let isBusy = pttBusyFriends.contains(f.username)
-                                Image(systemName: isBusy ? "waveform" : (PttEngine.shared.recording ? "mic.fill" : "mic"))
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(isBusy ? Color.orange : (PttEngine.shared.recording ? Color.red : Brand.accent))
-                                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: isBusy)
-                                    .frame(width: 38, height: 38).glassPanel(19)
-                                    .opacity(isBusy ? 0.65 : 1)
-                                    .gesture(DragGesture(minimumDistance: 0)
-                                        .onChanged { _ in
-                                            guard !isBusy else { return }
-                                            if !PttEngine.shared.recording {
-                                                PttEngine.shared.store = store; PttEngine.shared.startRecording()
-                                                Task { await store.pttBusySet(f.username, on: true) }
-                                            }
-                                        }
-                                        .onEnded { _ in
-                                            guard !isBusy else { return }
-                                            if PttEngine.shared.recording {
-                                                PttEngine.shared.stopAndSend(toUser: f.username)
-                                                Task { await store.pttBusySet(f.username, on: false) }
-                                            }
-                                        })
-                                // ÇİFT CANLI TELSİZ: davet et -> kabul edince 2 kişilik canlı sesli sohbet
-                                Button { pairTalkFriend = f } label: {
-                                    Image(systemName: "phone.and.waveform.fill")
-                                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
-                                        .frame(width: 38, height: 38).glassPanel(19)
-                                }.buttonStyle(.borderless)
-                                // 1.8 CANLI TAKİP: "Bul" tadında canlı izleme (hız + nabız + konum)
-                                Button { if ultraMember { liveFriend = f } else { showPaywall = true } } label: {
-                                    Image(systemName: "dot.radiowaves.left.and.right")
-                                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(Brand.accent)
-                                        .frame(width: 38, height: 38).glassPanel(19)
-                                }.buttonStyle(.borderless)
+                                // 16.09: telsiz (bas-konuş) + canlı telsiz butonları TELSİZ sekmesine taşındı,
+                                // canlı takip tamamen kaldırıldı. Burada arkadaş YÖNETİMİ kalır (ekle/çıkar).
                             }.padding(12).glassPanel(18).smoothAppear()
                             // 🔴 FİKS 05.09: sunucudaki DELETE /api/friends/{uname} hiçbir yerden
                             // çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU.
@@ -620,15 +582,6 @@ struct ProfileView: View {
         .sheet(isPresented: $showBadges) { BadgesSheet() }
         .sheet(isPresented: $showWrapped) { WrappedSheet() }
         .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
-        .sheet(item: $liveFriend) { f in LiveTrackView(friend: f) }
-        // ÇİFT CANLI TELSİZ: davet eden taraf (bekler + bağlanır)
-        .sheet(item: $pairTalkFriend) { f in
-            PairTalkView(peer: f.username, peerLabel: f.name ?? f.username, inviting: true)
-        }
-        // kabul eden taraf (direkt katılır)
-        .sheet(item: $vcJoinPeer) { f in
-            PairTalkView(peer: f.username, peerLabel: f.name ?? f.username, inviting: false)
-        }
         .confirmationDialog(
             L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
             isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),
@@ -665,42 +618,7 @@ struct ProfileView: View {
             }
             Button(L("Vazgeç","Cancel"), role: .cancel) { davetGirisi = "" }
         }
-        .alert(L("Canlı telsiz daveti 📻", "Live radio invite 📻"), isPresented: Binding(
-            get: { vcIncoming != nil }, set: { if !$0 { vcIncoming = nil } })) {
-            Button(L("Kabul et", "Accept")) {
-                if let inv = vcIncoming {
-                    Task {
-                        _ = await store.vcRespond(from: inv.from, accept: true)
-                        vcJoinPeer = Friend(username: inv.from, name: inv.name, handle: nil, avatar: nil, online: nil)
-                    }
-                    vcIncoming = nil
-                }
-            }
-            Button(L("Reddet", "Decline"), role: .cancel) {
-                if let inv = vcIncoming { Task { _ = await store.vcRespond(from: inv.from, accept: false) } }
-                vcIncoming = nil
-            }
-        } message: {
-            Text(L("\(vcIncoming?.name ?? "") seni canlı sesli sohbete davet ediyor",
-                   "\(vcIncoming?.name ?? "") is inviting you to a live voice chat"))
-        }
-        // PTT meşgul + gelen davet polling'i (profil görünürken 2.5 sn'de bir, hafif)
-        .task {
-            while !Task.isCancelled {
-                if !friends.isEmpty {
-                    var busy: Set<String> = []
-                    for fr in friends.prefix(8) {
-                        if await store.pttBusyOf(fr.username) { busy.insert(fr.username) }
-                    }
-                    pttBusyFriends = busy
-                }
-                let st = await store.vcStatus()
-                if let f = st.invFrom, vcIncoming == nil, pairTalkFriend == nil, vcJoinPeer == nil {
-                    vcIncoming = (f, st.invName ?? f)
-                }
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-            }
-        }
+        // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
@@ -1047,8 +965,8 @@ struct PaywallSheet: View {
               sub: L("Kulübünle canlı sesli konuş — cihazsız, ücretsiz","Talk live with your club — no device needed")),
         .init(icon: "waveform", title: L("Sesli konvoy anonsları","Voice convoy announcements"),
               sub: L("Kulaklığına: 'Semra 400m geride'","To your headset: 'Semra 400m behind'")),
-        .init(icon: "location.fill.viewfinder", title: L("Canlı takip & konvoy haritası","Live tracking & convoy map"),
-              sub: L("Arkadaşını hız/nabız/bataryayla canlı izle","Watch friends live: speed, HR, battery")),
+        // 16.09: "Canlı takip & konvoy haritası" perk'i KALDIRILDI — özellik uygulamadan çıktı,
+        // olmayan bir şeyi paywall'da satmayalım (App Store incelemesi + kullanıcı güveni).
         .init(icon: "shield.lefthalf.filled", title: L("Güvenli sürüş","Ride safety"),
               sub: L("Sevdiğine otomatik 'sağ salim vardım'","Auto 'safe and sound' to your person")),
         .init(icon: "rosette", title: L("Rozetler, liderlik & meydan okuma","Badges, leaderboard & challenges"),
@@ -1067,8 +985,8 @@ struct PaywallSheet: View {
               sub: L("Gezi bitince otomatik üretilir","Auto-made after each trip")),
         .init(icon: "doc.text.magnifyingglass", title: L("Günlük özet","Daily summary"),
               sub: L("Saat ayarı + anında özet","Custom time + on-demand")),
-        .init(icon: "globe.americas.fill", title: L("Uydu haritası","Satellite map"),
-              sub: L("Sevdiklerini uydu görünümünde izle","See your people on satellite view")),
+        // 16.09: "Uydu haritası" perk'i KALDIRILDI — uydu görünümü canlı konum haritasının
+        // özelliğiydi, harita sekmesiyle birlikte çıktı.
     ]}
 
     var body: some View {

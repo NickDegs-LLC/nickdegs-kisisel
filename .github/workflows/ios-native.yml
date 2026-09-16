@@ -46,11 +46,12 @@ jobs:
         with:
           clean: true
 
-      - name: Select Xcode 26
+      - name: Select Xcode 27
         run: |
           # 14.09: self-hosted'da `sudo xcode-select -s` parola sorar, iş sessizce asılır.
           # DEVELOPER_DIR aynı işi yapar ve sistemi hiç değiştirmez.
-          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          # 16.09: Xcode 27 (iOS 27 SDK) tercih edilir; yoksa en yüksek Xcode_*, yoksa Xcode.app.
+          XC=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1 || true)
           [ -n "$XC" ] || XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1 || true)
           [ -n "$XC" ] || XC=/Applications/Xcode.app
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"

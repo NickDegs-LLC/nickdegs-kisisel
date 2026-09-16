@@ -130,8 +130,9 @@ struct RootView: View {
             // not: aşağıda .onChange ile "Video oluştur" sonrası otomatik Videolarım'a geçilir
             VideosView().tabItem { Label(L("Videolarım","My Videos"), systemImage: "film.stack") }.tag(1)
             SummariesView().tabItem { Label(L("Özet","Summary"), systemImage: "doc.text.magnifyingglass") }.tag(2)
-            // Harita: canlı konum + Sohbet tek sekmede (segment geçişli) -> çirkin "More" menüsü yok (tam 5 sekme)
-            MapChatTab().tabItem { Label(L("Harita","Map"), systemImage: "location") }.tag(3)
+            // Telsiz: bas-konuş + canlı telsiz + Sohbet tek sekmede (segment geçişli) -> tam 5 sekme, "More" menüsü yok.
+            // 16.09: canlı takip/harita sekmesi kaldırıldı (konum paylaşımı iOS/Android'de yerleşik).
+            TelsizTab().tabItem { Label(L("Telsiz","Radio"), systemImage: "dot.radiowaves.left.and.right") }.tag(3)
             ProfileView().tabItem { Label(L("Profil","Profile"), systemImage: "person.crop.circle") }.tag(4)
         }
         .onChange(of: store.jumpToVideos) { _, v in
@@ -144,7 +145,9 @@ struct RootView: View {
             switch p.first {
             case "videos": sel = 1
             case "map", "chat": sel = 3
-            case "friends", "voice", "profile", "wave", "vcall", "vcallok": sel = 4   // canlı telsiz davet/kabul -> Profil (poll alert anında yakalar)
+            // 16.09: canlı telsiz davet/kabul + sesli mesaj -> TELSİZ sekmesi (poll alert orada yakalar)
+            case "voice", "vcall", "vcallok": sel = 3
+            case "friends", "profile", "wave": sel = 4
             default: break
             }
             if p.first == "voice", p.count >= 2 {   // sesli mesaj bildirimine dokununca: klibi çal

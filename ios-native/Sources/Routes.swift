@@ -165,6 +165,11 @@ struct RoutesView: View {
                 }
                 .refreshable { await reload() }
             }
+            // GEZİ KAYDI (16.09): Harita sekmesi kaldırıldı; "Gezi kaydı başlat / Bitir" çubuğu
+            // oradan buraya taşındı — kaydı başlatmanın tek yolu buydu.
+            .safeAreaInset(edge: .bottom) {
+                RecordBar().padding(.horizontal, 16).padding(.bottom, 6)
+            }
             .sheet(item: $shareRide) { r in ShareRouteSheet(rideId: r.id) }
             .navigationTitle("Move Log")
             .toolbar {
