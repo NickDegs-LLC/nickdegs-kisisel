@@ -30,13 +30,13 @@ android {
     }
 
     // 16 KB SAYFA BOYUTU (Android 15+) — CLAUDE.md zorunlu ayar tablosu. Eksikti (1.62'de eklendi):
-    // native kütüphaneler (WebRTC/LiveKit, osmdroid, Play services) 16 KB hizalı paketlenir.
+    // native kütüphaneler (WebRTC/LiveKit, Play services) 16 KB hizalı paketlenir.
     packaging { jniLibs { useLegacyPackaging = false } }
 
     buildTypes {
         release {
             // R8 — CLAUDE.md zorunlu ayar ("Play optimizasyon düşük uyarısı"), kuralları HAZIR
-            // (app/proguard-rules.pro: LiveKit/WebRTC JNI, googleid, FCM servisi, osmdroid, media3…).
+            // (app/proguard-rules.pro: LiveKit/WebRTC JNI, googleid, FCM servisi, media3…).
             // ⚠️ 1.62'de BİLEREK KAPALI. Gerekçe: Barış 05.09'da Play'i OTO YAYIN'a aldı
             // (android-native.yml → track: production), yani main'e merge = doğrudan TÜM kullanıcılar.
             // CLAUDE.md'nin kendi uyarısı: "R8'i test etmeden açma — reflection/Compose kullanan
@@ -81,7 +81,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)
-    implementation("org.osmdroid:osmdroid-android:6.1.20")   // OpenStreetMap (Maps API key gerekmez)
+    // 16.09: osmdroid (OpenStreetMap) KALDIRILDI — canlı konum haritası uygulamadan çıkınca
+    // kütüphane hiçbir yerden kullanılmaz hâle geldi, APK'yı boşuna büyütüyordu.
     implementation("com.android.billingclient:billing-ktx:8.0.0")   // Play zorunlulugu: 7.x 31 Agu 2026'da reddedilecek
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
     implementation("io.livekit:livekit-android:2.18.2")   // 1.9 canlı interkom (kulüp sesli oda)

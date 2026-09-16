@@ -105,7 +105,7 @@ fun MoveLogApp(store: Store) {
         Tab(L("Rotalar", "Routes"), Icons.Filled.Map),
         Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
-        Tab(L("Sohbet", "Chat"), Icons.AutoMirrored.Filled.Chat),
+        Tab(L("Sohbet", "Chat"), Icons.Filled.Chat),
         Tab(L("Topluluk", "Community"), Icons.Filled.Groups),
         Tab(L("Profil", "Profile"), Icons.Filled.Person),
     )

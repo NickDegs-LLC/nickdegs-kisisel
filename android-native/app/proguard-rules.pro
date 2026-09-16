@@ -42,10 +42,8 @@
 -keep class com.google.android.gms.wearable.** { *; }
 -dontwarn com.google.android.gms.**
 
-# ── osmdroid (harita) ──────────────────────────────────────────────────────
-# Karo sağlayıcıları yansımayla seçiliyor.
--keep class org.osmdroid.** { *; }
--dontwarn org.osmdroid.**
+# ── osmdroid: 16.09'da bağımlılık TAMAMEN kaldırıldı (canlı konum haritası çıktı),
+#    bu yüzden keep/dontwarn kuralına da gerek kalmadı.
 
 # ── media3 / ExoPlayer ─────────────────────────────────────────────────────
 -keep class androidx.media3.** { *; }
