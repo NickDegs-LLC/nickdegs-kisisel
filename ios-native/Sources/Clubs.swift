@@ -1,55 +1,30 @@
 import SwiftUI
-import MapKit
 
-// 1.8 KULÜP CANLI HARİTASI: tüm üyeler tek haritada — gerçek konvoy görünümü, 5 sn'de bir tazelenir.
-struct ClubLiveView: View {
+// KULÜP TELSİZİ + İNTERKOM (16.09 — Barış: "haritayı androidden de kaldır ve bunu da kaldır").
+// ESKİDEN: "Kulüp canlı haritası" — üyelerin konumu/hızı harita üzerinde pinlerle gösteriliyordu.
+// HARİTA KALDIRILDI; kulüp telsizi (bas-konuş) ve canlı interkom aynen korundu — asıl kullanılan onlar.
+// Not: üye konumları hâlâ alınıyor ama YALNIZCA sesli konvoy anonsları için (ConvoyVoice) — harita yok, ses var.
+struct ClubRadioView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
     var clubId: String
     var clubName: String
-    @State private var riders: [ClubRider] = []
-    @State private var cam: MapCameraPosition = .automatic
-    @State private var timer: Timer? = nil
     @ObservedObject private var ptt = PttEngine.shared
 
     var body: some View {
         NavigationStack {
-            Map(position: $cam) {
-                ForEach(riders) { r in
-                    Annotation(r.name, coordinate: .init(latitude: r.lat, longitude: r.lon)) {
-                        VStack(spacing: 2) {
-                            ZStack {
-                                Circle().fill((r.age < 300 ? Brand.accent : Color.gray).opacity(0.25)).frame(width: 40, height: 40)
-                                AvatarView(name: r.name, avatar: nil, size: 30)
-                            }
-                            if r.spd > 5 {
-                                Text(String(format: "%.0f", r.spd)).font(.system(size: 10, weight: .bold))
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("🏍️ " + clubName)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(L("Kapat","Close")) { dismiss() } } }
-            .overlay(alignment: .top) {
-                IntercomBar(clubId: clubId).padding(.horizontal, 12).padding(.top, 6)
-            }
-            .overlay(alignment: .bottom) {
-                VStack(spacing: 10) {
-                    if riders.isEmpty {
-                        Text(L("Şu an konum paylaşan üye yok","No members sharing location right now"))
-                            .font(.caption).padding(10).glassPanel(12)
-                    }
+            ZStack {
+                AuroraBackground()
+                VStack(spacing: 16) {
+                    IntercomBar(clubId: clubId).padding(.horizontal, 12).padding(.top, 6)
+                    Spacer()
                     // 1.9-B TELSİZ: bas-konuş — klip kulüptekilerin kulaklığında otomatik çalar
                     ZStack {
                         Circle().fill(ptt.recording ? Color.red : Brand.accent)
-                            .frame(width: 74, height: 74)
-                            .shadow(color: (ptt.recording ? Color.red : Brand.accent).opacity(0.5), radius: 12)
+                            .frame(width: 96, height: 96)
+                            .shadow(color: (ptt.recording ? Color.red : Brand.accent).opacity(0.5), radius: 14)
                         Image(systemName: ptt.sending ? "paperplane.fill" : "mic.fill")
-                            .font(.system(size: 28, weight: .bold)).foregroundStyle(.white)
+                            .font(.system(size: 36, weight: .bold)).foregroundStyle(.white)
                     }
                     .scaleEffect(ptt.recording ? 1.15 : 1)
                     .animation(.spring(duration: 0.25), value: ptt.recording)
@@ -60,26 +35,13 @@ struct ClubLiveView: View {
                         }, perform: {})
                     Text(ptt.recording ? L("Bırakınca gönderilir","Release to send")
                                        : L("Basılı tut, konuş — telsiz gibi","Hold and talk — like a radio"))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }.padding(.bottom, 14)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }.padding(.bottom, 24)
             }
-        }
-        .task {
-            await refresh(fit: true)
-            timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in Task { await refresh(fit: false) } }
-        }
-        .onDisappear { timer?.invalidate() }
-    }
-
-    func refresh(fit: Bool) async {
-        riders = await store.liveClub(clubId)
-        if fit, let f = riders.first {
-            let lats = riders.map(\.lat), lons = riders.map(\.lon)
-            let c = CLLocationCoordinate2D(latitude: (lats.min()! + lats.max()!) / 2, longitude: (lons.min()! + lons.max()!) / 2)
-            let span = MKCoordinateSpan(latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.6),
-                                        longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.6))
-            _ = f
-            cam = .region(.init(center: c, span: span))
+            .navigationTitle("🏍️ " + clubName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button(L("Kapat","Close")) { dismiss() } } }
         }
     }
 }
@@ -217,7 +179,7 @@ struct ClubDetailView: View {
                         HStack {
                             Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Brand.accent)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(L("Canlı konvoy haritası + interkom","Live convoy map + intercom")).font(.system(size: 15, weight: .semibold))
+                                Text(L("Kulüp telsizi + interkom","Club radio + intercom")).font(.system(size: 15, weight: .semibold))
                                 if !ultraMember { Text(L("Ultra ile aç","Unlock with Ultra")).font(.caption2).foregroundStyle(Brand.accent) }
                             }
                             Spacer()
@@ -274,7 +236,7 @@ struct ClubDetailView: View {
             club = await store.clubDetail(clubId)
             me = (await store.profile())?.username ?? ""
         }
-        .sheet(isPresented: $showLive) { ClubLiveView(clubId: clubId, clubName: club?.name ?? "") }
+        .sheet(isPresented: $showLive) { ClubRadioView(clubId: clubId, clubName: club?.name ?? "") }
         .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $pwPremium) }
         .alert(L("Gruptan ayrıl?","Leave the group?"), isPresented: $showLeave) {
             Button(L("Ayrıl","Leave"), role: .destructive) {

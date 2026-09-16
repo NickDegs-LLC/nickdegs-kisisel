@@ -1,0 +1,35 @@
+{
+  "surum": "1.66",
+  "amac": "1.66 canlı takip/arkadaş konumu haritasını KALDIRDI, ama App Store listesi hâlâ onu vaat ediyordu (alt başlıkta 'canlı GPS', açıklamada 'arkadaşlarını haritada canlı gör'). Apple Guideline 2.3.1 Accurate Metadata = red sebebi. Bu dosya 12 dildeki düzeltmeyi taşır.",
+  "durum": "TASLAK — ASC'ye YAZILMADI. ASC'de düzenlenebilir sürüm/appInfo yok (hepsi READY_FOR_SALE); yazmak için önce 1.66 App Store sürüm kaydı (PREPARE_FOR_SUBMISSION) oluşturulmalı. Barış onayı bekleniyor.",
+  "alt_baslik": {
+    "_kural": "App Store alt başlık sınırı 30 karakter. 'canlı GPS' vaadi yerine gerçekten var olan telsiz öne çıkarıldı.",
+    "en-US":   { "eski": "Ride videos & live GPS",        "yeni": "Ride videos & walkie-talkie" },
+    "tr":      { "eski": "Sürüş videoları + canlı GPS",   "yeni": "Sürüş videoları + telsiz" },
+    "de-DE":   { "eski": "Fahrvideos & Live-GPS",         "yeni": "Fahrvideos & Funkgerät" },
+    "es-ES":   { "eski": "Vídeos de rutas y GPS en vivo", "yeni": "Vídeos de rutas y walkie" },
+    "fr-FR":   { "eski": "Vidéos de trajet & GPS live",   "yeni": "Vidéos de trajet & talkie" },
+    "it":      { "eski": "Video dei giri e GPS live",     "yeni": "Video dei giri e radio" },
+    "pt-BR":   { "eski": "Vídeos de rotas e GPS ao vivo", "yeni": "Vídeos de rotas e rádio" },
+    "ru":      { "eski": "Видео поездок и live-GPS",      "yeni": "Видео поездок и рация" },
+    "ar-SA":   { "eski": "فيديوهات الرحلات وGPS مباشر",   "yeni": "فيديوهات الرحلات واللاسلكي" },
+    "ja":      { "eski": "走行ビデオとライブGPS",            "yeni": "走行ビデオとトランシーバー" },
+    "ko":      { "eski": "주행 영상 & 실시간 GPS",          "yeni": "주행 영상 & 무전기" },
+    "zh-Hans": { "eski": "骑行视频与实时 GPS",              "yeni": "骑行视频与对讲机" }
+  },
+  "aciklama_maddesi": {
+    "_kural": "Açıklamada SADECE bu madde yanlış: 'arkadaşlarını haritada canlı gör'. Yerine gerçekten yapılabilen şey yazıldı (telsizle konuşma). Diğer konum maddeleri ('durunca takip uyur', 'bilekten canlı hız') KENDİ rotanı anlatıyor ve hâlâ doğru — DOKUNULMAYACAK. Değiştirme 'eski_icerir' alt dizesiyle eşleşen satırın TAMAMI 'yeni' ile değiştirilerek yapılır (ja satırı terminalde bozuk göründüğü için alt dize kullanıldı).",
+    "en-US":   { "eski_icerir": "see them live on the map",        "yeni": "• Add friends by username and talk to them with push-to-talk radio" },
+    "tr":      { "eski_icerir": "canlı konumlarını haritada gör",  "yeni": "• Kullanıcı adıyla arkadaş ekle, bas-konuş telsizle konuş" },
+    "de-DE":   { "eski_icerir": "live auf der Karte sehen",        "yeni": "• Freunde per Benutzername hinzufügen und per Funk mit ihnen sprechen" },
+    "es-ES":   { "eski_icerir": "velos en vivo en el mapa",        "yeni": "• Añade amigos por nombre de usuario y habla con ellos por walkie" },
+    "fr-FR":   { "eski_icerir": "vois-les en direct sur la carte", "yeni": "• Ajoute des amis par pseudo et parle-leur au talkie-walkie" },
+    "it":      { "eski_icerir": "vedili in tempo reale sulla mappa","yeni": "• Aggiungi amici con lo username e parla con loro via radio" },
+    "pt-BR":   { "eski_icerir": "veja-os ao vivo no mapa",         "yeni": "• Adicione amigos pelo nome de usuário e fale com eles pelo rádio" },
+    "ru":      { "eski_icerir": "на карте в реальном времени",     "yeni": "• Добавляйте друзей по нику и говорите с ними по рации" },
+    "ar-SA":   { "eski_icerir": "وشاهدهم مباشرة على الخريطة",      "yeni": "• أضف أصدقاءك باسم المستخدم وتحدث معهم عبر اللاسلكي" },
+    "ja":      { "eski_icerir": "マップでライブ表示",                "yeni": "• ユーザー名で友だちを追加し、トランシーバーで話せます" },
+    "ko":      { "eski_icerir": "지도에서 실시간 확인",              "yeni": "• 사용자 이름으로 친구를 추가하고 무전기로 대화하세요" },
+    "zh-Hans": { "eski_icerir": "在地图上实时查看",                 "yeni": "• 通过用户名添加好友，用对讲机与他们通话" }
+  }
+}
