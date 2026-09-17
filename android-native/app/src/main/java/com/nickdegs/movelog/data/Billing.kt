@@ -18,7 +18,10 @@ private val TUKETILEBILIR = listOf(BOOST_SKU) + VIDEO_SKULARI + SOKAK_SKULARI
 
 class Billing(
     context: Context,
-    private val onPurchase: (purchaseToken: String) -> Unit,
+    // Abonelik: sunucu doğrulaması BİTENE kadar acknowledge EDİLMEZ. bitti(true) gelirse ack atılır;
+    // gelmezse Play satın almayı 3 gün sonra OTOMATİK İADE eder (kullanıcı parasını geri alır) ve
+    // restore() bir sonraki açılışta yeniden dener. Ters sıra = para gider, premium gelmez.
+    private val onPurchase: (purchaseToken: String, bitti: (Boolean) -> Unit) -> Unit,
     // Tüketilebilir: sunucu doğrulaması BİTENE kadar consume edilmez. bitti(true) gelirse tüketilir,
     // gelmezse satın alma Play'de durur ve bir sonraki açılışta restore() yeniden dener.
     private val onConsumable: (purchaseToken: String, sku: String, bitti: (Boolean) -> Unit) -> Unit =
@@ -145,12 +148,16 @@ class Billing(
             }
             return
         }
-        if (!p.isAcknowledged) {
-            client.acknowledgePurchase(
-                AcknowledgePurchaseParams.newBuilder().setPurchaseToken(p.purchaseToken).build()
-            ) {}
+        // 🔴 FİKS 17.09: ack, sunucu doğrulamasından ÖNCE atılıyordu. /api/iap/google 503 verirse
+        // Play satın almayı "teslim edildi" sayıp bir daha sunmuyor → para alınmış, premium yok.
+        // Artık tüketilebilir yolla (139-145) AYNI sıra: ÖNCE sunucu, SONRA ack.
+        onPurchase(p.purchaseToken) { ok ->
+            if (ok && !p.isAcknowledged) {
+                client.acknowledgePurchase(
+                    AcknowledgePurchaseParams.newBuilder().setPurchaseToken(p.purchaseToken).build()
+                ) {}
+            }
         }
-        onPurchase(p.purchaseToken)   // SUNUCUDA doğrula -> premium (client tek başına açamaz)
     }
 
     private fun restore() {

@@ -56,7 +56,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     val ctx = LocalContext.current
     // Paket satın alma: sunucu doğrularsa consume edilir, hak sayacı tazelenir.
     val billing = remember {
-        Billing(ctx, onPurchase = {}, onConsumable = { tok, sku, bitti ->
+        Billing(ctx, onPurchase = { _, _ -> }, onConsumable = { tok, sku, bitti ->
             scope.launch {
                 val ok = store.verifyGoogleBoost(tok, sku)
                 bitti(ok)

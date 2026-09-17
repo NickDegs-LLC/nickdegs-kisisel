@@ -56,7 +56,7 @@ fun ProfileScreen(store: Store) {
     fun saveSummary() { scope.launch { store.setSummarySettings(com.nickdegs.movelog.data.SummaryCfg(sumOn, sumHour, sumVid)) } }
     val billing = remember {
         // Tüketilebilir: doğrulama BİTMEDEN consume edilmez (bitti(ok) çağrısı Billing içinde tüketir).
-        Billing(ctx, onPurchase = {}, onConsumable = { t, sku, bitti ->
+        Billing(ctx, onPurchase = { _, _ -> }, onConsumable = { t, sku, bitti ->
             scope.launch {
                 val ok = store.verifyGoogleBoost(t, sku)
                 bitti(ok)
