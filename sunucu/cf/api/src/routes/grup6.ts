@@ -771,7 +771,14 @@ g.post('/api/iap/verify', authUser, async (c) => {
         .bind(ultra, expSn, ts, user).run()
     } else {
       // sandbox VEYA expiresDate yok → premium açılır, süre yazılmaz (düşürme kapsamı dışında)
-      await db.prepare('UPDATE users SET premium = 1, ultra = ?1, updated_at = ?2 WHERE uid = ?3')
+      // 🔴 FİKS 17.09 gece (Cursor e2e #3): `ultra` burada DÜZ SET'ti → süresiz Ultra'sı olan hesap
+      // (inceleme hesabı appreview/appreview2: premium=1, ultra=1, until NULL) sandbox'ta bir PREMIUM
+      // alınca ultra=0 oluyor, taktik özellikler 402'ye düşüyor → inceleme REDDİ. 05.09 fiksi
+      // premium_until'i korumuş, ultra'yı unutmuştu. Sandbox/süresiz işlem hiçbir hakkı DÜŞÜRMEZ:
+      // ultra yalnız YÜKSELİR (bu abonelik ultra ise 1, değilse eski değer kalır).
+      await db.prepare(
+        `UPDATE users SET premium = 1, ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
+           updated_at = ?2 WHERE uid = ?3`)
         .bind(ultra, ts, user).run()
     }
     if (!kayit) {                                 // YENİ işlem → Barış'a anlık haber (yalnız İLK işlemde)
@@ -897,7 +904,11 @@ g.post('/api/iap/google', authUser, async (c) => {
          WHERE uid = ?4`)
         .bind(ultra ? 1 : 0, expTs, ts, user).run()
     } else {
-      await db.prepare('UPDATE users SET premium = 1, ultra = ?1, updated_at = ?2 WHERE uid = ?3')
+      // 🔴 FİKS 17.09 gece (Cursor e2e #3, iOS dalıyla simetrik): bitiş okunamayan Google aboneliği
+      // süresiz Ultra'yı DÜŞÜRMESİN — ultra yalnız yükselir.
+      await db.prepare(
+        `UPDATE users SET premium = 1, ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
+           updated_at = ?2 WHERE uid = ?3`)
         .bind(ultra ? 1 : 0, ts, user).run()
     }
     if (ilkDogrulama) {
