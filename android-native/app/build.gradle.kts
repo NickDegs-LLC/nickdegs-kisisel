@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.68"   // 16.09: 1.65 Play'de ZATEN CANLI; bu sürüm harita kaldırma + osmdroid temizliği
+        versionName = "1.69"   // 17.09: abonelik ack'i sunucu doğrulamasından SONRA (para gider/hak gelmez fiksi)
     }
 
     signingConfigs {

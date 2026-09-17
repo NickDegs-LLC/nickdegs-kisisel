@@ -1,4 +1,2 @@
-• Sign-in fixes: when Google sign-in can't start, you now see the actual reason
-• Fixed the app getting stuck on "Verifying identity" — you can retry now
+• Purchase reliability: subscriptions are now confirmed only after server verification, so you never pay without getting access
 • Stability improvements
-• Your account is now tied to one device: signing in elsewhere signs you out here
