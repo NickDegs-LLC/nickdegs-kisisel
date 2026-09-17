@@ -183,6 +183,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         stopMotionLive()
         mgr.stopUpdatingLocation()
         if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
+        // 18.09 (Barış: DI'daki ok 7/24 sönmüyor): GPS dururken "arka plan konum uygulaması" bayrağı da kapanır —
+        // sistemde ok yakacak hiçbir kayıt kalmasın. beginUpdates() sürüşte yeniden true yapar; SLC/motion/sessiz-push
+        // uyanması bu bayrağa bağlı DEĞİL.
+        mgr.allowsBackgroundLocationUpdates = false
         // significantLocationChanges AÇIK kalıyor — hareket edince didUpdateLocations tetiklenir.
     }
 
@@ -240,6 +244,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         mgr.stopMonitoringSignificantLocationChanges()
         heartbeat?.invalidate(); heartbeat = nil
         if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
+        // 18.09 (Barış: DI'daki ok 7/24 sönmüyor): GPS dururken "arka plan konum uygulaması" bayrağı da kapanır —
+        // sistemde ok yakacak hiçbir kayıt kalmasın. beginUpdates() sürüşte yeniden true yapar; SLC/motion/sessiz-push
+        // uyanması bu bayrağa bağlı DEĞİL.
+        mgr.allowsBackgroundLocationUpdates = false
         set(false)
     }
 
@@ -257,6 +265,10 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
             mgr.stopUpdatingLocation()
             mgr.stopMonitoringSignificantLocationChanges()
             if #available(iOS 17.0, *) { (bgSession as? CLBackgroundActivitySession)?.invalidate(); bgSession = nil }
+        // 18.09 (Barış: DI'daki ok 7/24 sönmüyor): GPS dururken "arka plan konum uygulaması" bayrağı da kapanır —
+        // sistemde ok yakacak hiçbir kayıt kalmasın. beginUpdates() sürüşte yeniden true yapar; SLC/motion/sessiz-push
+        // uyanması bu bayrağa bağlı DEĞİL.
+        mgr.allowsBackgroundLocationUpdates = false
         }
         DispatchQueue.main.async { self.recording = false; self.rideStart = nil }
         return r
