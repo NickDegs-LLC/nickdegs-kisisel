@@ -387,6 +387,11 @@ g.delete('/api/account', authUser, async (c) => {
   // cf_mapping: silinen kullanıcının tv kaydı da gittiğinden tv=0 eski token verify'ı GEÇEBİLİR →
   // damga buraya yazılır; reddetme kontrolü lib/auth.ts authUser'da (✅ bütünleştirme 08-30 eklendi).
   await c.env.KV.put(`deleted:${user}`, String(simdi()))
+  // 17.09 gece (Cursor e2e #13): kullanıcıya özel TTL'siz KV kalıntıları — yerel render kuyruğu
+  // (`yerelq:`) ve eski yol attest challenge'ı. Silinemezse hesap yine silinmiş sayılır.
+  for (const k of [`yerelq:${user}`, `attest_challenge:${user}`]) {
+    try { await c.env.KV.delete(k) } catch { /* yut */ }
+  }
   console.log(`hesap silindi: ${user} · gps=${silinenNokta} · r2=${anahtarlar.length}`)
   return c.json({ ok: true, deleted: user })
 })

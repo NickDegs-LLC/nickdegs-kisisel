@@ -347,6 +347,9 @@ enum DavetLink {
         guard let d = try? await req("/auth/refresh", method: "POST"),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let t = o["token"] as? String, !t.isEmpty else { return }
+        // 🔴 FİKS 17.09 gece (Cursor e2e #4): yeni jeton YALNIZ belleğe yazılıyordu; `IAP.report`
+        // ve açılış diskteki `nd_token`'ı okur → eski jeton süresi dolunca ~30 günde bir zorla çıkış.
+        UserDefaults.standard.set(t, forKey: "nd_token")
         await MainActor.run { self.token = t }
     }
 
@@ -362,6 +365,7 @@ enum DavetLink {
                 token = t; me = user
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
                 PhoneWatchLink.shared.push()
+                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -392,6 +396,7 @@ enum DavetLink {
                 token = t; me = (o["user"] as? String) ?? ""
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
                 PhoneWatchLink.shared.push()
+                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -412,6 +417,7 @@ enum DavetLink {
                 token = t; me = (o["user"] as? String) ?? ""
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
                 PhoneWatchLink.shared.push()
+                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -431,6 +437,7 @@ enum DavetLink {
                 token = t; me = (o["user"] as? String) ?? ""
                 UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
                 PhoneWatchLink.shared.push()
+                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -898,6 +905,7 @@ enum DavetLink {
         var r = URLRequest(url: URL(string: API + "/api/rides/upload")!)
         r.httpMethod = "POST"
         r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")   // 17.09 gece (e2e #9): tek-cihaz kapsamı
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         r.httpBody = data
         guard let (d, resp) = try? await URLSession.shared.data(for: r),
@@ -1266,7 +1274,7 @@ enum DavetLink {
         if s.hasPrefix("http") { return URL(string: s) }
         return URL(string: API + s)
     }
-    var authHeader: [String:String] { ["Authorization": "Bearer " + token] }
+    var authHeader: [String:String] { ["Authorization": "Bearer " + token, "X-Device-Id": cihazKimligi()] }   // 17.09 gece (e2e #9)
 }
 
 // İsimden baş harf + tutarlı renk avatarı

@@ -107,7 +107,7 @@ import UIKit
     /// uç var: grup6.ts:1032 `/api/iap/apple/bildirim`. Ama o uç uid'i YALNIZ `iap_transactions`'tan
     /// bulabildiği için, işlem hiç bildirilmemişse yine kurtaramaz → `buy()` finish kapısı ŞART.) Artık sonuç
     /// okunur; başarısızsa işlem BİTİRİLMEZ ve StoreKit onu bir sonraki açılışta tekrar sunar.
-    /// Ağ hatasında 3 deneme (2/4/8 sn) yapılır.
+    /// Ağ/5xx hatasında 3 deneme; denemeler arası 2 sn ve 4 sn beklenir (Cursor e2e #14: "8 sn" yoktu).
     @discardableResult
     static func report(_ jws: String) async -> Bool {
         guard let url = URL(string: API + "/api/iap/verify") else { return false }
@@ -254,7 +254,10 @@ import UIKit
                         lastError = L("Abonelik alındı ama sunucuya işlenemedi — uygulamayı yeniden açınca otomatik tamamlanır.",
                                       "Subscription received but not applied yet — reopen the app to finish it.")
                     }
-                    return purchased
+                    // 🔴 FİKS 17.09 gece (Cursor e2e #2): `purchased` `apply` ile rapordan ÖNCE true oluyor;
+                    // onu döndürünce sunucu düşse bile paywall `if ok { dismiss() }` ile kapanıyor ve
+                    // `lastError` hiç görünmüyordu. Dönüş = "uçtan uca tamamlandı mı".
+                    return bildirildi ? purchased : false
                 }
                 lastError = "Satın alma doğrulanamadı."; return false
             case .pending:
@@ -272,6 +275,15 @@ import UIKit
 
     func restore() async {
         try? await AppStore.sync()
+        // 🔴 FİKS 17.09 gece (Cursor e2e #8): restore yalnız YEREL bayrakları tazeliyordu, sunucuya
+        // hiç bildirmiyordu → yeni cihaz / yeniden kurulumda yerel premium açık, sunucu 402.
+        // currentEntitlements yalnız AKTİF abonelikleri döner (iade/süresi geçmiş gelmez); sunucu
+        // idempotent: aynı tid → UPDATE, başka hesabın tid'i → 409 (hak vermez).
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let t) = result, Self.ids.contains(t.productID) {
+                _ = await Self.report(result.jwsRepresentation)
+            }
+        }
         await refresh()
     }
 

@@ -730,14 +730,15 @@ g.post('/api/iap/verify', authUser, async (c) => {
   const kayit = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(tid).first<{ uid: string }>()
   const ts = simdi()
   const ad = pyTruthy(prof?.name) ? String(prof!.name) : user.slice(0, 10)
+  // 🔴 FİKS 17.09 — İŞLEM SAHİPLİĞİ (gece, Cursor e2e #10 ile TÜM ürünlere çıkarıldı; önce yalnız
+  // abonelikteydi). Google dalında token başka uid'e bağlıysa 409; iOS'ta bu kilit yoktu → sızmış bir
+  // StoreKit JWS ikinci hesapta abonelikte premium açıyor, tüketilebilirde `already:true` ile sessiz geçiyordu.
+  if (kayit && kayit.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
 
   if (SUB_IDS.has(pid)) {
     const ultra = ULTRA_IDS.has(pid) ? 1 : 0     // premium abonelik → ultra False (main.py:1545)
     const exp = p.expiresDate
-    // 🔴 FİKS 17.09 — İŞLEM SAHİPLİĞİ. Google dalında (aşağıda) token başka uid'e bağlıysa 409
-    // dönüyordu; iOS dalında bu kilit YOKTU → sızmış/paylaşılmış bir StoreKit JWS ikinci bir
-    // hesapta çağrılınca `iap_transactions` A'da kalmasına rağmen oturumdaki B'ye premium yazılıyordu.
-    if (kayit && kayit.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+    // (İşlem sahipliği 409 kontrolü artık yukarıda, tüm ürün türleri için.)
     // 🔴 FİKS 17.09 — İADE / SÜRE. İade edilmiş (revocationDate dolu) ya da süresi çoktan geçmiş
     // bir JWS (restore ile gelen ESKİ işlem) premium AÇMAMALI; iade bildirimi bir kez işlendiği
     // için (bildirimTekrar) sonradan geri de alınmıyordu.
@@ -752,13 +753,16 @@ g.post('/api/iap/verify', authUser, async (c) => {
     // Sandbox işlemi premium'u AÇAR (inceleme test edebilsin) ama bitiş tarihi YAZILMAZ →
     // düşürme görevi ona hiç dokunmaz. Üretim işlemleri etkilenmez.
     const sandbox = pyStr(p.environment).toLowerCase() === 'sandbox'
+    // 🔴 FİKS 17.09 gece (Cursor e2e #6): hak UPDATE'i ile işlem kayıtları AYRI commit'lerdi
+    // (tüketilebilirler zaten tek batch). Artık hepsi tek `db.batch` = tek transaction.
+    const yaz: D1PreparedStatement[] = []
     if (expSn && !sandbox) {
       // 🔴 FİKS 17.09 — SÜRESİZ HAK KORUMASI. Düz SET, promo/redeem/inceleme hesabının
       // `premium_until IS NULL` (süresiz) hakkını tarihli aboneliğe çeviriyordu; ardından cron
       // `premium-suresi` onu düşürüyordu. Bildirim yolu (iap-abonelik.ts:52) NULL'u zaten koruyor,
       // kırılan YALNIZ bu doğrudan UPDATE'ti. Artık iap-abonelik.ts:118-128 ile AYNI CASE:
       // NULL korunur, süre yalnız UZAR, daha uzun süren başka hak kısaltılmaz.
-      await db.prepare(
+      yaz.push(db.prepare(
         `UPDATE users SET premium = 1,
            ultra = CASE WHEN ?1 = 1 THEN 1
                         WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
@@ -768,7 +772,7 @@ g.post('/api/iap/verify', authUser, async (c) => {
                                 ELSE MAX(COALESCE(premium_until, 0), ?2) END,
            updated_at = ?3
          WHERE uid = ?4`)
-        .bind(ultra, expSn, ts, user).run()
+        .bind(ultra, expSn, ts, user))
     } else {
       // sandbox VEYA expiresDate yok → premium açılır, süre yazılmaz (düşürme kapsamı dışında)
       // 🔴 FİKS 17.09 gece (Cursor e2e #3): `ultra` burada DÜZ SET'ti → süresiz Ultra'sı olan hesap
@@ -776,27 +780,28 @@ g.post('/api/iap/verify', authUser, async (c) => {
       // alınca ultra=0 oluyor, taktik özellikler 402'ye düşüyor → inceleme REDDİ. 05.09 fiksi
       // premium_until'i korumuş, ultra'yı unutmuştu. Sandbox/süresiz işlem hiçbir hakkı DÜŞÜRMEZ:
       // ultra yalnız YÜKSELİR (bu abonelik ultra ise 1, değilse eski değer kalır).
-      await db.prepare(
+      yaz.push(db.prepare(
         `UPDATE users SET premium = 1, ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
            updated_at = ?2 WHERE uid = ?3`)
-        .bind(ultra, ts, user).run()
+        .bind(ultra, ts, user))
     }
+    if (!kayit)
+      yaz.push(db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(tid, user, pid, ts))
+    // Bildirim eşleşmesi: originalTransactionId yenilemelerde sabit kalır, transactionId değişir.
+    const orig = pyStr(p.originalTransactionId)
+    if (orig && orig !== tid)
+      yaz.push(db.prepare(
+        'INSERT OR IGNORE INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(orig, user, pid, ts))
+    await db.batch(yaz)
     if (!kayit) {                                 // YENİ işlem → Barış'a anlık haber (yalnız İLK işlemde)
-      await db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-        .bind(tid, user, pid, ts).run()
       const expS = pyTruthy(exp) ? tarihStrUTC(Math.floor(Number(exp) / 1000)) : '?'
       const deneme = pyTruthy(p.offerType) ? ' (deneme/tanıtım teklifi)' : ''
       const say = await uyeSay(db)
       await adminq(c.env,
         `💰 Move Log Abonelik\n${ad} → ${ultra ? 'ULTRA' : 'Premium'} · iOS${deneme}\n` +
         `Ürün: ${pid.split('.').pop()} · bitiş ${expS}\nToplam: ${say.abone} abone · ${say.n} üye`)
-    }
-    // Bildirim eşleşmesi: originalTransactionId yenilemelerde sabit kalır, transactionId değişir.
-    const orig = pyStr(p.originalTransactionId)
-    if (orig && orig !== tid) {
-      await db.prepare(
-        'INSERT OR IGNORE INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-        .bind(orig, user, pid, ts).run()
     }
     return c.json({ ok: true, premium: true })
   }
@@ -874,10 +879,14 @@ g.post('/api/iap/google', authUser, async (c) => {
     if (eski && eski.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
     const ilkDogrulama = !eski                    // bildirim SADECE token ilk görüldüğünde
     const ts = simdi()
-    await db.prepare(
+    // 🔴 FİKS 17.09 gece (Cursor e2e #11): yukarıdaki SELECT ile bu upsert arasında BAŞKA hesap aynı
+    // token'ı yazdıysa (yarış) `SET uid = ?2` sahipliği ÇALARDI. Upsert yalnız aynı uid'de günceller;
+    // 0 satır değişti = araya başka hesap girmiş → 409.
+    const upsert = await db.prepare(
       "INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, 'google-sub', ?3, ?3, ?3) " +
-      "ON CONFLICT(tid) DO UPDATE SET uid = ?2, pid = 'google-sub', ts = ?3, updated_at = ?3")
+      "ON CONFLICT(tid) DO UPDATE SET pid = 'google-sub', ts = ?3, updated_at = ?3 WHERE iap_transactions.uid = ?2")
       .bind(tok, user, ts).run()
+    if ((upsert.meta?.changes ?? 1) === 0) hata(409, 'bu satin alma baska hesaba ait')
     await kullaniciGarantile(db, user)
     const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
     const pids = lineItems.map((li) => pyStr(nesne(li).productId))
@@ -1252,9 +1261,11 @@ g.post('/api/iap/google/bildirim', async (c) => {
       // 🔴 FİKS 17.09 — İADE EDİLEN HAK GERİ ALINIYOR (Apple dalıyla simetrik). Sku, satın alma
       // sırasında `iap_transactions.pid` kolonuna yazılıyor (Google boost sözleşmesi) → orderId ile okunur.
       const oid2 = pyStr(v.orderId)
-      const islem = oid2
-        ? await db.prepare('SELECT uid, pid FROM iap_transactions WHERE tid = ?1').bind(oid2)
-          .first<{ uid: string; pid: string }>()
+      // 🔴 FİKS 17.09 gece (Cursor e2e #12): satın almada orderId yoksa tid = purchaseToken yazılıyor
+      // → iade bildirimi de token'la eşleşebilmeli, yoksa sku bulunamaz ve hak geri alınmazdı.
+      const islem = (oid2 || tok)
+        ? await db.prepare('SELECT uid, pid FROM iap_transactions WHERE tid IN (?1, ?2) LIMIT 1')
+          .bind(oid2 || '-', tok || '-').first<{ uid: string; pid: string }>()
         : null
       const sku2 = pyStr(islem?.pid)
       const geri = ANDROID_SOKAK_IDS[sku2] ?? ANDROID_VIDEO_IDS[sku2] ?? 0
