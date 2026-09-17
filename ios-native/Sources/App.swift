@@ -13,6 +13,8 @@ struct MoveLogApp: App {
     var design: Font.Design {
         switch fontId { case "serif": return .serif; case "rounded": return .rounded; case "mono": return .monospaced; default: return .default }
     }
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -38,6 +40,14 @@ struct MoveLogApp: App {
                 PttEngine.shared.store = store            // 1.9-B: telsiz
                 if ConvoyVoice.shared.enabled { ConvoyVoice.shared.start() }
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
+            }
+            // 17.09 ASIL FIKS (olculdu): uygulama .checking'de askida kalinca ON PLANA DONUS
+            // hicbir seyi tetiklemiyordu - scenePhase yalniz RootView'da dinleniyor, yani ancak
+            // gate .valid iken. Arka plandaki Tracker calismaya devam ettigi icin "internet var
+            // ama uygulama acilmiyor" goruntusu olusuyordu; kullanici uygulamayi komple kapatip
+            // acmadan kurtulamiyordu. Artik her one gelisde gate .valid degilse yeniden dogrulanir.
+            .onChange(of: scenePhase) { _, ph in
+                if ph == .active && store.gate != .valid { Task { await store.validate() } }
             }
             .environmentObject(store)
             .environmentObject(iap)

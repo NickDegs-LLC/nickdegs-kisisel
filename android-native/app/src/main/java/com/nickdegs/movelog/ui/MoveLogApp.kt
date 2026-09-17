@@ -65,8 +65,25 @@ fun MoveLogApp(store: Store) {
     LaunchedEffect(store.auth) {
         if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) { store.sendBeacon(); store.registerFcm() }
     }
+    // 17.09 ASIL FIKS (olculdu): uygulama CHECKING'de asili kalinca ON PLANA DONUS hicbir seyi
+    // tetiklemiyordu. LaunchedEffect(Unit) yalniz BIR KEZ kosar; asagidaki ON_RESUME dinleyicisi ise
+    // erken return'lerin ALTINDA kayitlaniyor, yani ancak auth==VALID iken. Arka plandaki konum
+    // servisi calismaya devam ettigi icin kullanici "internet var ama uygulama acilmiyor" goruyor ve
+    // uygulamayi komple kapatmadan kurtulamiyordu (16.09'da sahada olculdu). Artik kapida da dinliyoruz.
+    val kapiOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(kapiOwner) {
+        val kapiObs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
+                store.auth != com.nickdegs.movelog.data.AuthState.VALID) {
+                scope.launch { store.validate() }
+            }
+        }
+        kapiOwner.lifecycle.addObserver(kapiObs)
+        onDispose { kapiOwner.lifecycle.removeObserver(kapiObs) }
+    }
+
     when (store.auth) {
-        com.nickdegs.movelog.data.AuthState.CHECKING -> { GateScreen(true) { }; return }
+        com.nickdegs.movelog.data.AuthState.CHECKING -> { GateScreen(true) { scope.launch { store.validate() } }; return }
         com.nickdegs.movelog.data.AuthState.NEED_LOGIN -> { LoginScreen(store); return }
         com.nickdegs.movelog.data.AuthState.OFFLINE -> {
             GateScreen(false) { scope.launch { store.validate() } }; return
