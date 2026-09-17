@@ -8,6 +8,18 @@ import UserNotifications
 
 let API = "https://kisisel-api.nickdegs.com"
 
+// CIHAZ KIMLIGI (17.09, Baris: "herkes tek cihazdan girecek"): hesap tek cihaza baglanir.
+// Kaynak identifierForVendor = DONANIM kimligi (ayni saticinin uygulamalari icin cihaz basina
+// sabit). Nadiren nil olabilir (cihaz ilk kez kilit acilmadan once) -> o durumda uretilen UUID
+// UserDefaults'ta sabitlenir ki kimlik oturumlar arasi degismesin.
+func cihazKimligi() -> String {
+    let d = UserDefaults.standard
+    if let v = d.string(forKey: "nd_cihaz"), !v.isEmpty { return v }
+    let v = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+    d.set(v, forKey: "nd_cihaz")
+    return v
+}
+
 // MARK: - Modeller
 struct Avatar: Codable, Hashable { var type: String = "initials"; var value: String? = nil }
 struct Ride: Codable, Identifiable, Hashable {
@@ -142,6 +154,7 @@ enum DavetLink {
         gate = .checking
         var r = URLRequest(url: URL(string: API + "/api/profile")!)
         r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
         r.timeoutInterval = 15
         do {
             let (data, resp) = try await URLSession.shared.data(for: r)
@@ -191,6 +204,7 @@ enum DavetLink {
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
         r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
@@ -202,6 +216,7 @@ enum DavetLink {
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
         // Sunucunun push/metin dilini kullanıcının cihaz diline sabitle (örtük URLSession header'ına güvenme).
         r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
@@ -248,6 +263,7 @@ enum DavetLink {
         do {
             var r = URLRequest(url: URL(string: API + "/auth/login")!)
             r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["user": user, "password": pass])
             let (data, _) = try await URLSession.shared.data(for: r)
             if let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
@@ -263,6 +279,7 @@ enum DavetLink {
         do {
             var r = URLRequest(url: URL(string: API + "/auth/sms/start")!)
             r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["phone": phone])
             let (_, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300 { return true }
@@ -275,6 +292,7 @@ enum DavetLink {
         do {
             var r = URLRequest(url: URL(string: API + "/auth/sms/verify")!)
             r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["phone": phone, "code": code])
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
@@ -294,6 +312,7 @@ enum DavetLink {
         do {
             var r = URLRequest(url: URL(string: API + "/auth/apple")!)
             r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["identity_token": identityToken, "name": name])
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
@@ -312,6 +331,7 @@ enum DavetLink {
         do {
             var r = URLRequest(url: URL(string: API + "/auth/google")!)
             r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
             r.httpBody = try JSONSerialization.data(withJSONObject: ["id_token": idToken])
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
@@ -515,6 +535,7 @@ enum DavetLink {
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body { r.httpBody = try? JSONSerialization.data(withJSONObject: body) }
         guard let (data, resp) = try? await URLSession.shared.data(for: r) else { return (0, Data()) }
@@ -769,6 +790,7 @@ enum DavetLink {
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
         r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }

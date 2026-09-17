@@ -477,6 +477,7 @@ g.post('/auth/login', async (c) => {
   const pw = String(body?.password ?? '')
   const kullanicilar = appUsers(env)
   if (user in kullanicilar && sabitEsit(kullanicilar[user], pw)) {
+    await cihazBagla(env, c, user)
     return c.json({ token: await makeJwt(env, user), user })
   }
   return hataYanit(401, 'kullanıcı adı veya parola hatalı')
@@ -514,7 +515,10 @@ g.post('/auth/apple', async (c) => {
   const mevcut = await getUser(env.DB, username)
   // ALIAS TUZAĞI (main.py:601-602): bağlanmış hesap -> token KANONİK kimlikle basılır,
   // apple_sub/name YAZILMAZ (erken dönüş).
-  if (mevcut?.alias) return c.json({ token: await makeJwt(env, mevcut.alias), user: mevcut.alias })
+  if (mevcut?.alias) {
+    await cihazBagla(env, c, mevcut.alias)
+    return c.json({ token: await makeJwt(env, mevcut.alias), user: mevcut.alias })
+  }
   const now = simdi()
   const ad = name ? name.slice(0, 40) : ''
   if (!mevcut) {
@@ -529,8 +533,51 @@ g.post('/auth/apple', async (c) => {
          updated_at = ?4 WHERE uid = ?1`)
       .bind(username, sub, ad, now).run()
   }
+  await cihazBagla(env, c, username)
   return c.json({ token: await makeJwt(env, username), user: username })
 })
+
+// ---------------------------------------------------------------------------
+// CIHAZ BAGLAMA (17.09, Baris: "herkes tek cihazdan girecek")
+// Hesap tek cihaza baglidir. Istemci X-Device-Id basligi gonderir (iOS identifierForVendor,
+// Android ANDROID_ID). Kurallar:
+//   baslik YOK      -> hicbir sey yapma (sahadaki eski surumler kirilmasin)
+//   bagli cihaz YOK -> sessizce bagla
+//   ayni cihaz      -> yalnizca device_seen tazele
+//   FARKLI cihaz    -> tv + 1 (eski cihazin tum oturumlari duser) + yeni cihaza bagla
+// ⚠️ SIRA: makeJwt tv'yi uretim aninda okur -> bu fonksiyon makeJwt'den ONCE cagrilmalidir,
+//    yoksa yeni cihazin token'i eski tv ile basilir ve ilk istekte kendi kendini 401 yapar.
+// ---------------------------------------------------------------------------
+async function cihazBagla(env: Env, c: Context, uid: string): Promise<void> {
+  const cihaz = (c.req.header('X-Device-Id') || '').trim().slice(0, 128)
+  if (!cihaz) return
+  try {
+    await cihazBaglaIc(env, cihaz, uid)
+  } catch (e) {
+    // FAIL-OPEN (bilincli): cihaz baglama bir GUVENLIK EKI; D1 hatasi, eksik kolon veya
+    // migration gecikmesi yuzunden GIRIS UCU asla 500 vermemeli. Hata yutulur, kullanici girer.
+    console.log('cihaz baglama atlandi:', String(e).slice(0, 120))
+  }
+}
+
+async function cihazBaglaIc(env: Env, cihaz: string, uid: string): Promise<void> {
+  const now = simdi()
+  const row = await env.DB.prepare('SELECT device_id FROM users WHERE uid = ?1')
+    .bind(uid).first<{ device_id: string | null }>()
+  const bagli = (row?.device_id || '').trim()
+  if (!bagli) {
+    await env.DB.prepare('UPDATE users SET device_id = ?2, device_seen = ?3, updated_at = ?3 WHERE uid = ?1')
+      .bind(uid, cihaz, now).run()
+    return
+  }
+  if (bagli === cihaz) {
+    await env.DB.prepare('UPDATE users SET device_seen = ?2 WHERE uid = ?1').bind(uid, now).run()
+    return
+  }
+  // farkli cihaz: once tv artir (eski oturumlar olur), sonra bagla
+  await env.DB.prepare('UPDATE users SET tv = tv + 1, device_id = ?2, device_seen = ?3, updated_at = ?3 WHERE uid = ?1')
+    .bind(uid, cihaz, now).run()
+}
 
 // main.py:619 GOOGLE_AUDS — Android (film-ozet web client) + iOS (move-log-500805)
 const GOOGLE_AUDS = [
@@ -572,7 +619,10 @@ g.post('/auth/google', async (c) => {
   if (!sub) return hataYanit(401, 'Google kullanıcı kimliği yok')
   const username = 'google_' + (await sha256Hex(sub)).slice(0, 12)
   const mevcut = await getUser(env.DB, username)
-  if (mevcut?.alias) return c.json({ token: await makeJwt(env, mevcut.alias), user: mevcut.alias })
+  if (mevcut?.alias) {
+    await cihazBagla(env, c, mevcut.alias)
+    return c.json({ token: await makeJwt(env, mevcut.alias), user: mevcut.alias })
+  }
   const now = simdi()
   const nm = name || String(payload?.name ?? '')     // body.name yoksa payload.name (main.py:664)
   const ad = nm ? nm.slice(0, 40) : ''
@@ -587,6 +637,7 @@ g.post('/auth/google', async (c) => {
          updated_at = ?4 WHERE uid = ?1`)
       .bind(username, sub, ad, now).run()
   }
+  await cihazBagla(env, c, username)
   return c.json({ token: await makeJwt(env, username), user: username })
 })
 
@@ -654,6 +705,7 @@ g.post('/auth/sms/verify', async (c) => {
   }
   const adminOldu = adminMi || !!mevcut?.admin
   if (yeniUye && !adminOldu) await uyeBildir(env, username, null, 'SMS', phone)
+  await cihazBagla(env, c, username)
   return c.json({ token: await makeJwt(env, username), user: username })
 })
 

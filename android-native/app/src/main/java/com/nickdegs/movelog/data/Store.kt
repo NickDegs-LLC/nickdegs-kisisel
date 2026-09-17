@@ -17,6 +17,22 @@ import com.nickdegs.movelog.util.saveVideoToGallery
 
 const val API = "https://kisisel-api.nickdegs.com"
 
+// CIHAZ KIMLIGI (17.09, Baris: "herkes tek cihazdan girecek"): hesap tek cihaza baglanir.
+// Kaynak Settings.Secure.ANDROID_ID = DONANIM kimligi (cihaz+imzalayan basina sabit; fabrika
+// ayarlarina donusta degisir). Bazi cihazlarda null gelebilir -> uretilen UUID SharedPreferences'ta
+// sabitlenir ki kimlik oturumlar arasi degismesin.
+fun cihazKimligi(ctx: android.content.Context): String {
+    val p = ctx.getSharedPreferences("movelog", android.content.Context.MODE_PRIVATE)
+    val v = p.getString("nd_cihaz", "") ?: ""
+    if (v.isNotEmpty()) return v
+    val yeni = try {
+        android.provider.Settings.Secure.getString(ctx.contentResolver,
+            android.provider.Settings.Secure.ANDROID_ID)
+    } catch (e: Exception) { null } ?: java.util.UUID.randomUUID().toString()
+    p.edit().putString("nd_cihaz", yeni).apply()
+    return yeni
+}
+
 /** iOS DavetLink.ayikla ile aynı: `invite=` / `code=` sonrası, 6–32 url-safe. */
 fun ayiklaDavetKodu(ham: String): String {
     var s = ham.trim()
@@ -88,6 +104,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 val c = (URL("$API/api/profile").openConnection() as HttpURLConnection)
                 c.requestMethod = "GET"; c.connectTimeout = 12000; c.readTimeout = 20000
                 c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
                 val rc = c.responseCode
                 if (rc == 200) {
                     val o = JSONObject(c.inputStream.bufferedReader().readText())
@@ -164,6 +181,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 c.requestMethod = method
                 c.connectTimeout = 15000; c.readTimeout = 30000
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
                 // Sunucunun push/metin dilini cihaz diline sabitle (iOS ile aynı)
                 c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
                 if (body != null) {
@@ -185,6 +203,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 val c = (URL(API + path).openConnection() as HttpURLConnection)
                 c.requestMethod = method; c.connectTimeout = 15000; c.readTimeout = 30000
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
                 c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
                 if (body != null) {
                     c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
@@ -365,7 +384,10 @@ class Store(app: Application) : AndroidViewModel(app) {
         try {
             val url = signedVideoUrl(id) ?: videoUrl(id)
             val c = (URL(url).openConnection() as HttpURLConnection)
-            if (url.contains("/api/")) c.setRequestProperty("Authorization", "Bearer $token")
+            if (url.contains("/api/")) {
+                c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
+            }
             c.connectTimeout = 15000; c.readTimeout = 90000
             if (c.responseCode in 200..299) c.inputStream.readBytes() else null
         } catch (e: Exception) { null }
@@ -459,6 +481,7 @@ class Store(app: Application) : AndroidViewModel(app) {
             val c = (URL(API + "/api/music/library").openConnection() as HttpURLConnection)
             c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 120000   // büyük dosya: uzun timeout
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
             c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
             val body = JSONObject().put("name", name).put("data", dataUrl)
             OutputStreamWriter(c.outputStream).use { it.write(body.toString()) }
@@ -508,6 +531,7 @@ class Store(app: Application) : AndroidViewModel(app) {
             val c = (URL("$API/api/rides/upload").openConnection() as HttpURLConnection)
             c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 40000
             c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
             c.setRequestProperty("Content-Type", "application/octet-stream")
             c.doOutput = true; c.outputStream.use { it.write(bytes) }
             if (c.responseCode !in 200..299) return@withContext null
@@ -807,6 +831,7 @@ class Store(app: Application) : AndroidViewModel(app) {
             c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
             c.setRequestProperty("Content-Type", "audio/mp4")
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
             c.doOutput = true; c.outputStream.use { it.write(data) }
             c.responseCode in 200..299
         } catch (e: Exception) { false }
@@ -818,6 +843,7 @@ class Store(app: Application) : AndroidViewModel(app) {
             c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
             c.setRequestProperty("Content-Type", "audio/mp4")
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
             c.doOutput = true; c.outputStream.use { it.write(data) }
             c.responseCode in 200..299
         } catch (e: Exception) { false }
@@ -826,6 +852,7 @@ class Store(app: Application) : AndroidViewModel(app) {
         try {
             val c = (URL("$API/api/ptt/$id").openConnection() as HttpURLConnection)
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
             c.connectTimeout = 15000; c.readTimeout = 30000
             if (c.responseCode == 200) c.inputStream.readBytes() else null
         } catch (e: Exception) { null }
