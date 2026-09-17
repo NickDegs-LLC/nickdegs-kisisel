@@ -13,6 +13,7 @@ import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.nickdegs.movelog.data.cihazKimligi
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -31,6 +32,7 @@ class MoveLogMessaging : FirebaseMessagingService() {
                 val c = (URL("https://kisisel-api.nickdegs.com/api/pushtoken").openConnection() as HttpURLConnection)
                 c.requestMethod = "POST"; c.connectTimeout = 12000; c.readTimeout = 15000
                 c.setRequestProperty("Authorization", "Bearer $auth")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(this@MoveLogMessaging))
                 c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
                 c.outputStream.use { it.write(JSONObject().put("token", token).put("platform", "android").toString().toByteArray()) }
                 c.responseCode; c.disconnect()
@@ -105,6 +107,7 @@ class MoveLogMessaging : FirebaseMessagingService() {
             try {
                 val c = (URL("https://kisisel-api.nickdegs.com/api/ptt/$id").openConnection() as HttpURLConnection)
                 c.setRequestProperty("Authorization", "Bearer $auth")
+                c.setRequestProperty("X-Device-Id", cihazKimligi(this@MoveLogMessaging))
                 c.connectTimeout = 15000; c.readTimeout = 30000
                 if (c.responseCode != 200) return@Thread          // 404 = klip yok/yetkisiz -> sessiz
                 val veri = c.inputStream.readBytes()

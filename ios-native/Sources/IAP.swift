@@ -113,6 +113,7 @@ import UIKit
         var r = URLRequest(url: url); r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")   // tek-cihaz zorlaması (Store ile aynı değer)
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["jws": jws])
         for deneme in 1...3 {
             if let (d, resp) = try? await URLSession.shared.data(for: r),

@@ -357,6 +357,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 15
         req.setValue("Bearer " + tokenStr, forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")   // tek-cihaz zorlaması (Store ile aynı değer)
         let body: [String: Any] = [
             "auth": mgr.authorizationStatus.rawValue, "precise": !preciseOff,
             "recv": recvCount, "sent": sentCount, "acc": Int(lastAcc),
