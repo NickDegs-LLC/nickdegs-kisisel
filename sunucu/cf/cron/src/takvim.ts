@@ -35,6 +35,7 @@ import * as imajSurumBekcisi from './gorevler/imaj-surum-bekcisi'
 import * as videoButunluk from './gorevler/video-butunluk'
 import * as d1Tutarlilik from './gorevler/d1-tutarlilik'
 import * as kendiKendiniTest from './gorevler/kendi-kendini-test'
+import * as attestReceipt from './gorevler/attest-receipt'
 
 export type Grup = 'dakikalik' | 'on_dk' | 'saatlik'
 
@@ -90,6 +91,9 @@ export const GOREVLER: Gorev[] = [
   { ad: 'd1-tutarlilik',       grup: 'on_dk',     zaman: { tip: 'periyot', sn: 1800 }, acik: true, kos: d1Tutarlilik.kos },
   { ad: 'kendi-kendini-test',  grup: 'saatlik',   zaman: { tip: 'periyot', sn: 3600 }, acik: true, kos: kendiKendiniTest.kos },
   { ad: 'video-butunluk',      grup: 'saatlik',   zaman: { tip: 'saatmod', mod: 3 },   acik: true, kos: videoButunluk.kos },
+  // 17.09: App Attest receipt'ini Apple'da tazeler → alan 17 = dolandırıcılık risk metriği
+  // (cihazın 30 günlük attest anahtarı sayısı). İstek yolunda OLAMAZ: erken çağrı 304 yer.
+  { ad: 'attest-receipt',      grup: 'saatlik',   zaman: { tip: 'gunluk', saat: 9 },   acik: true, kos: attestReceipt.kos },
 ]
 
 /** Bir sonraki koşum zamanı (epoch sn, UTC) — her zaman > now. */

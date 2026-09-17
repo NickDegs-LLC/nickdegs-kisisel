@@ -36,4 +36,9 @@ export type Env = {
   ASC_ISSUER_ID?: string
   ASC_APP_ID?: string
   ASC_P8?: string                // ES256 özel anahtar (PEM)
+  // App Attest receipt / dolandırıcılık metriği (attest-receipt görevi, 17.09).
+  // ⚠️ APNs anahtarı BURADA KULLANILAMAZ: DeviceCheck servisi anahtar üretilirken seçilir ve
+  // eldeki beş eski anahtarın hepsi Apple'a 401 veriyordu (ölçüldü). 7DYNKZZPCX bunun için üretildi.
+  DEVICECHECK_P8?: string        // ES256 özel anahtar (PEM) — DeviceCheck yetkili
+  DEVICECHECK_KEY_ID?: string    // 7DYNKZZPCX (boşsa görevdeki varsayılan)
 }
