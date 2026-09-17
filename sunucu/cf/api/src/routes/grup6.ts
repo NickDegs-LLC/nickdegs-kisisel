@@ -649,9 +649,16 @@ async function appAttestDogrula(
 }
 
 /** Apple "Verifying the Assertion".
- *  ⚠️ TUZAK: Apple "imza nonce üzerindedir" der ve nonce = SHA256(authData ‖ clientDataHash).
- *  WebCrypto verify() verilen veriyi KENDİSİ hash'ler → nonce'ı doğrudan vermek ÇİFT HASH olur
- *  ve her assertion sessizce düşer. Bu yüzden ÖN-GÖRÜNTÜ veriliyor; hash'i WebCrypto alıyor. */
+ *  🔴 İMZA GERÇEKTEN ÇİFT HASH'TİR — 17.09'da sahada kanıtlandı.
+ *  İlk yazımda "WebCrypto zaten hash'liyor, nonce'ı verirsem çift hash olur" diye ÖN-GÖRÜNTÜYÜ
+ *  (authData ‖ clientDataHash) vermiştim → canlıda her assertion `why='imza'` ile düştü
+ *  (14:49:37 ve 14:49:49, iki deneme de). Doğrusu: istemci
+ *      SHA256( SHA256(authData ‖ clientDataHash) )
+ *  imzalıyor. Yani nonce hesaplanır ve NONCE verilir; WebCrypto onu bir kez daha hash'ler.
+ *  Kaynaklar: Apple Forums 803133 kabul edilen cevap ("Apple is signing
+ *  SHA256(SHA256(authData || clientDataHash))") + veehaitch/devicecheck-appattest referans
+ *  uygulaması (`update(nonce)` + "SHA256withECDSA").
+ *  İmza DER/X9.62'dir → derImzaHam ile ham r‖s'ye çevrilir (Apple Forums 662477). */
 async function appAttestAssertDogrula(
   env: Env, asrB64: string, challenge: string, pubkeyB64: string, onceki: number,
 ): Promise<AsrSonuc> {
@@ -663,13 +670,16 @@ async function appAttestAssertDogrula(
     if (!(sig instanceof Uint8Array) || !(authData instanceof Uint8Array))
       return { ok: false, why: 'yapi', counter: 0, ...bosUz }
     const chHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(challenge)))
-    const onGoruntu = new Uint8Array(authData.length + chHash.length)
-    onGoruntu.set(authData, 0)
-    onGoruntu.set(chHash, authData.length)
+    const birlesik = new Uint8Array(authData.length + chHash.length)
+    birlesik.set(authData, 0)
+    birlesik.set(chHash, authData.length)
+    // nonce = SHA256(authData ‖ clientDataHash). İmza BUNUN üzerindedir; WebCrypto verify()
+    // verilen veriyi kendisi hash'lediği için nonce'ı vermek doğru sonucu (çift hash) üretir.
+    const nonce = new Uint8Array(await crypto.subtle.digest('SHA-256', birlesik))
     const key = await crypto.subtle.importKey('spki',
       stdB64Decode(pubkeyB64) as unknown as ArrayBuffer & Uint8Array,
       { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
-    if (!(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derImzaHam(sig, 32), onGoruntu)))
+    if (!(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derImzaHam(sig, 32), nonce)))
       return { ok: false, why: 'imza', counter: 0, ...bosUz }
     const appidHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(appAttestAppId(env))))
     if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', counter: 0, ...bosUz }
