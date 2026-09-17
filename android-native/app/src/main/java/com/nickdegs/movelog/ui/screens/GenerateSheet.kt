@@ -56,7 +56,10 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     val ctx = LocalContext.current
     // Paket satın alma: sunucu doğrularsa consume edilir, hak sayacı tazelenir.
     val billing = remember {
-        Billing(ctx, onPurchase = { _, _ -> }, onConsumable = { tok, sku, bitti ->
+        // 17.09 gece (Cursor e2e #5): bu örnek de restore()'da aboneliği doğrulayıp ack'lesin — yoksa
+        // Paywall açılmadan gelen ack'siz abonelik 3 günde iade olur.
+        Billing(ctx, onPurchase = { tok, bitti -> scope.launch { bitti(store.verifyGooglePurchase(tok)) } },
+                onConsumable = { tok, sku, bitti ->
             scope.launch {
                 val ok = store.verifyGoogleBoost(tok, sku)
                 bitti(ok)

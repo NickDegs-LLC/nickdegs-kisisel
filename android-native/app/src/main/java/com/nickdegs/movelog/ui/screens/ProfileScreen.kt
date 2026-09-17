@@ -56,7 +56,9 @@ fun ProfileScreen(store: Store) {
     fun saveSummary() { scope.launch { store.setSummarySettings(com.nickdegs.movelog.data.SummaryCfg(sumOn, sumHour, sumVid)) } }
     val billing = remember {
         // Tüketilebilir: doğrulama BİTMEDEN consume edilmez (bitti(ok) çağrısı Billing içinde tüketir).
-        Billing(ctx, onPurchase = { _, _ -> }, onConsumable = { t, sku, bitti ->
+        // 17.09 gece (Cursor e2e #5): Profil örneği de restore()'da aboneliği doğrulayıp ack'lesin.
+        Billing(ctx, onPurchase = { t, bitti -> scope.launch { bitti(store.verifyGooglePurchase(t)) } },
+                onConsumable = { t, sku, bitti ->
             scope.launch {
                 val ok = store.verifyGoogleBoost(t, sku)
                 bitti(ok)
