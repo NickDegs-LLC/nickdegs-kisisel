@@ -537,13 +537,43 @@ function cborOku(b: Uint8Array, st: { i: number }): unknown {
   }
 }
 
-type AttestSonuc = { ok: boolean; why: string; keyId: string }
+type AttestSonuc = { ok: boolean; why: string; keyId: string; pubkey: string; receipt: string }
+type AsrSonuc = { ok: boolean; why: string; counter: number }
 
-/** main.py _verify_appattest eşleniği: HER istisna içeride yutulur → (ok=false, why='err:...'). */
-async function appAttestDogrula(env: Env, attB64: string, challenge: string): Promise<AttestSonuc> {
+// Adım 8 — aaguid: üretimde 'appattest' + 7×0x00, geliştirmede 'appattestdevelop' (ikisi de 16 bayt).
+// Bu kontrol 17.09'a kadar HİÇ yapılmıyordu: geliştirme imzalı bir derleme üretimde de geçiyordu.
+const AAGUID_URETIM = new Uint8Array([0x61, 0x70, 0x70, 0x61, 0x74, 0x74, 0x65, 0x73, 0x74, 0, 0, 0, 0, 0, 0, 0])
+const AAGUID_GELISTIRME = new Uint8Array([0x61, 0x70, 0x70, 0x61, 0x74, 0x74, 0x65, 0x73, 0x74,
+  0x64, 0x65, 0x76, 0x65, 0x6c, 0x6f, 0x70])
+
+/** SPKI'den X9.62 sıkıştırılmamış nokta (0x04‖X‖Y) — adım 5'teki açık anahtar hash'i için. */
+function spkiNokta(spki: Uint8Array): Uint8Array {
+  const kok = derEl(spki, 0)
+  const ch = derCocuklar(spki, kok)
+  return derIc(spki, ch[1]).subarray(1)          // BIT STRING: [kullanılmayan-bit][nokta]
+}
+
+/** Adım 4 — uzantı ASN.1'i: SEQUENCE { [1] { OCTET STRING } }. TAM eşitlik için octet string. */
+function oidNonceCoz(ext: Uint8Array): Uint8Array | null {
+  try {
+    const kok = derEl(ext, 0)
+    for (const c of derCocuklar(ext, kok))
+      for (const a of derCocuklar(ext, c)) if (a.tag === 0x04) return derIc(ext, a)
+  } catch { /* yapı beklenenden farklı → çağıran gevşek yola düşer */ }
+  return null
+}
+
+const authCounter = (a: Uint8Array): number =>
+  ((a[33] << 24) | (a[34] << 16) | (a[35] << 8) | a[36]) >>> 0
+
+/** Apple "Validating apps that connect to your server" 11 adımı. HER istisna içeride yutulur. */
+async function appAttestDogrula(
+  env: Env, attB64: string, challenge: string, istemciKeyId = '',
+): Promise<AttestSonuc> {
+  const bos = { keyId: '', pubkey: '', receipt: '' }
   try {
     const obj = nesne(cborOku(stdB64Decode(attB64), { i: 0 }))
-    if (obj.fmt !== 'apple-appattest') return { ok: false, why: 'fmt', keyId: '' }
+    if (obj.fmt !== 'apple-appattest') return { ok: false, why: 'fmt', ...bos }
     const attStmt = nesne(obj.attStmt)
     const x5cHam = attStmt.x5c
     if (!Array.isArray(x5cHam)) throw new Error('x5c yok')
@@ -551,22 +581,76 @@ async function appAttestDogrula(env: Env, attB64: string, challenge: string): Pr
     if (!(authData instanceof Uint8Array)) throw new Error('authData yok')
     const ders = [...(x5cHam as Uint8Array[]), stdB64Decode(APPATTEST_ROOT_B64)]
     const certs = ders.map(sertifikaCoz)
-    for (let i = 0; i < certs.length - 1; i++)     // zincir: cred <- ara <- Apple App Attest Root
-      if (!(await sertifikaImzaDogrula(certs[i], certs[i + 1]))) return { ok: false, why: 'err:zincir', keyId: '' }
+    for (let i = 0; i < certs.length - 1; i++)     // 1) zincir: cred <- ara <- Apple App Attest Root
+      if (!(await sertifikaImzaDogrula(certs[i], certs[i + 1]))) return { ok: false, why: 'err:zincir', ...bos }
+    // 2-3) nonce = SHA256(authData ‖ SHA256(challenge))
     const chHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(challenge)))
     const birlesik = new Uint8Array(authData.length + chHash.length)
     birlesik.set(authData, 0)
     birlesik.set(chHash, authData.length)
     const nonce = new Uint8Array(await crypto.subtle.digest('SHA-256', birlesik))
+    // 4) credCert uzantısı (OID 1.2.840.113635.100.8.2) — ASN.1 çöz, TAM eşitlik
     const ext = uzantiBul(certs[0], OID_APPATTEST_NONCE)
-    if (!ext || !altDiziVar(ext, nonce)) return { ok: false, why: 'nonce', keyId: '' }
+    if (!ext) return { ok: false, why: 'nonce', ...bos }
+    const okt = oidNonceCoz(ext)
+    let gevsek = false
+    if (okt) { if (!baytEsit(okt, nonce)) return { ok: false, why: 'nonce', ...bos } }
+    else if (altDiziVar(ext, nonce)) gevsek = true   // yapı beklenmedik → eski gevşek yol, logda görünsün
+    else return { ok: false, why: 'nonce', ...bos }
+    // 6) rpIdHash = SHA256(App ID)
     const appidHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(appAttestAppId(env))))
-    if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', keyId: '' }
-    const credLen = (authData[53] << 8) | authData[54]  // keyId (credentialId) = cihaz-benzersiz
-    const keyId = stdB64Encode(authData.subarray(55, 55 + credLen))
-    return { ok: true, why: 'ok', keyId }
+    if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', ...bos }
+    // 7) attestation'da counter DAİMA 0
+    if (authCounter(authData) !== 0) return { ok: false, why: 'counter', ...bos }
+    // 8) aaguid üretim ya da geliştirme
+    const aaguid = authData.subarray(37, 53)
+    if (!baytEsit(aaguid, AAGUID_URETIM) && !baytEsit(aaguid, AAGUID_GELISTIRME))
+      return { ok: false, why: 'aaguid', ...bos }
+    // 9) credentialId = istemcinin bildirdiği keyId
+    const credLen = (authData[53] << 8) | authData[54]
+    const credId = authData.subarray(55, 55 + credLen)
+    const keyId = stdB64Encode(credId)
+    if (istemciKeyId && istemciKeyId !== keyId) return { ok: false, why: 'keyid', ...bos }
+    // 5) SHA256(açık anahtar) = keyId
+    const pkHash = new Uint8Array(await crypto.subtle.digest('SHA-256', spkiNokta(certs[0].spki)))
+    if (!baytEsit(pkHash, credId)) return { ok: false, why: 'pubkey', ...bos }
+    const receipt = attStmt.receipt instanceof Uint8Array ? stdB64Encode(attStmt.receipt) : ''
+    // SPKI saklanır: assertion imzası BUNUNLA doğrulanacak
+    return { ok: true, why: gevsek ? 'ok-gevsek' : 'ok', keyId, pubkey: stdB64Encode(certs[0].spki), receipt }
   } catch (e) {
-    return { ok: false, why: 'err:' + String(e).slice(0, 60), keyId: '' }
+    return { ok: false, why: 'err:' + String(e).slice(0, 60), ...bos }
+  }
+}
+
+/** Apple "Verifying the Assertion".
+ *  ⚠️ TUZAK: Apple "imza nonce üzerindedir" der ve nonce = SHA256(authData ‖ clientDataHash).
+ *  WebCrypto verify() verilen veriyi KENDİSİ hash'ler → nonce'ı doğrudan vermek ÇİFT HASH olur
+ *  ve her assertion sessizce düşer. Bu yüzden ÖN-GÖRÜNTÜ veriliyor; hash'i WebCrypto alıyor. */
+async function appAttestAssertDogrula(
+  env: Env, asrB64: string, challenge: string, pubkeyB64: string, onceki: number,
+): Promise<AsrSonuc> {
+  try {
+    const obj = nesne(cborOku(stdB64Decode(asrB64), { i: 0 }))
+    const sig = obj.signature
+    const authData = obj.authenticatorData
+    if (!(sig instanceof Uint8Array) || !(authData instanceof Uint8Array))
+      return { ok: false, why: 'yapi', counter: 0 }
+    const chHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(challenge)))
+    const onGoruntu = new Uint8Array(authData.length + chHash.length)
+    onGoruntu.set(authData, 0)
+    onGoruntu.set(chHash, authData.length)
+    const key = await crypto.subtle.importKey('spki',
+      stdB64Decode(pubkeyB64) as unknown as ArrayBuffer & Uint8Array,
+      { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+    if (!(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derImzaHam(sig, 32), onGoruntu)))
+      return { ok: false, why: 'imza', counter: 0 }
+    const appidHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(appAttestAppId(env))))
+    if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', counter: 0 }
+    const counter = authCounter(authData)
+    if (counter <= onceki) return { ok: false, why: 'counter', counter }   // tekrar saldırısı
+    return { ok: true, why: 'ok', counter }
+  } catch (e) {
+    return { ok: false, why: 'err:' + String(e).slice(0, 60), counter: 0 }
   }
 }
 
@@ -1130,13 +1214,34 @@ g.post('/api/integrity', authUser, async (c) => {
 })
 
 // ---------- GET /api/attest/challenge (main.py:1822-1827) ----------
+// 🔴 17.09 YARIŞ FİKSİ: challenge kullanıcı başına TEK anahtarda tutuluyordu ve her çağrı öncekini
+// EZİYORDU. validate() birden çok yoldan tetiklendiği için iki attest aynı anda koşuyor, ikinci
+// challenge birincisini eziyor ve birinci istek `nonce` hatasıyla düşüyordu (17.09 loglarında her
+// hatanın ~500 ms sonrasında aynı kullanıcının başarılı kaydı var). Artık challenge KENDİSİYLE
+// anahtarlanıyor → eşzamanlı istekler birbirini ezemez, üstelik tek kullanımlık (replay koruması).
 g.get('/api/attest/challenge', authUser, async (c) => {
   const ch = tokenUrlsafe24()
+  const user = c.get('user')
   try {
-    await c.env.KV.put('attest_challenge:' + c.get('user'), JSON.stringify({ n: ch, ts: simdi() }), { expirationTtl: 600 })
+    await c.env.KV.put('attest_ch:' + ch, JSON.stringify({ n: user, ts: simdi() }), { expirationTtl: 600 })
+    // Sahadaki 1.66/1.67 istemcileri challenge'ı geri GÖNDERMEZ → uid'li eski yol korunuyor.
+    await c.env.KV.put('attest_challenge:' + user, JSON.stringify({ n: ch, ts: simdi() }), { expirationTtl: 600 })
   } catch { /* yutulur */ }
   return c.json({ challenge: ch })
 })
+
+/** Challenge çözümle: yeni istemci challenge'ı geri yollar (tek kullanımlık, sahibi doğrulanır);
+ *  eski istemci yollamaz → uid'li eski kayda düşülür. Boş dönerse "challenge yok" demektir. */
+async function attestChallengeAl(env: Env, user: string, gelen: string): Promise<string> {
+  if (gelen) {
+    const kayit = await kvNonceOku(env, 'attest_ch:' + gelen)
+    if (!kayit || kayit.n !== user || simdi() - kayit.ts >= 600) return ''
+    try { await env.KV.delete('attest_ch:' + gelen) } catch { /* yutulur */ }
+    return gelen
+  }
+  const saved = await kvNonceOku(env, 'attest_challenge:' + user)
+  return saved && simdi() - saved.ts < 600 ? saved.n : ''
+}
 
 // ---------- POST /api/attest (main.py:1830-1857) — integrity'den de agresif FAIL-OPEN ----------
 g.post('/api/attest', authUser, async (c) => {
@@ -1145,20 +1250,19 @@ g.post('/api/attest', authUser, async (c) => {
   const db = c.env.DB
   const att = pyStr(body.attestation)
   const enforce = await kvBayrak(c.env, 'APPATTEST_ENFORCE')
-  const saved = await kvNonceOku(c.env, 'attest_challenge:' + user)
-  const ch = saved && simdi() - saved.ts < 600 ? saved.n : ''
+  const ch = await attestChallengeAl(c.env, user, pyStr(body.challenge))
   if (!att || !ch) {
     // attestation gelmedi / challenge süresi geçti → istemci aksaklığı, hile değil → DAİMA ok
     await attStat(db, 'ios', 'token_yok')
-    return c.json({ ok: true, reason: 'no-attestation', enforced: enforce })
+    return c.json({ ok: true, verified: false, reason: 'no-attestation', enforced: enforce })
   }
   let sonuc: AttestSonuc
   try {
-    sonuc = await appAttestDogrula(c.env, att, ch)
+    sonuc = await appAttestDogrula(c.env, att, ch, pyStr(body.keyId))
   } catch (e) {
     console.log('appattest istisna:', String(e).slice(0, 100))
     await attStat(db, 'ios', 'dogrulanamadi')
-    return c.json({ ok: true, reason: 'unavailable', enforced: enforce })
+    return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
   }
   console.log(`appattest user=${user} ok=${sonuc.ok} (${sonuc.why})`)
   await attStat(db, 'ios', sonuc.ok ? 'gecti' : 'dogrulanamadi')
@@ -1167,13 +1271,60 @@ g.post('/api/attest', authUser, async (c) => {
     await kullaniciGarantile(db, user)
     const ts = simdi()
     if (sonuc.keyId) {
-      await db.prepare('UPDATE users SET attested = ?1, attest_key = ?2, updated_at = ?1 WHERE uid = ?3')
-        .bind(ts, sonuc.keyId, user).run()
+      // pubkey + counter=0 yazılır: bundan sonraki assertion'lar bu anahtarla doğrulanacak
+      await db.prepare(
+        `UPDATE users SET attested = ?1, attest_key = ?2, attest_pubkey = ?3, attest_counter = 0,
+           attest_receipt = ?4, updated_at = ?1 WHERE uid = ?5`)
+        .bind(ts, sonuc.keyId, sonuc.pubkey, sonuc.receipt || null, user).run()
     } else {
       await db.prepare('UPDATE users SET attested = ?1, updated_at = ?1 WHERE uid = ?2').bind(ts, user).run()
     }
   }
-  return c.json({ ok: sonuc.ok || !enforce, enforced: enforce })
+  // verified: istemci keyId'yi YALNIZ bu true ise Keychain'e yazar (doğrulanmamış anahtar saklanırsa
+  // sonsuza dek assertion denenir ve attestation bir daha hiç yapılmaz).
+  return c.json({ ok: sonuc.ok || !enforce, verified: sonuc.ok, enforced: enforce })
+})
+
+// ---------- POST /api/attest/assert (17.09 YENİ) ----------
+// Attestation ömür boyu bir kezdir; SONRAKİ açılışları koruyan şey assertion'dır. Sunucu, attestation'da
+// sakladığı açık anahtarla imzayı doğrular ve counter'ın KESİN ARTTIĞINI görür. FAIL-OPEN korunur.
+g.post('/api/attest/assert', authUser, async (c) => {
+  const body = await bodyAl(c)
+  const user = c.get('user')
+  const db = c.env.DB
+  const enforce = await kvBayrak(c.env, 'APPATTEST_ENFORCE')
+  const asr = pyStr(body.assertion)
+  const ch = await attestChallengeAl(c.env, user, pyStr(body.challenge))
+  const p = await db.prepare('SELECT attest_pubkey, attest_counter, attest_key FROM users WHERE uid = ?1')
+    .bind(user).first<{ attest_pubkey: string | null; attest_counter: number | null; attest_key: string | null }>()
+  const pub = (p?.attest_pubkey || '').trim()
+  if (!asr || !ch || !pub) {
+    // henüz attestation yok / challenge yok → istemci bir sonraki açılışta attest eder
+    await attStat(db, 'ios', 'token_yok')
+    return c.json({ ok: true, verified: false, reason: pub ? 'no-assertion' : 'no-attestation', enforced: enforce })
+  }
+  const istemciKeyId = pyStr(body.keyId)
+  if (istemciKeyId && p?.attest_key && istemciKeyId !== p.attest_key) {
+    // başka bir anahtarla geldi → bu cihaz yeniden attest etmeli
+    await attStat(db, 'ios', 'dogrulanamadi')
+    return c.json({ ok: !enforce, verified: false, reason: 'key-mismatch', enforced: enforce })
+  }
+  let sonuc: AsrSonuc
+  try {
+    sonuc = await appAttestAssertDogrula(c.env, asr, ch, pub, Number(p?.attest_counter ?? 0))
+  } catch (e) {
+    console.log('appattest assert istisna:', String(e).slice(0, 100))
+    await attStat(db, 'ios', 'dogrulanamadi')
+    return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
+  }
+  console.log(`appattest-assert user=${user} ok=${sonuc.ok} (${sonuc.why}) counter=${sonuc.counter}`)
+  await attStat(db, 'ios', sonuc.ok ? 'assert-gecti' : 'assert-dusuk')
+  if (sonuc.ok) {
+    const ts = simdi()
+    await db.prepare('UPDATE users SET attested = ?1, attest_counter = ?2, updated_at = ?1 WHERE uid = ?3')
+      .bind(ts, sonuc.counter, user).run()
+  }
+  return c.json({ ok: sonuc.ok || !enforce, verified: sonuc.ok, enforced: enforce })
 })
 
 // ---------- GET /api/local-renders (main.py:2166-2184) ----------

@@ -3,6 +3,7 @@ import UIKit
 import CoreLocation
 import DeviceCheck
 import CryptoKit
+import Security
 import Photos
 import UserNotifications
 
@@ -18,6 +19,48 @@ func cihazKimligi() -> String {
     let v = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
     d.set(v, forKey: "nd_cihaz")
     return v
+}
+
+// APP ATTEST ANAHTAR DEPOSU (17.09). Apple'ın modelinde attestation ÖMÜR BOYU BİR KEREDİR ve keyId
+// KALICI olmalıdır. Önceki sürüm her açılışta generateKey() çağırıyordu → her seferinde yeni donanım
+// anahtarı; ölçüm: attested=20 ama attest_key=11, free_tactical_devices=0 (cihaz-dedup çalışmıyordu).
+// UserDefaults değil Keychain: AfterFirstUnlock ile arka planda da okunur, yedekten başka cihaza
+// taşınmaz — anahtarın cihaza bağlı kalması tam olarak istenen davranış.
+enum AttestKeyStore {
+    private static let hesap = "nd_attest_keyid"
+
+    static func oku() -> String? {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: hesap,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var sonuc: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &sonuc) == errSecSuccess,
+              let d = sonuc as? Data,
+              let s = String(data: d, encoding: .utf8), !s.isEmpty else { return nil }
+        return s
+    }
+
+    static func yaz(_ keyId: String) {
+        sil()
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: hesap,
+            kSecValueData as String: Data(keyId.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+        ]
+        _ = SecItemAdd(q as CFDictionary, nil)
+    }
+
+    static func sil() {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: hesap,
+        ]
+        _ = SecItemDelete(q as CFDictionary)
+    }
 }
 
 // MARK: - Modeller
@@ -178,21 +221,66 @@ enum DavetLink {
 
     // Apple App Attest — uygulamanın gerçek (kurcalanmamış, App Store) olduğunu Apple'a doğrulatır.
     // FAIL-OPEN: desteklenmiyor/entitlement yok/hata -> sessizce geçer, kullanıcıyı ASLA kilitlemez.
+    //
+    // 🔴 17.09 — APPLE'IN GERÇEK MODELİNE GEÇİLDİ. Öncesi: her açılışta generateKey()+attestKey(),
+    // keyId hiçbir yere yazılmıyordu ve assertion HİÇ yapılmıyordu; yani attestation tekrarlanan
+    // bir törendi, hiçbir isteği korumuyordu. Doğrusu:
+    //   1) generateKey        → YALNIZ bir kez; keyId Keychain'de kalıcı
+    //   2) attestKey          → o anahtar için yalnız bir kez; sunucu AÇIK ANAHTARI saklar
+    //   3) generateAssertion  → sonraki her açılışta; sunucu imzayı saklı anahtarla doğrular ve
+    //      counter'ın KESİN ARTTIĞINI görür (tekrar saldırısı koruması)
+    // Apple'ın hata kuralı: invalidKey → anahtarı AT, yenisini üret. serverUnavailable (ve diğerleri)
+    // → anahtarı KORU, sonra tekrar dene.
+    private var attestCalisiyor = false
+
     func attestIfPossible() async {
         guard DCAppAttestService.shared.isSupported else { return }
-        guard let cd = try? await reqSessiz("/api/attest/challenge"),
-              let o = try? JSONSerialization.jsonObject(with: cd) as? [String:Any],
-              let challenge = o["challenge"] as? String else { return }
+        // Eşzamanlılık kilidi: validate() birden çok yoldan tetikleniyor (açılış .task + scenePhase).
+        // İkisi aynı anda koşunca ikisi de challenge istiyor ve biri boşa düşüyordu — 17.09 loglarında
+        // her `nonce` hatasının ~500 ms sonrasında aynı kullanıcının başarılı kaydı vardı.
+        if attestCalisiyor { return }
+        attestCalisiyor = true
+        defer { attestCalisiyor = false }
+
         let svc = DCAppAttestService.shared
+        guard let challenge = await attestChallenge() else { return }
+        let clientDataHash = Data(SHA256.hash(data: Data(challenge.utf8)))
+
+        // 3) ASSERTION — anahtar zaten doğrulanmış; her açılışta süreklilik kanıtı
+        if let keyId = AttestKeyStore.oku() {
+            do {
+                let asr = try await svc.generateAssertion(keyId, clientDataHash: clientDataHash)
+                _ = try? await reqSessiz("/api/attest/assert", method: "POST",
+                    body: ["assertion": asr.base64EncodedString(), "keyId": keyId, "challenge": challenge])
+            } catch {
+                if let e = error as? DCError, e.code == .invalidKey {
+                    AttestKeyStore.sil()   // anahtar geçersiz → sonraki açılış sıfırdan attest eder
+                }
+                // serverUnavailable dahil diğerleri: anahtar KORUNUR, sonra tekrar denenir
+            }
+            return
+        }
+
+        // 1+2) İLK KEZ: anahtar üret ve attest et
         do {
             let keyId = try await svc.generateKey()
-            let clientDataHash = Data(SHA256.hash(data: Data(challenge.utf8)))
             let attestation = try await svc.attestKey(keyId, clientDataHash: clientDataHash)
-            _ = try? await reqSessiz("/api/attest", method: "POST",
-                                     body: ["attestation": attestation.base64EncodedString(), "keyId": keyId])
+            let cevap = try await reqSessiz("/api/attest", method: "POST",
+                body: ["attestation": attestation.base64EncodedString(), "keyId": keyId, "challenge": challenge])
+            // ⚠️ Sunucu DOĞRULAMADIYSA anahtarı SAKLAMA. Saklarsak hiç doğrulanmamış bir anahtarla
+            // sonsuza dek assertion denenir ve attestation bir daha HİÇ yapılmaz.
+            let o = (try? JSONSerialization.jsonObject(with: cevap)) as? [String: Any]
+            if (o?["verified"] as? Bool) == true { AttestKeyStore.yaz(keyId) }
         } catch {
-            // App Attest desteklenmiyor / entitlement yok / hata -> sessizce geç (zarar yok)
+            // desteklenmiyor / entitlement yok / ağ hatası -> sessizce geç (fail-open)
         }
+    }
+
+    private func attestChallenge() async -> String? {
+        guard let cd = try? await reqSessiz("/api/attest/challenge"),
+              let o = try? JSONSerialization.jsonObject(with: cd) as? [String: Any],
+              let ch = o["challenge"] as? String, !ch.isEmpty else { return nil }
+        return ch
     }
 
     private func dec() -> JSONDecoder { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }
