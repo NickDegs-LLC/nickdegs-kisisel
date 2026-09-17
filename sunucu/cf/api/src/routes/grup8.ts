@@ -37,7 +37,7 @@
 import { Hono } from 'hono'
 import type { AppEnv } from '../lib/env'
 import { authUser, b64uEncode } from '../lib/auth'
-import { simdi } from '../lib/db'
+import { simdi, BARIS_UID } from '../lib/db'
 import { hataYanit } from '../lib/hata'
 import { svKapali } from '../lib/ortak'
 
@@ -252,13 +252,80 @@ function profileOf(uid: string, r: ProfilKaynak | undefined,
   }
 }
 
+// ---------- R2 toplu temizlik yardımcıları (hesap silme) ----------
+
+/** Önek altındaki tüm anahtarlar. R2.list 1000'de keser → cursor ile sayfalanır. */
+async function r2Anahtarlar(r2: R2Bucket, onek: string, tavan = 20_000): Promise<string[]> {
+  const cikti: string[] = []
+  let imlec: string | undefined
+  for (let tur = 0; tur < 50 && cikti.length < tavan; tur++) {
+    const s = await r2.list({ prefix: onek, limit: 1000, cursor: imlec })
+    for (const o of s.objects) cikti.push(o.key)
+    if (!s.truncated) break
+    imlec = s.cursor
+  }
+  return cikti
+}
+
+/** R2 toplu silme sınırı 1000 anahtar → gruplara böl. */
+async function r2Sil(r2: R2Bucket, anahtarlar: string[]): Promise<void> {
+  for (let i = 0; i < anahtarlar.length; i += 1000) await r2.delete(anahtarlar.slice(i, i + 1000))
+}
+
 // ---------- DELETE /api/account (main.py:2748) ----------
-// Sosyal graf + profil silinir; rides/videos/kulüp üyeliği/R2 videoları BİLEREK kalır (TUZAK-1,
-// Python davranışı aynen). İdempotent: ikinci çağrı da 200 döner (DELETE'ler 0 satır etkiler).
+// ⚠️ 17.09 KAPSAM GENİŞLETİLDİ — eski davranış ("rides/videos/kulüp üyeliği/R2 videoları BİLEREK
+// kalır", TUZAK-1, Python paritesi) ARTIK GEÇERSİZ. Gerekçe: silme sayfasında kullanıcıya YAZILI
+// taahhüt verildi (movelog.realvirtuality.app/delete):
+//   "…arkadaş listen, sohbet mesajların, davet kodların, bildirim kayıtların ve cihaz kimliğin
+//    ANINDA silinir. Gezi kayıtların, oluşturduğun videolar ve GPS izlerin EN GEÇ 30 GÜN İÇİNDE
+//    kalıcı olarak silinir."
+// Python paritesi bu taahhüdün önüne geçemez. Hepsi tek istekte silinir (anında ⊂ 30 gün içinde).
+// SAKLANAN: iap_transactions / iap_bildirim — yasal + muhasebe yükümlülüğü (sayfada da yazıyor).
+// KENDİLİĞİNDEN DÜŞEN: ptt/ (1 gün) + voicemsg/ (30 gün) klipleri R2 lifecycle ile (grup4 notu).
+// İdempotent: ikinci çağrı da 200 döner (DELETE'ler 0 satır etkiler).
+//
+// 🔴 SIRA HAYATİ: tracker_id ve R2 anahtarları users/rides/videos satırlarından OKUNUR. users satırı
+// önce silinirse GPS izleri (positions.device) ve R2 nesneleri SAHİPSİZ kalır, bir daha ASLA
+// silinemez — taahhüt sessizce yalana döner. Bu yüzden: ÖNCE OKU → SONRA SİL.
 g.delete('/api/account', authUser, async (c) => {
   const user = c.get('user')
   const db = c.env.DB
-  // tek atomik batch (D1 batch = tek transaction) — sözleşme cf_mapping isteği
+
+  // 1) SİLMEDEN ÖNCE OKU — satırlar gidince bir daha erişilemeyecek bağlar
+  const prof = await db.prepare('SELECT tracker_id FROM users WHERE uid = ?1')
+    .bind(user).first<{ tracker_id: string | null }>()
+  const tracker = (prof?.tracker_id || '').trim()
+  // uid'i NULL eski kayıtlar Barış'a aittir (_own kuralı, main.py:255) — onlar da sahibiyle gitmeli
+  const vids = await db.prepare('SELECT r2_key FROM videos WHERE uid = ?1 OR (uid IS NULL AND ?1 = ?2)')
+    .bind(user, BARIS_UID).all<{ r2_key: string }>()
+  const izler = await db.prepare(
+    `SELECT track_key FROM rides WHERE (uid = ?1 OR (uid IS NULL AND ?1 = ?2))
+       AND track_key IS NOT NULL AND track_key <> ''`)
+    .bind(user, BARIS_UID).all<{ track_key: string }>()
+
+  // 2) GPS izleri (positions) — batch'ten ÖNCE ve PARÇALI.
+  //    positions'ta uid YOK; tek bağ users.tracker_id → positions.device. Tek DELETE 60k+ satır
+  //    demek (ölçüldü: en büyük cihaz 61.700) → atomik batch'e konsa hepsi geri sarılabilir ve
+  //    kullanıcı hesabını HİÇ silemezdi. Burada yarıda kalırsa hesap duruyor, tekrar deneme tamamlar.
+  //    🔒 KORUMA: tracker_id'yi başka bir hesap da kullanıyorsa DOKUNMA — onun GPS'i silinmesin.
+  //    (Bugünkü veride çakışma yok, ölçüldü; koruma ileriye dönük.)
+  let silinenNokta = 0
+  if (tracker) {
+    const paylasan = await db.prepare('SELECT COUNT(*) AS n FROM users WHERE tracker_id = ?1 AND uid <> ?2')
+      .bind(tracker, user).first<{ n: number }>()
+    if ((paylasan?.n ?? 0) === 0) {
+      for (let tur = 0; tur < 200; tur++) {
+        const r = await db.prepare(
+          'DELETE FROM positions WHERE rowid IN (SELECT rowid FROM positions WHERE device = ?1 LIMIT 2000)')
+          .bind(tracker).run()
+        const n = r.meta?.changes ?? 0
+        silinenNokta += n
+        if (n === 0) break
+      }
+    } else console.log('positions atlandi: tracker_id paylasimli')
+  }
+
+  // 3) tek atomik batch (D1 batch = tek transaction) — sözleşme cf_mapping isteği
   await db.batch([
     db.prepare('DELETE FROM users WHERE uid = ?1').bind(user),                       // profiles.pop + seen(last_seen_at)
     db.prepare('DELETE FROM push_tokens WHERE uid = ?1').bind(user),                 // profil içindeki apns/fcm listeleri (D1'de ayrı tablo)
@@ -267,13 +334,50 @@ g.delete('/api/account', authUser, async (c) => {
     db.prepare('DELETE FROM dm_reads WHERE uid = ?1').bind(user),                    // read.pop(user) — karşı tarafınki Python'da da kalır
     db.prepare('DELETE FROM invites WHERE by_uid = ?1').bind(user),                  // by==user token'ları
     db.prepare('DELETE FROM friend_requests WHERE target_uid = ?1 OR requester_uid = ?1').bind(user), // freqs iki yön
+    // ↓ 17.09 eklendi — sayfadaki "gezi kayıtların, videoların ve GPS izlerin" taahhüdünün karşılığı
+    db.prepare('DELETE FROM rides WHERE uid = ?1 OR (uid IS NULL AND ?1 = ?2)').bind(user, BARIS_UID),
+    db.prepare('DELETE FROM videos WHERE uid = ?1 OR (uid IS NULL AND ?1 = ?2)').bind(user, BARIS_UID),
+    db.prepare('DELETE FROM activities WHERE uid = ?1').bind(user),                  // günlük özet metinleri
+    db.prepare('DELETE FROM feedbacks WHERE uid = ?1').bind(user),                   // ad + handle + serbest metin İÇERİR
+    db.prepare('DELETE FROM pending_videos WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM failed_videos WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM render_counts WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM gpu_costs WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM ride_type_overrides WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM shared_routes WHERE from_uid = ?1').bind(user),
+    db.prepare('DELETE FROM shared_route_targets WHERE uid = ?1').bind(user),
+    db.prepare('DELETE FROM club_members WHERE uid = ?1').bind(user),
+    // kulüp: yalnız BAŞKA üyesi kalmayanı sil — dolu kulübü yok etmek DİĞER üyelerin verisini siler
+    db.prepare(`DELETE FROM clubs WHERE owner_uid = ?1
+                  AND NOT EXISTS (SELECT 1 FROM club_members m WHERE m.cid = clubs.cid AND m.uid <> ?1)`).bind(user),
+    // telsiz ACL'i uid taşır (users_json); klipler lifecycle ile düşer ama kimlik referansı kalmasın
+    db.prepare(`DELETE FROM ptt_acl WHERE users_json IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM json_each(ptt_acl.users_json) WHERE value = ?1)`).bind(user),
   ])
-  // avatar: DATA_DIR/avatars/<basename(user)>.jpg → R2 avatars/<basename>.jpg (path-traversal koruması aynen)
+
+  // 4) R2 nesneleri — batch'ten SONRA. (Önce silinip batch geri sarılsaydı, YAŞAYAN bir hesabın
+  //    videoları yok olurdu.) Anahtarlar tahminle türetilmiyor: videos.r2_key ve rides.track_key
+  //    tabloda YAZAN gerçek anahtarlar; müzik/fotoğraf önekle listelenir.
   const taban = user.split('/').pop() || user
-  try { await c.env.R2.delete(`avatars/${taban}.jpg`) } catch { /* OSError yutulur (main.py:2773-2776) */ }
+  let anahtarlar: string[] = [`avatars/${taban}.jpg`]                   // path-traversal koruması aynen (main.py:2773-2776)
+  try {
+    anahtarlar = anahtarlar.concat(
+      vids.results.map((v) => v.r2_key),                                // videos/<rid>.mp4
+      izler.results.map((t) => t.track_key),                            // tracks/<ts>.json — ham GPS izi
+      await r2Anahtarlar(c.env.R2, `usermusic/${user}/`),               // yüklediği müzikler
+      await r2Anahtarlar(c.env.R2, `ridephotos/${user}_`),              // gezi fotoğrafları (<uid>_<session>/…)
+    )
+    await r2Sil(c.env.R2, anahtarlar)
+  } catch (e) {
+    // R2 çökerse hesap yine silinmiş olur; kalanlar KAYIT ALTINA alınır ki taahhüt sessizce yalana dönmesin
+    console.error('hesap silme R2 temizligi basarisiz:', String(e).slice(0, 200))
+    try { await c.env.KV.put(`silme-r2-kalan:${user}`, JSON.stringify(anahtarlar).slice(0, 24_000)) } catch { /* yut */ }
+  }
+
   // cf_mapping: silinen kullanıcının tv kaydı da gittiğinden tv=0 eski token verify'ı GEÇEBİLİR →
   // damga buraya yazılır; reddetme kontrolü lib/auth.ts authUser'da (✅ bütünleştirme 08-30 eklendi).
   await c.env.KV.put(`deleted:${user}`, String(simdi()))
+  console.log(`hesap silindi: ${user} · gps=${silinenNokta} · r2=${anahtarlar.length}`)
   return c.json({ ok: true, deleted: user })
 })
 
