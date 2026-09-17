@@ -537,8 +537,10 @@ function cborOku(b: Uint8Array, st: { i: number }): unknown {
   }
 }
 
-type AttestSonuc = { ok: boolean; why: string; keyId: string; pubkey: string; receipt: string }
-type AsrSonuc = { ok: boolean; why: string; counter: number }
+type Uzanti = { valKat: number | null; bundleVer: string | null }
+type AttestSonuc = { ok: boolean; why: string; keyId: string; pubkey: string; receipt: string
+  ortam: string } & Uzanti
+type AsrSonuc = { ok: boolean; why: string; counter: number } & Uzanti
 
 // Adım 8 — aaguid: üretimde 'appattest' + 7×0x00, geliştirmede 'appattestdevelop' (ikisi de 16 bayt).
 // Bu kontrol 17.09'a kadar HİÇ yapılmıyordu: geliştirme imzalı bir derleme üretimde de geçiyordu.
@@ -566,11 +568,30 @@ function oidNonceCoz(ext: Uint8Array): Uint8Array | null {
 const authCounter = (a: Uint8Array): number =>
   ((a[33] << 24) | (a[34] << 16) | (a[35] << 8) | a[36]) >>> 0
 
+/** Adım 10-11 (attestation) ve assertion adım 7-8: authData'nın SONUNDAKİ WebAuthn uzantı CBOR'u.
+ *  Apple anahtar adları: `apple_validation_category_01` (UInt32) + `apple_bundle_version_01` (String).
+ *  Yalnız iOS 27+ gönderir; öncesinde uzantı YOKTUR ve bu normaldir.
+ *  ⚠️ BİLEREK KAPI DEĞİL: Apple "monitor these properties, check for unexpected values, and factor
+ *  them into your overall risk assessment" diyor — reddet demiyor. Uygulama hem App Store hem
+ *  TestFlight'ta dağıtıldığından sabit bir kategoriye eşitlemek MEŞRU kullanıcıyı bloklardı.
+ *  Okunur ve saklanır; risk politikası veriye bakılarak ayrıca kurulur.
+ *  `bas`: attestation'da 55+credLen, assertion'da 37 (assertion authData'sında credential verisi yok). */
+function attestUzantilari(authData: Uint8Array, bas: number): Uzanti {
+  const yok: Uzanti = { valKat: null, bundleVer: null }
+  try {
+    if (bas >= authData.length) return yok          // iOS 27 öncesi → uzantı yok, NORMAL
+    const m = nesne(cborOku(authData.subarray(bas), { i: 0 }))
+    const vk = m['apple_validation_category_01']
+    const bv = m['apple_bundle_version_01']
+    return { valKat: typeof vk === 'number' ? vk : null, bundleVer: typeof bv === 'string' ? bv : null }
+  } catch { return yok }                            // yapı beklenmedik → yok say, ASLA reddetme
+}
+
 /** Apple "Validating apps that connect to your server" 11 adımı. HER istisna içeride yutulur. */
 async function appAttestDogrula(
   env: Env, attB64: string, challenge: string, istemciKeyId = '',
 ): Promise<AttestSonuc> {
-  const bos = { keyId: '', pubkey: '', receipt: '' }
+  const bos = { keyId: '', pubkey: '', receipt: '', ortam: '', valKat: null, bundleVer: null }
   try {
     const obj = nesne(cborOku(stdB64Decode(attB64), { i: 0 }))
     if (obj.fmt !== 'apple-appattest') return { ok: false, why: 'fmt', ...bos }
@@ -602,10 +623,12 @@ async function appAttestDogrula(
     if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', ...bos }
     // 7) attestation'da counter DAİMA 0
     if (authCounter(authData) !== 0) return { ok: false, why: 'counter', ...bos }
-    // 8) aaguid üretim ya da geliştirme
+    // 8) aaguid üretim ya da geliştirme — hangisi olduğu SAKLANIR (Apple: "keep development pairs
+    //    separate from production pairs because you can't use one set in the other's environment")
     const aaguid = authData.subarray(37, 53)
-    if (!baytEsit(aaguid, AAGUID_URETIM) && !baytEsit(aaguid, AAGUID_GELISTIRME))
-      return { ok: false, why: 'aaguid', ...bos }
+    const uretim = baytEsit(aaguid, AAGUID_URETIM)
+    if (!uretim && !baytEsit(aaguid, AAGUID_GELISTIRME)) return { ok: false, why: 'aaguid', ...bos }
+    const ortam = uretim ? 'production' : 'development'
     // 9) credentialId = istemcinin bildirdiği keyId
     const credLen = (authData[53] << 8) | authData[54]
     const credId = authData.subarray(55, 55 + credLen)
@@ -615,8 +638,11 @@ async function appAttestDogrula(
     const pkHash = new Uint8Array(await crypto.subtle.digest('SHA-256', spkiNokta(certs[0].spki)))
     if (!baytEsit(pkHash, credId)) return { ok: false, why: 'pubkey', ...bos }
     const receipt = attStmt.receipt instanceof Uint8Array ? stdB64Encode(attStmt.receipt) : ''
+    // 10-11) uzantılar (iOS 27+): credential verisinden SONRA başlar
+    const uz = attestUzantilari(authData, 55 + credLen)
     // SPKI saklanır: assertion imzası BUNUNLA doğrulanacak
-    return { ok: true, why: gevsek ? 'ok-gevsek' : 'ok', keyId, pubkey: stdB64Encode(certs[0].spki), receipt }
+    return { ok: true, why: gevsek ? 'ok-gevsek' : 'ok', keyId,
+      pubkey: stdB64Encode(certs[0].spki), receipt, ortam, ...uz }
   } catch (e) {
     return { ok: false, why: 'err:' + String(e).slice(0, 60), ...bos }
   }
@@ -631,10 +657,11 @@ async function appAttestAssertDogrula(
 ): Promise<AsrSonuc> {
   try {
     const obj = nesne(cborOku(stdB64Decode(asrB64), { i: 0 }))
+    const bosUz: Uzanti = { valKat: null, bundleVer: null }
     const sig = obj.signature
     const authData = obj.authenticatorData
     if (!(sig instanceof Uint8Array) || !(authData instanceof Uint8Array))
-      return { ok: false, why: 'yapi', counter: 0 }
+      return { ok: false, why: 'yapi', counter: 0, ...bosUz }
     const chHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(challenge)))
     const onGoruntu = new Uint8Array(authData.length + chHash.length)
     onGoruntu.set(authData, 0)
@@ -643,14 +670,15 @@ async function appAttestAssertDogrula(
       stdB64Decode(pubkeyB64) as unknown as ArrayBuffer & Uint8Array,
       { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
     if (!(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derImzaHam(sig, 32), onGoruntu)))
-      return { ok: false, why: 'imza', counter: 0 }
+      return { ok: false, why: 'imza', counter: 0, ...bosUz }
     const appidHash = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(appAttestAppId(env))))
-    if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', counter: 0 }
+    if (!baytEsit(authData.subarray(0, 32), appidHash)) return { ok: false, why: 'rpid', counter: 0, ...bosUz }
     const counter = authCounter(authData)
-    if (counter <= onceki) return { ok: false, why: 'counter', counter }   // tekrar saldırısı
-    return { ok: true, why: 'ok', counter }
+    if (counter <= onceki) return { ok: false, why: 'counter', counter, ...bosUz }   // tekrar saldırısı
+    // adım 7-8: uzantılar. Assertion authData'sında credential verisi YOK → uzantılar 37'de başlar.
+    return { ok: true, why: 'ok', counter, ...attestUzantilari(authData, 37) }
   } catch (e) {
-    return { ok: false, why: 'err:' + String(e).slice(0, 60), counter: 0 }
+    return { ok: false, why: 'err:' + String(e).slice(0, 60), counter: 0, valKat: null, bundleVer: null }
   }
 }
 
@@ -1264,18 +1292,40 @@ g.post('/api/attest', authUser, async (c) => {
     await attStat(db, 'ios', 'dogrulanamadi')
     return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
   }
-  console.log(`appattest user=${user} ok=${sonuc.ok} (${sonuc.why})`)
+  console.log(`appattest user=${user} ok=${sonuc.ok} (${sonuc.why}) ortam=${sonuc.ortam || '-'} `
+    + `kat=${sonuc.valKat ?? '-'} sur=${sonuc.bundleVer ?? '-'}`)
   await attStat(db, 'ios', sonuc.ok ? 'gecti' : 'dogrulanamadi')
   if (sonuc.ok) {
-    // attest_key = cihaz-benzersiz keyId — bedava-aksiyon cihaz-dedup'u BUNA dayanır (korunması ŞART)
     await kullaniciGarantile(db, user)
     const ts = simdi()
     if (sonuc.keyId) {
-      // pubkey + counter=0 yazılır: bundan sonraki assertion'lar bu anahtarla doğrulanacak
-      await db.prepare(
-        `UPDATE users SET attested = ?1, attest_key = ?2, attest_pubkey = ?3, attest_counter = 0,
-           attest_receipt = ?4, updated_at = ?1 WHERE uid = ?5`)
-        .bind(ts, sonuc.keyId, sonuc.pubkey, sonuc.receipt || null, user).run()
+      // 🔴 Apple: "make sure that the public key doesn't already have an association with another
+      // user" — tekrar saldırısı koruması. Aynı Secure Enclave anahtarı iki cihazda VAR OLAMAZ;
+      // başka bir hesapta görünüyorsa bu hile işaretidir → bağlama, reddet.
+      const sahip = await db.prepare('SELECT uid FROM attest_keys WHERE key_id = ?1')
+        .bind(sonuc.keyId).first<{ uid: string }>()
+      if (sahip && sahip.uid !== user) {
+        console.log(`appattest ANAHTAR CAKISMASI key=${sonuc.keyId.slice(0, 12)} sahip=${sahip.uid} isteyen=${user}`)
+        await attStat(db, 'ios', 'anahtar-cakismasi')
+        return c.json({ ok: !enforce, verified: false, reason: 'key-owned-by-another-user', enforced: enforce })
+      }
+      await db.batch([
+        // Apple: "Be prepared to store multiple (key, receipt) pairs for each user. Store one pair
+        // for each device." + ortam ayrımı ("keep development pairs separate from production pairs")
+        db.prepare(
+          `INSERT INTO attest_keys (key_id, uid, pubkey, receipt, counter, env, val_kat, bundle_ver,
+             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8)
+           ON CONFLICT(key_id) DO UPDATE SET uid = ?2, pubkey = ?3, receipt = ?4, counter = 0,
+             env = ?5, val_kat = ?6, bundle_ver = ?7, updated_at = ?8`)
+          .bind(sonuc.keyId, user, sonuc.pubkey, sonuc.receipt || null, sonuc.ortam,
+            sonuc.valKat, sonuc.bundleVer, ts),
+        // users.attest_key = "bu hesabın EN SON anahtarı". Bedava-aksiyon cihaz-dedup'u onu BEŞ
+        // yerde okuyor (grup1/grup2/grup3/grup4) — kolon BİLEREK sürdürülüyor.
+        db.prepare(
+          `UPDATE users SET attested = ?1, attest_key = ?2, attest_pubkey = ?3, attest_counter = 0,
+             attest_receipt = ?4, updated_at = ?1 WHERE uid = ?5`)
+          .bind(ts, sonuc.keyId, sonuc.pubkey, sonuc.receipt || null, user),
+      ])
     } else {
       await db.prepare('UPDATE users SET attested = ?1, updated_at = ?1 WHERE uid = ?2').bind(ts, user).run()
     }
@@ -1295,34 +1345,60 @@ g.post('/api/attest/assert', authUser, async (c) => {
   const enforce = await kvBayrak(c.env, 'APPATTEST_ENFORCE')
   const asr = pyStr(body.assertion)
   const ch = await attestChallengeAl(c.env, user, pyStr(body.challenge))
-  const p = await db.prepare('SELECT attest_pubkey, attest_counter, attest_key FROM users WHERE uid = ?1')
-    .bind(user).first<{ attest_pubkey: string | null; attest_counter: number | null; attest_key: string | null }>()
-  const pub = (p?.attest_pubkey || '').trim()
+  const istemciKeyId = pyStr(body.keyId)
+  // Kaynak doğruluk artık attest_keys: Apple anahtarı KULLANICIYA + CİHAZA bağlar.
+  const k = istemciKeyId
+    ? await db.prepare('SELECT uid, pubkey, counter, env FROM attest_keys WHERE key_id = ?1')
+      .bind(istemciKeyId).first<{ uid: string; pubkey: string; counter: number; env: string }>()
+    : null
+  if (k && k.uid !== user) {
+    // Apple: "the public key doesn't already have an association with another user"
+    console.log(`appattest-assert ANAHTAR BASKA KULLANICIDA key=${istemciKeyId.slice(0, 12)} sahip=${k.uid} isteyen=${user}`)
+    await attStat(db, 'ios', 'anahtar-cakismasi')
+    return c.json({ ok: !enforce, verified: false, reason: 'key-owned-by-another-user', enforced: enforce })
+  }
+  let pub = (k?.pubkey || '').trim()
+  let onceki = Number(k?.counter ?? 0)
+  if (!pub) {
+    // GERİYE DÖNÜK: 0009 öncesi attest etmiş hesaplarda anahtar yalnız users satırındadır.
+    const p = await db.prepare('SELECT attest_pubkey, attest_counter, attest_key FROM users WHERE uid = ?1')
+      .bind(user).first<{ attest_pubkey: string | null; attest_counter: number | null; attest_key: string | null }>()
+    if (istemciKeyId && p?.attest_key && istemciKeyId !== p.attest_key) {
+      await attStat(db, 'ios', 'dogrulanamadi')
+      return c.json({ ok: !enforce, verified: false, reason: 'key-mismatch', enforced: enforce })
+    }
+    pub = (p?.attest_pubkey || '').trim()
+    onceki = Number(p?.attest_counter ?? 0)
+  }
   if (!asr || !ch || !pub) {
     // henüz attestation yok / challenge yok → istemci bir sonraki açılışta attest eder
     await attStat(db, 'ios', 'token_yok')
     return c.json({ ok: true, verified: false, reason: pub ? 'no-assertion' : 'no-attestation', enforced: enforce })
   }
-  const istemciKeyId = pyStr(body.keyId)
-  if (istemciKeyId && p?.attest_key && istemciKeyId !== p.attest_key) {
-    // başka bir anahtarla geldi → bu cihaz yeniden attest etmeli
-    await attStat(db, 'ios', 'dogrulanamadi')
-    return c.json({ ok: !enforce, verified: false, reason: 'key-mismatch', enforced: enforce })
-  }
   let sonuc: AsrSonuc
   try {
-    sonuc = await appAttestAssertDogrula(c.env, asr, ch, pub, Number(p?.attest_counter ?? 0))
+    sonuc = await appAttestAssertDogrula(c.env, asr, ch, pub, onceki)
   } catch (e) {
     console.log('appattest assert istisna:', String(e).slice(0, 100))
     await attStat(db, 'ios', 'dogrulanamadi')
     return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
   }
-  console.log(`appattest-assert user=${user} ok=${sonuc.ok} (${sonuc.why}) counter=${sonuc.counter}`)
+  console.log(`appattest-assert user=${user} ok=${sonuc.ok} (${sonuc.why}) counter=${sonuc.counter} `
+    + `kat=${sonuc.valKat ?? '-'} sur=${sonuc.bundleVer ?? '-'}`)
   await attStat(db, 'ios', sonuc.ok ? 'assert-gecti' : 'assert-dusuk')
   if (sonuc.ok) {
     const ts = simdi()
-    await db.prepare('UPDATE users SET attested = ?1, attest_counter = ?2, updated_at = ?1 WHERE uid = ?3')
-      .bind(ts, sonuc.counter, user).run()
+    const yaz = [
+      db.prepare('UPDATE users SET attested = ?1, attest_counter = ?2, updated_at = ?1 WHERE uid = ?3')
+        .bind(ts, sonuc.counter, user),
+    ]
+    // Apple: "Store counter to use ... when verifying the next assertion." + uzantı sinyallerini
+    // güncelle (yeni değer yoksa eskisi korunur — COALESCE).
+    if (k) yaz.push(db.prepare(
+      `UPDATE attest_keys SET counter = ?2, val_kat = COALESCE(?3, val_kat),
+         bundle_ver = COALESCE(?4, bundle_ver), updated_at = ?5 WHERE key_id = ?1`)
+      .bind(istemciKeyId, sonuc.counter, sonuc.valKat, sonuc.bundleVer, ts))
+    await db.batch(yaz)
   }
   return c.json({ ok: sonuc.ok || !enforce, verified: sonuc.ok, enforced: enforce })
 })
