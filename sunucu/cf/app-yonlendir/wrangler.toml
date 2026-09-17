@@ -6,4 +6,13 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 # DNS geçişi 2026-09-14 yapıldı: A kaydı (169.58.124.139) silindi, alan adı bu worker.a bağlandı.
-routes = [{ pattern = "app.nickdegs.com", custom_domain = true }]
+routes = [
+  { pattern = "app.nickdegs.com", custom_domain = true },
+  # 17.09: Play Data safety formu hesap silme baglantisi istiyor; okunakli adres olsun diye
+  # movelog.nickdegs.com eklendi (/delete, /sil, /hesap-sil, /delete-account ayni sayfayi doner).
+  { pattern = "movelog.nickdegs.com", custom_domain = true },
+  # 17.09: nickdegs.com zone'unda ucretsiz Bot Fight Mode var ve istisna yazdirmiyor;
+  # Google Play dogrulayicisi (GooglePlayConsole) ara ara 403 aliyordu. realvirtuality.app
+  # zone'unda fight_mode KAPALI -> magaza linkleri icin kararli adres burasi.
+  { pattern = "movelog.realvirtuality.app", custom_domain = true },
+]

@@ -49,7 +49,8 @@ export default {
 
     // VERI/HESAP SILME SAYFASI (17.09) — Play "Data safety" formu uygulama DISINDAN erisilebilen
     // bir silme baglantisi istiyor; sahte link kabul edilmiyor, Google denetliyor.
-    if (u.pathname === '/hesap-sil' || u.pathname === '/delete-account') {
+    if (u.pathname === '/hesap-sil' || u.pathname === '/delete-account'
+        || u.pathname === '/delete' || u.pathname === '/sil') {
       return silmeSayfasi(dilTr(req))
     }
 
