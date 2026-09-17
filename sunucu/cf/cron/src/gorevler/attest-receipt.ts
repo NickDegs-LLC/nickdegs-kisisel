@@ -29,29 +29,63 @@ const TUR_BASINA = 20          // bir koşuda en çok N anahtar (Apple 429 verme
 
 // ── minimal DER yürüyücüsü ────────────────────────────────────────────────
 // Cron worker'ında DER aracı YOK (api'dekiler ayrı worker, import edilemez) → burada asgari set.
-type El = { tag: number; icBas: number; icSon: number; son: number }
+// 🔴 RECEIPT **DER DEĞİL, BER**'dir — 17.09'da gerçek baytlarla kanıtlandı (openssl asn1parse):
+//   0:d=0  l=inf  SEQUENCE        ← belirsiz uzunluk (0x80)
+//   52:d=5 l=inf  OCTET STRING    ← constructed, yük PARÇALI
+//   54:d=6 l=1000 OCTET STRING    ← 1. parça
+//   1058:d=6 l=348 OCTET STRING   ← 2. parça      (sonra EOC 00 00)
+// İlk yazımda uzunluk baytı 0x80'i "uzun biçim, 0 bayt" sanıp len=0 okuyordum → yük HİÇ
+// bulunamıyordu. Çökmüyordu ama risk metriği sessizce NULL kalırdı: işin tek amacı boşa giderdi.
+// Bu yüzden: (a) belirsiz uzunluk + EOC desteği, (b) parçalı OCTET STRING birleştirme ŞART.
+type El = { tag: number; icBas: number; icSon: number; son: number; bel: boolean }
 
 function derOku(b: Uint8Array, off: number): El {
   const tag = b[off]
   let i = off + 1
   let len = b[i++]
+  if (len === 0x80) return { tag, icBas: i, icSon: b.length, son: b.length, bel: true }
   if (len & 0x80) {
     const n = len & 0x7f
     len = 0
     for (let k = 0; k < n; k++) len = len * 256 + b[i++]
   }
-  return { tag, icBas: i, icSon: i + len, son: i + len }
+  return { tag, icBas: i, icSon: i + len, son: i + len, bel: false }
 }
 
+/** Belirsiz uzunlukta EOC'ye (00 00) kadar, sabit uzunlukta icSon'a kadar çocukları okur. */
 function derCocuk(b: Uint8Array, el: El): El[] {
   const out: El[] = []
   let i = el.icBas
-  while (i < el.icSon) {
+  const son = el.bel ? b.length : el.icSon
+  while (i < son - 1) {
+    if (b[i] === 0x00 && b[i + 1] === 0x00) break        // EOC
     const c = derOku(b, i)
-    if (c.son <= i || c.son > el.icSon) break   // bozuk uzunluk → sessizce dur
+    if (c.bel) {                                          // iç içe belirsiz → kendi EOC'sini bul
+      const alt = derCocuk(b, c)
+      let j = alt.length ? alt[alt.length - 1].son : c.icBas
+      while (j < b.length - 1 && !(b[j] === 0x00 && b[j + 1] === 0x00)) j++
+      c.icSon = j
+      c.son = j + 2
+    }
+    if (c.son <= i || c.son > b.length) break             // bozuk uzunluk → sessizce dur
     out.push(c)
     i = c.son
   }
+  return out
+}
+
+/** Parçalı (constructed) OCTET STRING → parçaları birleştirir; düz ise içeriği döner. */
+function octetBirlestir(b: Uint8Array, el: El): Uint8Array {
+  if (!el.bel && (el.tag & 0x20) === 0) return b.subarray(el.icBas, el.icSon)
+  const parcalar: Uint8Array[] = []
+  for (const c of derCocuk(b, el)) {
+    if (c.bel || (c.tag & 0x20)) parcalar.push(octetBirlestir(b, c))
+    else if (c.tag === 0x04) parcalar.push(b.subarray(c.icBas, c.icSon))
+  }
+  const boy = parcalar.reduce((t, p) => t + p.length, 0)
+  const out = new Uint8Array(boy)
+  let o = 0
+  for (const p of parcalar) { out.set(p, o); o += p.length }
   return out
 }
 
@@ -76,7 +110,8 @@ function receiptYuku(der: Uint8Array): Uint8Array | null {
         const e0 = ic.find((x) => x.tag === 0xa0)
         if (!e0) continue
         const okt = derCocuk(der, e0)[0]
-        if (okt && okt.tag === 0x04) return der.subarray(okt.icBas, okt.icSon)
+        // ⚠️ 0x04 (düz) DEĞİL, gerçek receipt'te 0x24/belirsiz (PARÇALI) geliyor → birleştir.
+        if (okt && (okt.tag === 0x04 || okt.tag === 0x24 || okt.bel)) return octetBirlestir(der, okt)
       }
     }
   } catch { /* yapı beklenenden farklı → yedek tarama */ }
@@ -85,8 +120,10 @@ function receiptYuku(der: Uint8Array): Uint8Array | null {
     const yigin: El[] = [derOku(der, 0)]
     while (yigin.length) {
       const el = yigin.pop()!
-      if (el.tag === 0x04) {
-        const ic = der.subarray(el.icBas, el.icSon)
+      if (el.tag === 0x04 || el.tag === 0x24 || el.bel) {
+        // yedek yol da PARÇALI OCTET STRING'i çözebilmeli — yoksa yalnız işe yaramayacağı
+        // durumda "çalışıyormuş" gibi durur.
+        const ic = octetBirlestir(der, el)
         if (ic.length > 8 && ic[0] === 0x31) return ic
       }
       if (el.tag === 0x30 || el.tag === 0x31 || (el.tag & 0x20)) {
