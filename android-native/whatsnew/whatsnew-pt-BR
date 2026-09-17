@@ -1,3 +1,3 @@
-• Os links de convite agora abrem direto no Move Log, sem escolher app
-• Infraestrutura em segundo plano renovada
+• Correções de login: se o login com Google não iniciar, agora você vê o motivo
+• Corrigido o travamento na tela "Verificando identidade" — agora dá para tentar de novo
 • Melhorias de estabilidade

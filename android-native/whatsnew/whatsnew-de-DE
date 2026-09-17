@@ -1,3 +1,3 @@
-• Einladungslinks öffnen sich jetzt direkt in Move Log, ohne App-Auswahl
-• Hintergrund-Infrastruktur erneuert
-• Verbesserte Stabilität
+• Anmeldung korrigiert: Wenn die Google-Anmeldung nicht startet, siehst du jetzt den Grund
+• Hängenbleiben beim Bildschirm "Identität wird geprüft" behoben — jetzt mit Wiederholen
+• Stabilitätsverbesserungen

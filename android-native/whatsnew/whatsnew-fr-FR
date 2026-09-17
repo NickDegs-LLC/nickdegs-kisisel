@@ -1,3 +1,3 @@
-• Les liens d'invitation s'ouvrent désormais directement dans Move Log, sans choisir d'app
-• Infrastructure en arrière-plan repensée
-• Stabilité améliorée
+• Connexion corrigée : si la connexion Google échoue, la raison s'affiche désormais
+• Correction du blocage sur l'écran « Vérification de l'identité » — vous pouvez réessayer
+• Améliorations de stabilité

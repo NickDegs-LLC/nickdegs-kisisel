@@ -1,3 +1,3 @@
-• Los enlaces de invitación ahora se abren directamente en Move Log, sin elegir app
-• Infraestructura en segundo plano renovada
+• Inicio de sesión corregido: si Google no puede iniciar sesión, ahora ves el motivo
+• Corregido el bloqueo en la pantalla "Verificando identidad": ahora puedes reintentar
 • Mejoras de estabilidad
