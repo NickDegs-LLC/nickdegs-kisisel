@@ -1,3 +1,4 @@
 • Correções de login: se o login com Google não iniciar, agora você vê o motivo
 • Corrigido o travamento na tela "Verificando identidade" — agora dá para tentar de novo
 • Melhorias de estabilidade
+• Sua conta agora fica ligada a um dispositivo: entrar em outro encerra esta sessão

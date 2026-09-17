@@ -1,3 +1,4 @@
 • Sign-in fixes: when Google sign-in can't start, you now see the actual reason
 • Fixed the app getting stuck on "Verifying identity" — you can retry now
 • Stability improvements
+• Your account is now tied to one device: signing in elsewhere signs you out here
