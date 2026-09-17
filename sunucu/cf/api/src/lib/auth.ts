@@ -108,10 +108,44 @@ export const authUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!auth || !auth.startsWith('Bearer ')) return hataYanit(401, 'token yok')
   const j = await jwtCoz(c.env, auth.slice(7))
   if (!j) return hataYanit(401, 'token geçersiz/süresi dolmuş')
-  const row = await c.env.DB.prepare('SELECT tv, alias FROM users WHERE uid = ?1')
-    .bind(j.sub).first<{ tv: number | null; alias: string | null }>()
+  const row = await c.env.DB.prepare('SELECT tv, alias, device_id, device_seen FROM users WHERE uid = ?1')
+    .bind(j.sub).first<{ tv: number | null; alias: string | null; device_id: string | null; device_seen: number | null }>()
   const tvDb = row ? Math.trunc(Number(row.tv ?? 0)) : 0
   if (j.tv !== tvDb) return hataYanit(401, 'token geçersiz/süresi dolmuş')
+
+  // ---------------------------------------------------------------------------
+  // TEK CİHAZ ZORLAMASI (17.09, Barış: "herkes tek cihazdan girecek" + "her istekte zorla")
+  // Neden burada: cihazBagla() yalnız token BASILAN uçlarda çalışıyordu; mevcut kullanıcılar
+  // aylardır yeniden giriş yapmadığı için (jeton 30 gün + sessiz yenileme) kural fiilen hiç
+  // devreye girmiyordu — 17.09'da sahada ölçüldü (55 hesabın 0'ı bağlanmıştı).
+  // Maliyet: yukarıdaki satır ZATEN her istekte okunuyordu; iki kolon eklendi, ek sorgu YOK.
+  // Yazma yalnız (a) ilk bağlamada, (b) uyuşmazlıkta, (c) saatte bir device_seen tazelemesinde.
+  // FAIL-OPEN: hata yutulur, istek normal akışına devam eder.
+  if (row) {
+    const cihaz = (c.req.header('X-Device-Id') || '').trim().slice(0, 128)
+    if (cihaz) {
+      const bagli = (row.device_id || '').trim()
+      const now = Math.floor(Date.now() / 1000)
+      try {
+        if (!bagli) {
+          await c.env.DB.prepare('UPDATE users SET device_id = ?2, device_seen = ?3 WHERE uid = ?1')
+            .bind(j.sub, cihaz, now).run()
+        } else if (bagli !== cihaz) {
+          // BAŞKA CİHAZ: tüm oturumlar düşer. device_id BİLEREK değiştirilmez — isteği yapan
+          // taraf kopyalanmış jeton olabilir; bağlamayı ona devretmek hırsıza bağlamayı verirdi.
+          // Kimse kazanmaz; bir sonraki GERÇEK giriş cihazBagla ile yeniden bağlar (son giren kazanır).
+          await c.env.DB.prepare('UPDATE users SET tv = tv + 1, updated_at = ?2 WHERE uid = ?1')
+            .bind(j.sub, now).run()
+          return hataYanit(401, 'token geçersiz/süresi dolmuş')
+        } else if (now - Math.trunc(Number(row.device_seen ?? 0)) > 3600) {
+          // aynı cihaz: her istekte yazma, saatte bir yeter
+          await c.env.DB.prepare('UPDATE users SET device_seen = ?2 WHERE uid = ?1').bind(j.sub, now).run()
+        }
+      } catch (e) {
+        console.log('cihaz zorlama atlandi:', String(e).slice(0, 120))
+      }
+    }
+  }
   // SİLİNMİŞ HESAP kontrolü (grup8 DELETE /api/account damgası + sözleşme cf_mapping isteği):
   // profil silinince tv kaydı da gider ve tv=0 eski token teknik olarak geçerdi (main.py TUZAK-3).
   // Yalnız users satırı YOKKEN bakılır — yeniden kayıt olan kullanıcı (satır yeniden oluşur)
