@@ -536,6 +536,11 @@ g.post('/auth/apple', async (c) => {
 const GOOGLE_AUDS = [
   '909630333798-lhvvpkejikqveqpbcn9es0e39eumvs79.apps.googleusercontent.com',
   '515832699888-6fr2fpkr1c1aq8th12jov28sav2h3lct.apps.googleusercontent.com',
+  // 17.09: Android da move-log-500805 projesine tasiniyor -> o projenin Web client'i
+  // (Credential Manager serverClientId). Yeni Android surumu CIKMADAN once eklendi ki
+  // surum yayina girdigi an giris calissin. Ustteki iki id BILEREK duruyor: yayindaki
+  // 1.66 ve oncesi hala film-ozet web client'i / eski iOS client ile giriyor.
+  '515832699888-a021ep8nomkro6t8lpi31jmnttmksi2n.apps.googleusercontent.com',
 ]
 
 // POST /auth/google (main.py:635)
