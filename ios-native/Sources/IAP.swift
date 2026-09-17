@@ -103,7 +103,9 @@ import UIKit
     /// 🔴 FİKS 05.09 — ÖDENMİŞ ÜRÜN KAYBI. Öncesi: `_ = try? await URLSession...` — durum kodu
     /// HİÇ okunmuyordu ve çağıranlar koşulsuz `t.finish()` ediyordu. Sunucu/ağ o anda hata
     /// verirse: Apple parayı almış, işlem "bitmiş" işaretlenmiş, kullanıcıya hak VERİLMEMİŞ ve
-    /// geri dönüş yolu yok (App Store Server Notifications ucu da bulunmuyor). Artık sonuç
+    /// geri dönüş yolu yok. (17.09 DÜZELTME: "Server Notifications ucu da bulunmuyor" ARTIK YANLIŞ —
+    /// uç var: grup6.ts:1032 `/api/iap/apple/bildirim`. Ama o uç uid'i YALNIZ `iap_transactions`'tan
+    /// bulabildiği için, işlem hiç bildirilmemişse yine kurtaramaz → `buy()` finish kapısı ŞART.) Artık sonuç
     /// okunur; başarısızsa işlem BİTİRİLMEZ ve StoreKit onu bir sonraki açılışta tekrar sunar.
     /// Ağ hatasında 3 deneme (2/4/8 sn) yapılır.
     @discardableResult
@@ -233,14 +235,24 @@ import UIKit
             switch try await product.purchase() {
             case .success(let v):
                 if case .verified(let t) = v {
-                    // ← premium'u HEMEN aç + backend'e bildir. Abonelikte finish'i geciktirmiyoruz
-                    // (StoreKit yenilemeyi zaten `updates` üzerinden tekrar sunar), ama sunucu
-                    // bildirimi başarısızsa kullanıcıya söylüyoruz.
+                    /// 🔴 FİKS 17.09 — PARA/HAK KOPMASI (tek KRİTİK bulgu). Öncesi: `apply` sonucu
+                    /// YOK SAYILIP koşulsuz `t.finish()`. Gerekçe yorumu "StoreKit yenilemeyi zaten
+                    /// `updates` üzerinden tekrar sunar" diyordu — bu YANLIŞ: `Transaction.updates`
+                    /// BİTİRİLMİŞ bir işlemi tekrar sunmaz, `Transaction.unfinished` da içermez.
+                    /// Zincir: /api/iap/verify 5xx ya da cihaz uyuşmazlığı 401 → `report` false →
+                    /// işlem yine kapanır → `iap_transactions` satırı HİÇ yazılmaz → Apple'ın
+                    /// SUBSCRIBED bildirimi `iapUidBul` ile uid bulamaz, 200 döner ve Apple 200'ü
+                    /// BİR DAHA denemez → para alınmış, sunucuda premium YOK, kurtarma yolu YOK
+                    /// (kurtarma ancak bir sonraki yenilemede; YILLIK abonelikte 1 yıla kadar).
+                    /// Artık tüketilebilir yollarla (143-148, 171-176, 197-202) AYNI disiplin:
+                    /// finish YALNIZ sunucu yazdıysa. Yazmadıysa işlem AÇIK kalır ve bir sonraki
+                    /// açılışta `Transaction.unfinished` (49-53) onu yeniden bildirip kurtarır.
                     let bildirildi = await apply(t, jws: v.jwsRepresentation)
-                    await t.finish()
-                    if !bildirildi {
-                        lastError = L("Abonelik alındı, sunucuya işlenmesi birkaç dakika sürebilir.",
-                                      "Subscription purchased; it may take a few minutes to activate.")
+                    if bildirildi {
+                        await t.finish()
+                    } else {
+                        lastError = L("Abonelik alındı ama sunucuya işlenemedi — uygulamayı yeniden açınca otomatik tamamlanır.",
+                                      "Subscription received but not applied yet — reopen the app to finish it.")
                     }
                     return purchased
                 }

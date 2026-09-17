@@ -353,6 +353,11 @@ g.delete('/api/account', authUser, async (c) => {
     // telsiz ACL'i uid taşır (users_json); klipler lifecycle ile düşer ama kimlik referansı kalmasın
     db.prepare(`DELETE FROM ptt_acl WHERE users_json IS NOT NULL
                   AND EXISTS (SELECT 1 FROM json_each(ptt_acl.users_json) WHERE value = ?1)`).bind(user),
+    // 🔴 17.09 EKLENDİ: App Attest anahtarları (migration 0009/0010) hesap silmede UNUTULMUŞTU.
+    // users satırı gidiyor ama key_id + pubkey + receipt + uid burada kalıyordu; silme sayfası
+    // "cihaz kimliğin ANINDA silinir" diyor → doğrudan çelişki. `uid = ?1` olduğu için başka
+    // kullanıcının cihaz anahtarına dokunulmaz.
+    db.prepare('DELETE FROM attest_keys WHERE uid = ?1').bind(user),
   ])
 
   // 4) R2 nesneleri — batch'ten SONRA. (Önce silinip batch geri sarılsaydı, YAŞAYAN bir hesabın
@@ -366,6 +371,11 @@ g.delete('/api/account', authUser, async (c) => {
       izler.results.map((t) => t.track_key),                            // tracks/<ts>.json — ham GPS izi
       await r2Anahtarlar(c.env.R2, `usermusic/${user}/`),               // yüklediği müzikler
       await r2Anahtarlar(c.env.R2, `ridephotos/${user}_`),              // gezi fotoğrafları (<uid>_<session>/…)
+      // 🔴 17.09 EKLENDİ: 120KB üstü render isteği kuyruk yerine R2'ye yazılıyor
+      // (grup1.ts:640 `genreq/${user}_${ts}.json`) ve GÖMÜLÜ GPS İZİ taşıyor. `genreq-supurucu`
+      // cron'u bu nesneleri SİLMEZ, yeniden kuyruklar → hesap silindikten sonra rota/GPS R2'de
+      // kalıyordu. Sayfadaki 30 gün taahhüdünün kapsamına giriyor.
+      await r2Anahtarlar(c.env.R2, `genreq/${user}_`),                  // bekleyen render isteği (rota/GPS içerir)
     )
     await r2Sil(c.env.R2, anahtarlar)
   } catch (e) {

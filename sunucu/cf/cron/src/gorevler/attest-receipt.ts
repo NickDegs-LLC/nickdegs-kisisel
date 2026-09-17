@@ -40,15 +40,24 @@ const TUR_BASINA = 20          // bir koşuda en çok N anahtar (Apple 429 verme
 type El = { tag: number; icBas: number; icSon: number; son: number; bel: boolean }
 
 function derOku(b: Uint8Array, off: number): El {
+  // 🔴 FİKS 17.09 — SINIR KONTROLÜ. api tarafındaki `derEl` (grup6.ts:285) bozuk girdide
+  // 'der: eof' atıyor; burada atmıyorduk: kırpık baytta `b[off]`/`b[i++]` undefined dönüp
+  // uzunluk NaN'a kayıyor, `icSon` çöp oluyordu. Çökmez ama yanlış yük seçilip `risk_metrik`
+  // SESSİZCE yanlış yazılabilirdi. Artık geçersiz elemanda `son > b.length` dönüyoruz →
+  // derCocuk'taki `c.son > b.length` kontrolü (70) zinciri güvenle durduruyor.
+  const gecersiz: El = { tag: 0, icBas: b.length, icSon: b.length, son: b.length + 1, bel: false }
+  if (off < 0 || off + 2 > b.length) return gecersiz
   const tag = b[off]
   let i = off + 1
   let len = b[i++]
   if (len === 0x80) return { tag, icBas: i, icSon: b.length, son: b.length, bel: true }
   if (len & 0x80) {
     const n = len & 0x7f
+    if (n > 4 || i + n > b.length) return { ...gecersiz, tag }   // >4 bayt uzunluk = 4GB+, receipt'te olamaz
     len = 0
     for (let k = 0; k < n; k++) len = len * 256 + b[i++]
   }
+  if (i + len > b.length) return { ...gecersiz, tag }
   return { tag, icBas: i, icSon: i + len, son: i + len, bel: false }
 }
 

@@ -220,16 +220,6 @@ async function attStat(db: D1Database, plat: string, sonuc: string): Promise<voi
   }
 }
 
-/** render_counts.boost_{gün} sayacını +1 artır, YENİ değeri döndür (main.py:1586-1590 / 1680-1682). */
-async function boostArtir(db: D1Database, uid: string): Promise<number> {
-  const ts = simdi()
-  const r = await db.prepare(
-    'INSERT INTO render_counts (uid, counter_key, value, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?3) ' +
-    'ON CONFLICT(uid, counter_key) DO UPDATE SET value = value + 1, updated_at = ?3 RETURNING value')
-    .bind(uid, 'boost_' + gunUTC(), ts).first<{ value: number }>()
-  return Math.trunc(Number(r?.value ?? 1))
-}
-
 /** Abone/üye sayımı (adminq metinleri için; main.py:1553-1554 deseni). */
 async function uyeSay(db: D1Database): Promise<{ n: number; abone: number }> {
   const r = await db.prepare('SELECT COUNT(*) AS n, SUM(CASE WHEN premium = 1 THEN 1 ELSE 0 END) AS abone FROM users')
@@ -715,7 +705,9 @@ g.post('/api/iap/verify', authUser, async (c) => {
   // ⚠️ ŞU AN SESSİZ MOD — BİLEREK. Ölçüm (17.09): attest_keys 0 satır, 5 premium kullanıcının
   // yalnız 1'inde attest_pubkey var. Sert açılsaydı Apple satın almalarının %100'ü DURURDU.
   // Bu yüzden yalnız ÖLÇER ve loglar. Sahada attest_keys dolup 'iap-attest-yok' sayacı sıfıra
-  // yaklaşınca KV'ye IAP_ATTEST_ZORLA=1 yazmak yeterli; kod değişikliği gerekmez.
+  // yaklaşınca KV'ye `config:IAP_ATTEST_ZORLA` = "1" yazmak yeterli; kod değişikliği gerekmez.
+  // ⚠️ ANAHTAR ADI: kvBayrak `config:` ÖNEKİ ekler (181-186). Düz `IAP_ATTEST_ZORLA` yazılırsa
+  // bayrak HİÇ açılmaz ve kapı sessizce fail-open kalır. (17.09 ölçümü: canlıda anahtar YOK = kapalı.)
   // NOT: bu uç YALNIZ Apple'dır (storekitJwsDogrula). Android ayrı uçlardan geçer
   // (/api/iap/google, /api/iap/google/boost) ve bu kapıdan ETKİLENMEZ.
   const iapAttestZorla = await kvBayrak(c.env, 'IAP_ATTEST_ZORLA')
@@ -742,6 +734,16 @@ g.post('/api/iap/verify', authUser, async (c) => {
   if (SUB_IDS.has(pid)) {
     const ultra = ULTRA_IDS.has(pid) ? 1 : 0     // premium abonelik → ultra False (main.py:1545)
     const exp = p.expiresDate
+    // 🔴 FİKS 17.09 — İŞLEM SAHİPLİĞİ. Google dalında (aşağıda) token başka uid'e bağlıysa 409
+    // dönüyordu; iOS dalında bu kilit YOKTU → sızmış/paylaşılmış bir StoreKit JWS ikinci bir
+    // hesapta çağrılınca `iap_transactions` A'da kalmasına rağmen oturumdaki B'ye premium yazılıyordu.
+    if (kayit && kayit.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+    // 🔴 FİKS 17.09 — İADE / SÜRE. İade edilmiş (revocationDate dolu) ya da süresi çoktan geçmiş
+    // bir JWS (restore ile gelen ESKİ işlem) premium AÇMAMALI; iade bildirimi bir kez işlendiği
+    // için (bildirimTekrar) sonradan geri de alınmıyordu.
+    if (pyTruthy(p.revocationDate)) hata(400, 'işlem iade edilmiş')
+    const expSn = pyTruthy(exp) ? Math.floor(Number(exp) / 1000) : 0
+    if (expSn && expSn <= ts) hata(400, 'aboneliğin süresi dolmuş')
     // 🔴 FİKS 05.09 — APP STORE İNCELEMESİNİ KIRACAK DELİK. `premium-suresi` görevi süresi
     // dolmuş abonelikleri düşürüyor ve tek koruma `premium_until IS NULL`. Ama inceleme
     // hesapları (appreview/appreview2) inceleme sırasında uygulama içinden SANDBOX satın alma
@@ -750,9 +752,23 @@ g.post('/api/iap/verify', authUser, async (c) => {
     // Sandbox işlemi premium'u AÇAR (inceleme test edebilsin) ama bitiş tarihi YAZILMAZ →
     // düşürme görevi ona hiç dokunmaz. Üretim işlemleri etkilenmez.
     const sandbox = pyStr(p.environment).toLowerCase() === 'sandbox'
-    if (pyTruthy(exp) && !sandbox) {
-      await db.prepare('UPDATE users SET premium = 1, ultra = ?1, premium_until = ?2, updated_at = ?3 WHERE uid = ?4')
-        .bind(ultra, Math.floor(Number(exp) / 1000), ts, user).run()
+    if (expSn && !sandbox) {
+      // 🔴 FİKS 17.09 — SÜRESİZ HAK KORUMASI. Düz SET, promo/redeem/inceleme hesabının
+      // `premium_until IS NULL` (süresiz) hakkını tarihli aboneliğe çeviriyordu; ardından cron
+      // `premium-suresi` onu düşürüyordu. Bildirim yolu (iap-abonelik.ts:52) NULL'u zaten koruyor,
+      // kırılan YALNIZ bu doğrudan UPDATE'ti. Artık iap-abonelik.ts:118-128 ile AYNI CASE:
+      // NULL korunur, süre yalnız UZAR, daha uzun süren başka hak kısaltılmaz.
+      await db.prepare(
+        `UPDATE users SET premium = 1,
+           ultra = CASE WHEN ?1 = 1 THEN 1
+                        WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
+                        WHEN COALESCE(premium_until, 0) > ?2 + 86400 THEN COALESCE(ultra, 0)
+                        ELSE 0 END,
+           premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
+                                ELSE MAX(COALESCE(premium_until, 0), ?2) END,
+           updated_at = ?3
+         WHERE uid = ?4`)
+        .bind(ultra, expSn, ts, user).run()
     } else {
       // sandbox VEYA expiresDate yok → premium açılır, süre yazılmaz (düşürme kapsamı dışında)
       await db.prepare('UPDATE users SET premium = 1, ultra = ?1, updated_at = ?2 WHERE uid = ?3')
@@ -780,34 +796,50 @@ g.post('/api/iap/verify', authUser, async (c) => {
 
   if (Object.hasOwn(SOKAK_IDS, pid)) {   // Python `pid in SOKAK_IDS` = yalnız KENDİ anahtarları (JS `in` prototipe de bakar)
     if (kayit) return c.json({ ok: true, already: true, sokak: Math.trunc(Number(prof?.sokak_hak ?? 0) || 0) })
-    await db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-      .bind(tid, user, pid, ts).run()
     const adet = SOKAK_IDS[pid]
-    const yeni = await db.prepare('UPDATE users SET sokak_hak = COALESCE(sokak_hak, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING sokak_hak')
-      .bind(adet, ts, user).first<{ sokak_hak: number }>()
-    const toplam = Math.trunc(Number(yeni?.sokak_hak ?? adet))
+    // 🔴 FİKS 17.09 — ATOMİKLİK. Önce INSERT (D1'de her ifade AYRI commit), sonra ayrı UPDATE vardı:
+    // araya kesinti girerse işlem KAYITLI ama hak VERİLMEMİŞ kalıyor; tekrar denemede `kayit`
+    // görülüp `already: true` dönüyor ve hak BİR DAHA hiç yazılmıyordu. batch = tek transaction.
+    const r = await db.batch<{ sokak_hak: number }>([
+      db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(tid, user, pid, ts),
+      db.prepare('UPDATE users SET sokak_hak = COALESCE(sokak_hak, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING sokak_hak')
+        .bind(adet, ts, user),
+    ])
+    const toplam = Math.trunc(Number(r[1]?.results?.[0]?.sokak_hak ?? adet))
     await adminq(c.env, `💰 Move Log Sokak Hakkı\n${ad} → ${adet} hak · iOS\nÜrün: ${pid.split('.').pop()}\nToplam hakkı: ${toplam}`)
     return c.json({ ok: true, sokak: toplam })
   }
 
   if (Object.hasOwn(VIDEO_IDS, pid)) {
     if (kayit) return c.json({ ok: true, already: true, video: Math.trunc(Number(prof?.video_hak ?? 0) || 0) })
-    await db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-      .bind(tid, user, pid, ts).run()
     const adet = VIDEO_IDS[pid]
-    const yeni = await db.prepare('UPDATE users SET video_hak = COALESCE(video_hak, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING video_hak')
-      .bind(adet, ts, user).first<{ video_hak: number }>()
-    const toplam = Math.trunc(Number(yeni?.video_hak ?? adet))
+    // 🔴 FİKS 17.09 — ATOMİKLİK (sokak dalıyla aynı gerekçe): işlem kaydı + hak TEK transaction.
+    const r = await db.batch<{ video_hak: number }>([
+      db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(tid, user, pid, ts),
+      db.prepare('UPDATE users SET video_hak = COALESCE(video_hak, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING video_hak')
+        .bind(adet, ts, user),
+    ])
+    const toplam = Math.trunc(Number(r[1]?.results?.[0]?.video_hak ?? adet))
     await adminq(c.env, `💰 Move Log Video Paketi\n${ad} → ${adet} video · iOS\nÜrün: ${pid.split('.').pop()}\nToplam hakkı: ${toplam}`)
     return c.json({ ok: true, video: toplam })
   }
 
   if (pid === BOOST_2X_ID) {
     if (kayit) return c.json({ ok: true, already: true })   // idempotent
-    await db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-      .bind(tid, user, pid, ts).run()
+    // 🔴 FİKS 17.09 — ATOMİKLİK: `boostArtir` ayrı bir ifadeydi; INSERT'ten sonra patlarsa boost
+    // kaydı var ama çarpan yok ve tekrarda `already: true` dönüyordu. Gövdesi (224-231) batch'e alındı.
+    const r = await db.batch<{ value: number }>([
+      db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(tid, user, pid, ts),
+      db.prepare(
+        'INSERT INTO render_counts (uid, counter_key, value, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?3) ' +
+        'ON CONFLICT(uid, counter_key) DO UPDATE SET value = value + 1, updated_at = ?3 RETURNING value')
+        .bind(user, 'boost_' + gunUTC(), ts),
+    ])
     await adminq(c.env, `💰 BOOST satın alındı: ${ad}`)
-    const sayac = await boostArtir(db, user)                // her boost +1 kat (üst üste alınabilir)
+    const sayac = Math.trunc(Number(r[1]?.results?.[0]?.value ?? 1))   // her boost +1 kat (üst üste alınabilir)
     return c.json({ ok: true, boost_mult: 1 + sayac })
   }
 
@@ -850,7 +882,19 @@ g.post('/api/iap/google', authUser, async (c) => {
     const expIso = pyStr(nesne(lineItems[0]).expiryTime)
     const expTs = expIso ? Math.floor(Date.parse(expIso) / 1000) : 0
     if (Number.isFinite(expTs) && expTs > 0) {
-      await db.prepare('UPDATE users SET premium = 1, ultra = ?1, premium_until = ?2, updated_at = ?3 WHERE uid = ?4')
+      // 🔴 FİKS 17.09 — SÜRESİZ HAK KORUMASI (iOS dalıyla simetrik). Düz SET, promo/redeem/inceleme
+      // hesabının `premium_until IS NULL` süresiz hakkını tarihli aboneliğe çeviriyordu.
+      // iap-abonelik.ts:118-128 ile AYNI CASE: NULL korunur, süre yalnız UZAR.
+      await db.prepare(
+        `UPDATE users SET premium = 1,
+           ultra = CASE WHEN ?1 = 1 THEN 1
+                        WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
+                        WHEN COALESCE(premium_until, 0) > ?2 + 86400 THEN COALESCE(ultra, 0)
+                        ELSE 0 END,
+           premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
+                                ELSE MAX(COALESCE(premium_until, 0), ?2) END,
+           updated_at = ?3
+         WHERE uid = ?4`)
         .bind(ultra ? 1 : 0, expTs, ts, user).run()
     } else {
       await db.prepare('UPDATE users SET premium = 1, ultra = ?1, updated_at = ?2 WHERE uid = ?3')
@@ -902,19 +946,23 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
   const eski = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(oid).first()
   if (eski) return c.json({ ok: true, already: true })     // idempotent
   const ts = simdi()
+  // 🔴 FİKS 17.09 — ATOMİKLİK (Apple dalıyla simetrik): işlem kaydı ayrı bir INSERT'tü, hak ayrı
+  // UPDATE. Araya kesinti girerse `already: true` yolu hakkı sonsuza dek engelliyordu. Artık ikisi
+  // TEK batch. `kullaniciGarantile` batch'ten ÖNCE kalmalı (users satırı yoksa UPDATE boşa yazar).
   // Şema notu: Google boost'ta pid kolonuna sku değeri yazılır (iap_transactions pid ?? sku sözleşmesi)
-  await db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-    .bind(oid, user, sku, ts).run()
+  await kullaniciGarantile(db, user)
 
   // ---- SOKAK / VİDEO PAKETİ (Android 1.61) — Apple dalıyla (satır 601-632) simetrik ----
   if (sokakAdet || videoAdet) {
-    await kullaniciGarantile(db, user)                     // users satırı yoksa UPDATE hiçbir şeye yazmaz
     const kolon = sokakAdet ? 'sokak_hak' : 'video_hak'
     const adet = sokakAdet || videoAdet
-    const yeni = await db.prepare(
-      `UPDATE users SET ${kolon} = COALESCE(${kolon}, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING ${kolon}`)
-      .bind(adet, ts, user).first<Record<string, number>>()
-    const toplam = Math.trunc(Number(yeni?.[kolon] ?? adet))
+    const rp = await db.batch<Record<string, number>>([
+      db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+        .bind(oid, user, sku, ts),
+      db.prepare(`UPDATE users SET ${kolon} = COALESCE(${kolon}, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING ${kolon}`)
+        .bind(adet, ts, user),
+    ])
+    const toplam = Math.trunc(Number(rp[1]?.results?.[0]?.[kolon] ?? adet))
     const prof = await getUser(db, user)
     const ad = pyTruthy(prof?.name) ? String(prof!.name) : user.slice(0, 10)
     await adminq(c.env, sokakAdet
@@ -923,7 +971,16 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
     return sokakAdet ? c.json({ ok: true, sokak: toplam }) : c.json({ ok: true, video: toplam })
   }
 
-  const sayac = await boostArtir(db, user)
+  // 🔴 FİKS 17.09 — ATOMİKLİK: işlem kaydı + boost çarpanı TEK batch (boostArtir gövdesi 224-231).
+  const rb = await db.batch<{ value: number }>([
+    db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+      .bind(oid, user, sku, ts),
+    db.prepare(
+      'INSERT INTO render_counts (uid, counter_key, value, created_at, updated_at) VALUES (?1, ?2, 1, ?3, ?3) ' +
+      'ON CONFLICT(uid, counter_key) DO UPDATE SET value = value + 1, updated_at = ?3 RETURNING value')
+      .bind(user, 'boost_' + gunUTC(), ts),
+  ])
+  const sayac = Math.trunc(Number(rb[1]?.results?.[0]?.value ?? 1))
   return c.json({ ok: true, boost_mult: 1 + sayac })       // admin bildirimi YOK (iOS'tan farklı)
 })
 
@@ -1091,8 +1148,20 @@ g.post('/api/iap/apple/bildirim', async (c) => {
       return c.json({ ok: true })
     }
     if (tuketilebilirMi(pid) && (tip === 'REFUND' || tip === 'REVOKE')) {
-      await kaydet({ uid, pid, karar: 'yok-sayildi:tuketilebilir-iade' })
-      await adminq(c.env, `💸 Move Log iade: ${ad} · ${pid.split('.').pop() || pid}`)
+      // 🔴 FİKS 17.09 — İADE EDİLEN HAK GERİ ALINIYOR. Öncesi: yalnız adminq notu → kullanıcı
+      // parasını geri alıp sokak/video hakkını KULLANMAYA devam ediyordu. MAX(0,…) ile negatife düşmez.
+      // BOOST istisna: günlük 2x çarpanı satın alındığı GÜNE yazılır (render_counts boost_<gün>);
+      // iade günler sonra gelir, o günün sayacı çoktan geçmiştir → geri alınacak bir şey yok.
+      const geri = SOKAK_IDS[pid] ?? VIDEO_IDS[pid] ?? 0
+      const kolon = Object.hasOwn(SOKAK_IDS, pid) ? 'sokak_hak' : 'video_hak'
+      if (geri > 0) {
+        await db.prepare(
+          `UPDATE users SET ${kolon} = MAX(0, COALESCE(${kolon}, 0) - ?1), updated_at = ?2 WHERE uid = ?3`)
+          .bind(geri, ts, uid).run()
+      }
+      await kaydet({ uid, pid, karar: geri > 0 ? `iade:${kolon}-${geri}` : 'yok-sayildi:boost-iade' })
+      await adminq(c.env, `💸 Move Log iade: ${ad} · ${pid.split('.').pop() || pid}`
+        + (geri > 0 ? ` · ${geri} ${kolon === 'sokak_hak' ? 'sokak' : 'video'} hakkı geri alındı` : ''))
       return c.json({ ok: true })
     }
     await kaydet({ uid, pid, karar: 'yok-sayildi:' + (tip || 'bilinmeyen') })
@@ -1168,11 +1237,29 @@ g.post('/api/iap/google/bildirim', async (c) => {
         await kaydet({ tip: 'voided', alt_tip: pyStr(v.orderId) || null, uid, pid: tok || null, karar, bitis })
         return c.json({ ok: true })
       }
-      // productType 2 (tek seferlik) — otomatik düşme YOK
-      const prof = uid ? await getUser(db, uid) : null
-      const ad = uid ? kullaniciAdi(prof?.name, uid) : '?'
-      await kaydet({ tip: 'voided', alt_tip: pyStr(v.orderId) || null, uid, pid: tok || null, karar: 'yok-sayildi:tuketilebilir-iade' })
-      await adminq(c.env, `💸 Move Log iade: ${ad} · ${pyStr(v.orderId) || tok || 'google'}`)
+      // productType 2 (tek seferlik)
+      // 🔴 FİKS 17.09 — İADE EDİLEN HAK GERİ ALINIYOR (Apple dalıyla simetrik). Sku, satın alma
+      // sırasında `iap_transactions.pid` kolonuna yazılıyor (Google boost sözleşmesi) → orderId ile okunur.
+      const oid2 = pyStr(v.orderId)
+      const islem = oid2
+        ? await db.prepare('SELECT uid, pid FROM iap_transactions WHERE tid = ?1').bind(oid2)
+          .first<{ uid: string; pid: string }>()
+        : null
+      const sku2 = pyStr(islem?.pid)
+      const geri = ANDROID_SOKAK_IDS[sku2] ?? ANDROID_VIDEO_IDS[sku2] ?? 0
+      const kolon = Object.hasOwn(ANDROID_SOKAK_IDS, sku2) ? 'sokak_hak' : 'video_hak'
+      const sahip = uid || pyStr(islem?.uid)
+      if (geri > 0 && sahip) {
+        await db.prepare(
+          `UPDATE users SET ${kolon} = MAX(0, COALESCE(${kolon}, 0) - ?1), updated_at = ?2 WHERE uid = ?3`)
+          .bind(geri, simdi(), sahip).run()
+      }
+      const prof = sahip ? await getUser(db, sahip) : null
+      const ad = sahip ? kullaniciAdi(prof?.name, sahip) : '?'
+      await kaydet({ tip: 'voided', alt_tip: oid2 || null, uid: sahip || uid, pid: tok || null,
+        karar: geri > 0 ? `iade:${kolon}-${geri}` : 'yok-sayildi:boost-iade' })
+      await adminq(c.env, `💸 Move Log iade: ${ad} · ${oid2 || tok || 'google'}`
+        + (geri > 0 ? ` · ${geri} ${kolon === 'sokak_hak' ? 'sokak' : 'video'} hakkı geri alındı` : ''))
       return c.json({ ok: true })
     }
     if (pyTruthy(dev.subscriptionNotification)) {
@@ -1317,9 +1404,13 @@ g.post('/api/attest', authUser, async (c) => {
   const enforce = await kvBayrak(c.env, 'APPATTEST_ENFORCE')
   const ch = await attestChallengeAl(c.env, user, pyStr(body.challenge))
   if (!att || !ch) {
-    // attestation gelmedi / challenge süresi geçti → istemci aksaklığı, hile değil → DAİMA ok
+    // attestation gelmedi / challenge süresi geçti → istemci aksaklığı, hile değil.
+    // 🔴 FİKS 17.09 — ZORLAMA TUTARSIZLIĞI. Burası `ok: true` sabitti: APPATTEST_ENFORCE açılsa
+    // bile "attestation hiç göndermeyen" istemci geçiyordu, yani zorlama DİŞSİZDİ (yalnız
+    // "doğrulama koştu ve ok=false" dalında devreye giriyordu — hile için en kolay yol
+    // attestation'ı hiç göndermemekti). Bayrak KAPALIYKEN davranış AYNEN aynı (ok: true).
     await attStat(db, 'ios', 'token_yok')
-    return c.json({ ok: true, verified: false, reason: 'no-attestation', enforced: enforce })
+    return c.json({ ok: !enforce, verified: false, reason: 'no-attestation', enforced: enforce })
   }
   let sonuc: AttestSonuc
   try {
@@ -1327,7 +1418,9 @@ g.post('/api/attest', authUser, async (c) => {
   } catch (e) {
     console.log('appattest istisna:', String(e).slice(0, 100))
     await attStat(db, 'ios', 'dogrulanamadi')
-    return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
+    // 🔴 FİKS 17.09: istisna yolu da `ok: true` sabitti → bozuk/kasıtlı hatalı attestation
+    // göndermek zorlamayı atlamanın ikinci yoluydu. Bayrak kapalıyken davranış değişmez.
+    return c.json({ ok: !enforce, verified: false, reason: 'unavailable', enforced: enforce })
   }
   console.log(`appattest user=${user} ok=${sonuc.ok} (${sonuc.why}) ortam=${sonuc.ortam || '-'} `
     + `kat=${sonuc.valKat ?? '-'} sur=${sonuc.bundleVer ?? '-'}`)
@@ -1352,14 +1445,20 @@ g.post('/api/attest', authUser, async (c) => {
         db.prepare(
           `INSERT INTO attest_keys (key_id, uid, pubkey, receipt, counter, env, val_kat, bundle_ver,
              created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?8)
-           ON CONFLICT(key_id) DO UPDATE SET uid = ?2, pubkey = ?3, receipt = ?4, counter = 0,
+           ON CONFLICT(key_id) DO UPDATE SET uid = ?2, pubkey = ?3, receipt = ?4,
+             counter = CASE WHEN attest_keys.pubkey = ?3 THEN attest_keys.counter ELSE 0 END,
              env = ?5, val_kat = ?6, bundle_ver = ?7, updated_at = ?8`)
           .bind(sonuc.keyId, user, sonuc.pubkey, sonuc.receipt || null, sonuc.ortam,
             sonuc.valKat, sonuc.bundleVer, ts),
         // users.attest_key = "bu hesabın EN SON anahtarı". Bedava-aksiyon cihaz-dedup'u onu BEŞ
         // yerde okuyor (grup1/grup2/grup3/grup4) — kolon BİLEREK sürdürülüyor.
         db.prepare(
-          `UPDATE users SET attested = ?1, attest_key = ?2, attest_pubkey = ?3, attest_counter = 0,
+          // 🔴 FİKS 17.09 — SAYAÇ SIFIRLAMA. Aynı key_id ile tekrar attestation gelince counter 0'a
+          // çekiliyordu; Secure Enclave sayacı ilerlemişken DB sıfırlanırsa daha önce görülmüş
+          // DÜŞÜK counter'lı bir assertion `counter <= onceki` kontrolünü geçer (replay penceresi).
+          // Artık sıfırlama YALNIZ anahtar gerçekten değiştiyse (pubkey farklıysa) yapılıyor.
+          `UPDATE users SET attested = ?1, attest_key = ?2, attest_pubkey = ?3,
+             attest_counter = CASE WHEN attest_pubkey = ?3 THEN COALESCE(attest_counter, 0) ELSE 0 END,
              attest_receipt = ?4, updated_at = ?1 WHERE uid = ?5`)
           .bind(ts, sonuc.keyId, sonuc.pubkey, sonuc.receipt || null, user),
       ])
@@ -1408,9 +1507,11 @@ g.post('/api/attest/assert', authUser, async (c) => {
     onceki = Number(p?.attest_counter ?? 0)
   }
   if (!asr || !ch || !pub) {
-    // henüz attestation yok / challenge yok → istemci bir sonraki açılışta attest eder
+    // henüz attestation yok / challenge yok → istemci bir sonraki açılışta attest eder.
+    // 🔴 FİKS 17.09 — attest ucuyla aynı tutarsızlık: `ok: true` sabitti, zorlama açıkken bile
+    // assertion göndermeyen istemci geçiyordu. Bayrak kapalıyken davranış AYNEN aynı.
     await attStat(db, 'ios', 'token_yok')
-    return c.json({ ok: true, verified: false, reason: pub ? 'no-assertion' : 'no-attestation', enforced: enforce })
+    return c.json({ ok: !enforce, verified: false, reason: pub ? 'no-assertion' : 'no-attestation', enforced: enforce })
   }
   let sonuc: AsrSonuc
   try {
@@ -1418,7 +1519,8 @@ g.post('/api/attest/assert', authUser, async (c) => {
   } catch (e) {
     console.log('appattest assert istisna:', String(e).slice(0, 100))
     await attStat(db, 'ios', 'dogrulanamadi')
-    return c.json({ ok: true, verified: false, reason: 'unavailable', enforced: enforce })
+    // 🔴 FİKS 17.09: assert istisna yolu da `ok: true` sabitti (bkz. attest ucu). Bayrak kapalı → aynı.
+    return c.json({ ok: !enforce, verified: false, reason: 'unavailable', enforced: enforce })
   }
   console.log(`appattest-assert user=${user} ok=${sonuc.ok} (${sonuc.why}) counter=${sonuc.counter} `
     + `kat=${sonuc.valKat ?? '-'} sur=${sonuc.bundleVer ?? '-'}`)
