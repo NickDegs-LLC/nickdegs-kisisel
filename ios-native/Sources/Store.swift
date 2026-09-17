@@ -24,8 +24,12 @@ func cihazKimligi() -> String {
 // APP ATTEST ANAHTAR DEPOSU (17.09). Apple'ın modelinde attestation ÖMÜR BOYU BİR KEREDİR ve keyId
 // KALICI olmalıdır. Önceki sürüm her açılışta generateKey() çağırıyordu → her seferinde yeni donanım
 // anahtarı; ölçüm: attested=20 ama attest_key=11, free_tactical_devices=0 (cihaz-dedup çalışmıyordu).
-// UserDefaults değil Keychain: AfterFirstUnlock ile arka planda da okunur, yedekten başka cihaza
-// taşınmaz — anahtarın cihaza bağlı kalması tam olarak istenen davranış.
+// UserDefaults değil Keychain: arka planda da okunur (AfterFirstUnlock) ve **ThisDeviceOnly** ile
+// yeni cihaza TAŞINMAZ. Bu şart: App Attest anahtarı Secure Enclave'de durur, hiçbir yedeğe girmez
+// ve taşınamaz. Düz `AfterFirstUnlock` kullanılsaydı keyId şifreli yedekle yeni telefona geçer ama
+// karşılığı olan anahtar orada olmazdı → `DCError.invalidKey`. Apple'ın tavsiyesi de bu yönde:
+// anahtar kimliğini yedeklenebilir yere koyma, yeni cihazda sıfırdan üret.
+// (Kod yine de invalidKey'i yakalayıp anahtarı siler ve yeniden attest eder — çift emniyet.)
 enum AttestKeyStore {
     private static let hesap = "nd_attest_keyid"
 
@@ -49,7 +53,7 @@ enum AttestKeyStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: hesap,
             kSecValueData as String: Data(keyId.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         _ = SecItemAdd(q as CFDictionary, nil)
     }
