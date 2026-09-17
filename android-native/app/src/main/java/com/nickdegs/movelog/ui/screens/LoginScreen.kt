@@ -23,6 +23,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.nickdegs.movelog.data.Store
@@ -30,15 +32,18 @@ import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
 import kotlinx.coroutines.launch
 
-// film-ozet projesindeki WEB OAuth client (google-services.json type-3) — backend GOOGLE_AUDS ile aynı.
+// 17.09: move-log-500805 projesindeki WEB OAuth client (iOS ile AYNI proje).
+// NOT: FCM ve Play Integrity BILEREK film-ozet'te kaldi - Google girisi google-services.json
+// kullanmaz, bu sabit yeter. Eski WEB OAuth client (google-services.json type-3) — backend GOOGLE_AUDS ile aynı.
 private const val GOOGLE_WEB_CLIENT_ID =
-    "909630333798-lhvvpkejikqveqpbcn9es0e39eumvs79.apps.googleusercontent.com"
+    "515832699888-a021ep8nomkro6t8lpi31jmnttmksi2n.apps.googleusercontent.com"
 
 @Composable
 fun LoginScreen(store: Store) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     var busy by remember { mutableStateOf(false) }
+    var hataMetni by remember { mutableStateOf<String?>(null) }
 
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -48,7 +53,7 @@ fun LoginScreen(store: Store) {
             Spacer(Modifier.height(6.dp))
 
             if (store.loginError) {
-                Text(L("Giriş yapılamadı, tekrar dene.", "Sign-in failed, please try again."),
+                Text(hataMetni ?: L("Giriş yapılamadı, tekrar dene.", "Sign-in failed, please try again."),
                     color = Color(0xFFE57373), fontSize = 13.sp)
             }
 
@@ -75,7 +80,19 @@ fun LoginScreen(store: Store) {
                             } else store.loginError = true
                         } catch (e: GetCredentialCancellationException) {
                             // kullanıcı vazgeçti -> hata gösterme
+                        } catch (e: NoCredentialException) {
+                            // 17.09: cihazda Google hesabı yok. Eskiden jenerik "tekrar dene" yazıyordu ve
+                            // Android'de BAŞKA giriş yolu olmadığı için kullanıcı tamamen kilitleniyordu.
+                            hataMetni = L("Bu cihazda Google hesabı bulunamadı. Ayarlar > Hesaplar'dan bir Google hesabı ekleyip tekrar dene.",
+                                "No Google account found on this device. Add one in Settings > Accounts, then try again.")
+                            store.loginError = true
+                        } catch (e: GetCredentialException) {
+                            // Play Hizmetleri eski / cihaz sertifikasız / yapılandırma hatası -> sebebi GÖSTER
+                            hataMetni = L("Google girişi başlatılamadı (" + e.type + "). Google Play Hizmetleri güncel mi?",
+                                "Google sign-in could not start (" + e.type + "). Is Google Play services up to date?")
+                            store.loginError = true
                         } catch (e: Exception) {
+                            hataMetni = null
                             store.loginError = true
                         }
                         busy = false

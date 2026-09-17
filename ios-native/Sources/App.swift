@@ -24,6 +24,14 @@ struct MoveLogApp: App {
                 case .offline: AuthGateView(checking: false) { Task { await store.validate() } }
                 }
             }
+            // 17.09 KILIT FIKSI: .checking ekrani ("Kimlik dogrulaniyor...") sonsuza kadar
+            // kalabiliyordu - validate() donmezse cikis yolu YOKTU (Yeniden dene yalniz .offline'da).
+            // Bekci: 20 sn sonra hala .checking ise .offline'a gecir, kullanici retry gorsun.
+            .task(id: store.gate) {
+                guard store.gate == .checking else { return }
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                if store.gate == .checking { store.gate = .offline }
+            }
             .task {
                 if store.gate == .checking { await store.validate() }
                 ConvoyVoice.shared.store = store          // 1.9: sesli konvoy anonsları

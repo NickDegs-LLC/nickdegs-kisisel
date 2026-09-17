@@ -167,7 +167,7 @@ enum DavetLink {
     // FAIL-OPEN: desteklenmiyor/entitlement yok/hata -> sessizce geçer, kullanıcıyı ASLA kilitlemez.
     func attestIfPossible() async {
         guard DCAppAttestService.shared.isSupported else { return }
-        guard let cd = try? await req("/api/attest/challenge"),
+        guard let cd = try? await reqSessiz("/api/attest/challenge"),
               let o = try? JSONSerialization.jsonObject(with: cd) as? [String:Any],
               let challenge = o["challenge"] as? String else { return }
         let svc = DCAppAttestService.shared
@@ -175,14 +175,28 @@ enum DavetLink {
             let keyId = try await svc.generateKey()
             let clientDataHash = Data(SHA256.hash(data: Data(challenge.utf8)))
             let attestation = try await svc.attestKey(keyId, clientDataHash: clientDataHash)
-            _ = try? await req("/api/attest", method: "POST",
-                               body: ["attestation": attestation.base64EncodedString(), "keyId": keyId])
+            _ = try? await reqSessiz("/api/attest", method: "POST",
+                                     body: ["attestation": attestation.base64EncodedString(), "keyId": keyId])
         } catch {
             // App Attest desteklenmiyor / entitlement yok / hata -> sessizce geç (zarar yok)
         }
     }
 
     private func dec() -> JSONDecoder { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }
+
+    /// 17.09: req() 401'de otomatik logout() yapiyor. App Attest "fail-open" olmasina ragmen
+    /// bu ortak yol uzerinden kullaniciyi SESSIZCE disari atabiliyordu. Attest artik bunu kullanir:
+    /// ayni istek, ama 401 gorurse oturumu KAPATMAZ.
+    private func reqSessiz(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> Data {
+        var r = URLRequest(url: URL(string: API + path)!)
+        r.httpMethod = method
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(currentLang(), forHTTPHeaderField: "Accept-Language")
+        if !token.isEmpty { r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+        if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let (data, _) = try await URLSession.shared.data(for: r)
+        return data
+    }
 
     private func req(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> Data {
         var r = URLRequest(url: URL(string: API + path)!)
