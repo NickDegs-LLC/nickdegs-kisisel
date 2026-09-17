@@ -47,6 +47,12 @@ export default {
     if (u.pathname === '/.well-known/assetlinks.json') return json(ASSETLINKS)
     if (u.pathname.startsWith('/.well-known/')) return new Response('not found', { status: 404 })
 
+    // VERI/HESAP SILME SAYFASI (17.09) — Play "Data safety" formu uygulama DISINDAN erisilebilen
+    // bir silme baglantisi istiyor; sahte link kabul edilmiyor, Google denetliyor.
+    if (u.pathname === '/hesap-sil' || u.pathname === '/delete-account') {
+      return silmeSayfasi(dilTr(req))
+    }
+
     const invite = (u.searchParams.get('invite') || '').trim()
     if (DAVET_RE.test(invite)) return davetSayfasi(invite, dilTr(req))
 
@@ -168,4 +174,59 @@ button,.btn{display:block;width:100%;padding:14px 16px;border-radius:14px;font-s
       'cache-control': 'no-store',
     },
   })
+}
+
+// Hesap ve veri silme sayfasi (Play Data safety zorunlulugu). Tek dosya, dis kaynak YOK.
+function silmeSayfasi(tr) {
+  const b = tr ? {
+    t: 'Hesap ve veri silme', u: 'Move Log',
+    g1: 'Uygulamadan sil (en hizlisi)',
+    g1a: 'Move Log\u2019u ac \u2192 <b>Profil</b> sekmesi \u2192 en altta <b>Hesab\u0131 sil</b> \u2192 onayla. Hesab\u0131n an\u0131nda silinir, ayr\u0131ca bir istek g\u00f6ndermene gerek yoktur.',
+    g2: 'Uygulaman yoksa / eri\u015femiyorsan',
+    g2a: 'Hesab\u0131n\u0131 olu\u015ftururken kulland\u0131\u011f\u0131n e-posta adresinden a\u015fa\u011f\u0131daki adrese \u201chesap silme\u201d yazarak yaz. Kimli\u011fini do\u011frulad\u0131ktan sonra en ge\u00e7 30 g\u00fcn i\u00e7inde sileriz.',
+    s1: 'Silinen veriler',
+    s1a: 'Hesab\u0131n ve profil bilgilerin (ad, kullan\u0131c\u0131 ad\u0131, avatar), arkada\u015f listen ve arkada\u015flik istekleri, sohbet mesajlar\u0131n, davet kodlar\u0131n, bildirim kay\u0131tlar\u0131n ve cihaz kimli\u011fin <b>an\u0131nda</b> silinir. Gezi kay\u0131tlar\u0131n, olu\u015fturdu\u011fun videolar ve GPS izlerin <b>en ge\u00e7 30 g\u00fcn i\u00e7inde</b> kal\u0131c\u0131 olarak silinir.',
+    s2: 'Saklanan veriler',
+    s2a: 'Sat\u0131n alma ve abonelik kay\u0131tlar\u0131 (i\u015flem numaras\u0131, \u00fcr\u00fcn, tarih) yasal ve muhasebe y\u00fck\u00fcml\u00fcl\u00fckleri gere\u011fi saklan\u0131r. Bu kay\u0131tlar seni tan\u0131mlayan profil bilgisi i\u00e7ermez.',
+    i: 'Silme geri al\u0131namaz. Aktif bir aboneli\u011fin varsa hesab\u0131 silmek aboneli\u011fi iptal etmez \u2014 iptali App Store veya Google Play \u00fczerinden yapman gerekir.',
+    e: '\u0130leti\u015fim',
+  } : {
+    t: 'Account and data deletion', u: 'Move Log',
+    g1: 'Delete from the app (fastest)',
+    g1a: 'Open Move Log \u2192 <b>Profile</b> tab \u2192 <b>Delete account</b> at the bottom \u2192 confirm. Your account is deleted immediately; no request needed.',
+    g2: 'If you no longer have the app',
+    g2a: 'Email us from the address you used for your account with the subject \u201caccount deletion\u201d. After verifying your identity we delete it within 30 days.',
+    s1: 'What is deleted',
+    s1a: 'Your account and profile (name, username, avatar), friends and friend requests, chat messages, invite codes, notification records and device identifier are deleted <b>immediately</b>. Your ride records, generated videos and GPS traces are permanently deleted <b>within 30 days</b>.',
+    s2: 'What is kept',
+    s2a: 'Purchase and subscription records (transaction id, product, date) are retained for legal and accounting obligations. These records contain no identifying profile data.',
+    i: 'Deletion cannot be undone. Deleting your account does not cancel an active subscription \u2014 cancel it in the App Store or Google Play.',
+    e: 'Contact',
+  }
+  const html = `<!doctype html><html lang="${tr ? 'tr' : 'en'}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${b.t} \u2014 ${b.u}</title><style>
+:root{color-scheme:light dark}
+body{margin:0;padding:32px 20px;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+background:#0a0e17;color:#e6e9ef;display:flex;justify-content:center}
+main{max-width:640px;width:100%}
+h1{font-size:26px;margin:0 0 4px}
+.u{color:#6ea8fe;font-weight:600;margin-bottom:26px}
+h2{font-size:17px;margin:26px 0 6px;color:#fff}
+p{margin:0 0 10px;color:#c7cdd8}
+.k{background:#121826;border:1px solid #1f2937;border-radius:10px;padding:14px 16px;margin:14px 0}
+a{color:#6ea8fe}
+.uy{border-left:3px solid #f0a020;padding-left:12px;color:#d8c08a;margin-top:22px}
+footer{margin-top:30px;font-size:13px;color:#7b8494}
+</style></head><body><main>
+<h1>${b.t}</h1><div class="u">${b.u}</div>
+<div class="k"><h2>${b.g1}</h2><p>${b.g1a}</p></div>
+<div class="k"><h2>${b.g2}</h2><p>${b.g2a}</p>
+<p><a href="mailto:business@nickdegs.com?subject=Move%20Log%20hesap%20silme">business@nickdegs.com</a></p></div>
+<h2>${b.s1}</h2><p>${b.s1a}</p>
+<h2>${b.s2}</h2><p>${b.s2a}</p>
+<p class="uy">${b.i}</p>
+<footer>${b.e}: <a href="mailto:business@nickdegs.com">business@nickdegs.com</a> \u00b7 NickDegs</footer>
+</main></body></html>`
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
 }
