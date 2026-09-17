@@ -21,7 +21,8 @@ export type AbonelikIstek = {
 
 export type AbonelikKarar =
   | 'aktif'
-  | 'dusuruldu'
+  | 'dusuruldu'          // premium=0 ve ultra=0
+  | 'ultra-dusuruldu'    // 17.09 gece: yalniz ultra=0 (Premium kendi tarihiyle devam eder)
   | 'korundu:inceleme'
   | 'korundu:suresiz'
   | 'korundu:baska-hak'
@@ -45,13 +46,29 @@ export function abonelikKarar(
   uid: string,
   premiumUntil: number | null | undefined,
   istek: AbonelikIstek,
+  // 🔴 17.09 gece — ÇİFT KATMAN (migration 0011). Premium ve Ultra App Store'da AYRI gruplar → ikisi aynı
+  // anda aktif olabilir. Tek `premium_until`'den karar vermek Premium yenilenince aktif Ultra'yı düşürüyor,
+  // Ultra dolunca (Premium daha uzunsa) Ultra'yı HİÇ düşürmüyordu. Artık her olay YALNIZ kendi katmanına bakar.
+  ultraUntil?: number | null,
+  ultraFlag?: number | null,
 ): AbonelikKarar {
   const aktif = istek.zorlaPasif ? false : istek.aktif
   if (aktif) return 'aktif'
   if (DOKUNMA.has(uid)) return 'korundu:inceleme'
+  const pay = istek.bitis + 86400
+  if (istek.ultra) {
+    // ULTRA ürünü pasifleşiyor → ultra_until'e göre karar; premium ayrıca kendi tarihine bakar
+    if (ultraUntil === null || ultraUntil === undefined) return 'korundu:suresiz'
+    if (ultraUntil > pay) return 'korundu:baska-hak'
+    const premiumKalir = premiumUntil === null || premiumUntil === undefined || premiumUntil > pay
+    return premiumKalir ? 'ultra-dusuruldu' : 'dusuruldu'
+  }
+  // PREMIUM ürünü pasifleşiyor
   if (premiumUntil === null || premiumUntil === undefined) return 'korundu:suresiz'
-  if (premiumUntil > istek.bitis + 86400) return 'korundu:baska-hak'
-  return 'dusuruldu'
+  if (premiumUntil > pay) return 'korundu:baska-hak'
+  // Aktif/süresiz bir Ultra varsa Premium özellikleri de onunla yaşar (Ultra ⊃ Premium) — düşürme
+  const ultraAktif = ultraFlag === 1 && (ultraUntil === null || ultraUntil === undefined || ultraUntil > pay)
+  return ultraAktif ? 'korundu:baska-hak' : 'dusuruldu'
 }
 
 /** Apple bildirim tipi + işlem tarihleri → aktif mi, bitiş epoch'u ne. */
@@ -98,14 +115,20 @@ export async function abonelikUygula(
 ): Promise<AbonelikKarar> {
   const ts = simdi()
   if (!(istek.zorlaPasif ? false : istek.aktif)) {
-    const row = await db.prepare('SELECT premium_until FROM users WHERE uid = ?1')
-      .bind(uid).first<{ premium_until: number | null }>()
-    const karar = abonelikKarar(uid, row ? row.premium_until : null, istek)
+    const row = await db.prepare('SELECT premium_until, ultra, ultra_until FROM users WHERE uid = ?1')
+      .bind(uid).first<{ premium_until: number | null; ultra: number | null; ultra_until: number | null }>()
+    const karar = abonelikKarar(uid, row ? row.premium_until : null, istek, row?.ultra_until, row?.ultra)
     if (karar === 'dusuruldu') {
       await db.prepare('UPDATE users SET premium = 0, ultra = 0, updated_at = ?1 WHERE uid = ?2')
         .bind(ts, uid).run()
       if (ctx) {
         await adminq(ctx.env, `💳 Move Log abonelik bitti: ${ctx.ad} · ${ctx.platform} · ${ctx.tip}`)
+      }
+    } else if (karar === 'ultra-dusuruldu') {
+      // 17.09 gece: Ultra bitti ama Premium (kendi tarihiyle / süresiz) devam ediyor → yalnız ultra=0
+      await db.prepare('UPDATE users SET ultra = 0, updated_at = ?1 WHERE uid = ?2').bind(ts, uid).run()
+      if (ctx) {
+        await adminq(ctx.env, `💳 Move Log ULTRA bitti (Premium devam): ${ctx.ad} · ${ctx.platform} · ${ctx.tip}`)
       }
     }
     return karar
@@ -114,13 +137,15 @@ export async function abonelikUygula(
   // Başka kaynağın hakkını BOZMA (SET ifadeleri satırın ESKİ değerleriyle hesaplanır):
   //  · süresiz hak (premium=1, premium_until NULL = promo/redeem/inceleme) süresiz kalır, ultra'sı korunur;
   //  · premium_until yalnız UZAR (ör. Android Ultra'sı daha uzunsa Apple Premium yenilemesi kısaltmaz);
-  //  · ultra: bu abonelik ultra ise 1; değilse daha uzun süren başka hak varsa eski değer, yoksa 0.
+  //  · 🔴 17.09 gece (migration 0011): ultra YALNIZ Ultra olayında değişir (1 olur, ultra_until MAX'lanır);
+  //    Premium olayı ultra'ya ve ultra_until'e DOKUNMAZ. Süresiz Ultra (ultra=1, ultra_until NULL) süresiz kalır.
   await db.prepare(
     `UPDATE users SET premium = 1,
-       ultra = CASE WHEN ?1 = 1 THEN 1
-                    WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
-                    WHEN COALESCE(premium_until, 0) > ?2 + 86400 THEN COALESCE(ultra, 0)
-                    ELSE 0 END,
+       ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
+       ultra_until = CASE WHEN ?1 = 1
+                          THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
+                                     ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
+                          ELSE ultra_until END,
        premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
                             ELSE MAX(COALESCE(premium_until, 0), ?2) END,
        updated_at = ?3

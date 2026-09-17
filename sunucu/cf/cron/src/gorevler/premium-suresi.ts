@@ -54,16 +54,38 @@ const DOKUNMA = new Set(['appreview', 'appreview2'])
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, now, log } = c
   const esik = now - EK_SURE_GUN * 86400
+  // 🔴 17.09 gece (migration 0011, çift katman): aktif/süresiz ULTRA'sı olan satır premium süresi dolsa da
+  // DÜŞÜRÜLMEZ (Ultra ⊃ Premium; Ultra kendi tarihiyle yaşar). Ultra'nın kendi bitişi ayrıca aşağıda.
   const r = await env.DB.prepare(
     `SELECT uid, premium_until, ultra FROM users
-      WHERE premium = 1 AND premium_until IS NOT NULL AND premium_until < ?1`)
-    .bind(esik).all<{ uid: string; premium_until: number; ultra: number | null }>()
+      WHERE premium = 1 AND premium_until IS NOT NULL AND premium_until < ?1
+        AND NOT (ultra = 1 AND (ultra_until IS NULL OR ultra_until >= ?2))`)
+    .bind(esik, now).all<{ uid: string; premium_until: number; ultra: number | null }>()
   const dolan = r.results.filter((u) => !DOKUNMA.has(u.uid))
   const korunan = r.results.length - dolan.length
   if (korunan) log(`${korunan} inceleme hesabı korundu (düşürülmedi)`)
-  if (!dolan.length) { log('süresi dolmuş abonelik yok'); return }
 
   const acik = (await env.KV.get('premium-dusur')) === '1'
+
+  // ULTRA'nın kendi süresi: premium devam etse bile (yıllık Premium + aylık Ultra) Ultra ayrıca düşer.
+  const ru = await env.DB.prepare(
+    `SELECT uid, ultra_until FROM users
+      WHERE ultra = 1 AND ultra_until IS NOT NULL AND ultra_until < ?1`)
+    .bind(esik).all<{ uid: string; ultra_until: number }>()
+  const ultraDolan = ru.results.filter((u) => !DOKUNMA.has(u.uid))
+  if (ultraDolan.length) {
+    const uo = ultraDolan.map((u) => `${u.uid} (${Math.floor((now - u.ultra_until) / 86400)} gün önce)`).join(', ')
+    if (!acik) log(`⚠️ ${ultraDolan.length} ULTRA süresi dolmuş ama DÜŞÜRME KAPALI: ${uo}`)
+    else {
+      for (const u of ultraDolan) {
+        await env.DB.prepare('UPDATE users SET ultra = 0, updated_at = ?2 WHERE uid = ?1').bind(u.uid, now).run()
+        log(`ultra düşürüldü (premium kendi tarihiyle devam): ${u.uid}`)
+      }
+      await bildirimBekleyen(env, `💳 ${ultraDolan.length} kullanıcının ULTRA'sı süre dolduğu için düşürüldü: ${uo.slice(0, 200)}`, 'Move Log Abonelik')
+    }
+  }
+
+  if (!dolan.length) { log('süresi dolmuş premium yok'); return }
   const ozet = dolan
     .map((u) => `${u.uid} (${Math.floor((now - u.premium_until) / 86400)} gün önce)`)
     .join(', ')

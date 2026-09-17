@@ -909,7 +909,11 @@ enum DavetLink {
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         r.httpBody = data
         guard let (d, resp) = try? await URLSession.shared.data(for: r),
-              let h = resp as? HTTPURLResponse, h.statusCode == 200,
+              let h = resp as? HTTPURLResponse else { return nil }
+        // 17.09 gece (Cursor e2e-2 #3): başka cihazdan giriş sonrası 401 burada "geçersiz GPX" gibi
+        // görünüyordu; `req` ile aynı davranış — oturumu kapat, kullanıcı yeniden girsin.
+        if h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.logout() }; return nil }
+        guard h.statusCode == 200,
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
               let f = (o["from"] as? NSNumber)?.doubleValue,
               let t = (o["to"] as? NSNumber)?.doubleValue else { return nil }

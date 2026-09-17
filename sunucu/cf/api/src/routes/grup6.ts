@@ -734,6 +734,14 @@ g.post('/api/iap/verify', authUser, async (c) => {
   // abonelikteydi). Google dalında token başka uid'e bağlıysa 409; iOS'ta bu kilit yoktu → sızmış bir
   // StoreKit JWS ikinci hesapta abonelikte premium açıyor, tüketilebilirde `already:true` ile sessiz geçiyordu.
   if (kayit && kayit.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+  // 17.09 gece (Cursor e2e-2 #2): yenilemede transactionId DEĞİŞİR, originalTransactionId sabit kalır →
+  // sızmış bir yenileme JWS'i (yeni tid, eski orig) ikinci hesaba premium açabilirdi. Kilit orig'e de bakar.
+  // (Family Sharing bu ürünlerde KAPALI — aile üyesi aynı orig'i paylaşmaz, meşru kullanıcı 409 yemez.)
+  const origId = pyStr(p.originalTransactionId)
+  if (origId && origId !== tid) {
+    const origKayit = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(origId).first<{ uid: string }>()
+    if (origKayit && origKayit.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+  }
 
   if (SUB_IDS.has(pid)) {
     const ultra = ULTRA_IDS.has(pid) ? 1 : 0     // premium abonelik → ultra False (main.py:1545)
@@ -764,10 +772,11 @@ g.post('/api/iap/verify', authUser, async (c) => {
       // NULL korunur, süre yalnız UZAR, daha uzun süren başka hak kısaltılmaz.
       yaz.push(db.prepare(
         `UPDATE users SET premium = 1,
-           ultra = CASE WHEN ?1 = 1 THEN 1
-                        WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
-                        WHEN COALESCE(premium_until, 0) > ?2 + 86400 THEN COALESCE(ultra, 0)
-                        ELSE 0 END,
+           ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
+           ultra_until = CASE WHEN ?1 = 1
+                              THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
+                                         ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
+                              ELSE ultra_until END,
            premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
                                 ELSE MAX(COALESCE(premium_until, 0), ?2) END,
            updated_at = ?3
@@ -882,11 +891,14 @@ g.post('/api/iap/google', authUser, async (c) => {
     // 🔴 FİKS 17.09 gece (Cursor e2e #11): yukarıdaki SELECT ile bu upsert arasında BAŞKA hesap aynı
     // token'ı yazdıysa (yarış) `SET uid = ?2` sahipliği ÇALARDI. Upsert yalnız aynı uid'de günceller;
     // 0 satır değişti = araya başka hesap girmiş → 409.
-    const upsert = await db.prepare(
+    await db.prepare(
       "INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, 'google-sub', ?3, ?3, ?3) " +
       "ON CONFLICT(tid) DO UPDATE SET pid = 'google-sub', ts = ?3, updated_at = ?3 WHERE iap_transactions.uid = ?2")
       .bind(tok, user, ts).run()
-    if ((upsert.meta?.changes ?? 1) === 0) hata(409, 'bu satin alma baska hesaba ait')
+    // Sahiplik kanıtı `meta.changes`'e değil satırın kendisine dayanır (Cursor e2e-2 #5: meta yoksa fail-open olurdu):
+    // upsert'ten sonra satır hâlâ başka uid'deyse yarışı o kazanmıştır → 409, hak yazılmaz.
+    const sahip = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(tok).first<{ uid: string }>()
+    if (!sahip || sahip.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
     await kullaniciGarantile(db, user)
     const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
     const pids = lineItems.map((li) => pyStr(nesne(li).productId))
@@ -903,10 +915,11 @@ g.post('/api/iap/google', authUser, async (c) => {
       // iap-abonelik.ts:118-128 ile AYNI CASE: NULL korunur, süre yalnız UZAR.
       await db.prepare(
         `UPDATE users SET premium = 1,
-           ultra = CASE WHEN ?1 = 1 THEN 1
-                        WHEN premium = 1 AND premium_until IS NULL THEN COALESCE(ultra, 0)
-                        WHEN COALESCE(premium_until, 0) > ?2 + 86400 THEN COALESCE(ultra, 0)
-                        ELSE 0 END,
+           ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
+           ultra_until = CASE WHEN ?1 = 1
+                              THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
+                                         ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
+                              ELSE ultra_until END,
            premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
                                 ELSE MAX(COALESCE(premium_until, 0), ?2) END,
            updated_at = ?3
@@ -963,8 +976,13 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
   const db = c.env.DB
   // İdempotensi anahtarı orderId (token DEĞİL) — yeniden-tüketimde farklı orderId gelebilir
   const oid = d.orderId === undefined ? tok : pyStr(d.orderId)
-  const eski = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(oid).first()
-  if (eski) return c.json({ ok: true, already: true })     // idempotent
+  const eski = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(oid).first<{ uid: string }>()
+  if (eski) {
+    // 17.09 gece (Cursor e2e-2 #4): iOS'taki sahiplik 409'unun Google simetrisi — aynı Play işlemi başka
+    // Move Log hesabından gelirse `already:true` ile sessizce consume'a gitmesin.
+    if (eski.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+    return c.json({ ok: true, already: true })     // idempotent
+  }
   const ts = simdi()
   // 🔴 FİKS 17.09 — ATOMİKLİK (Apple dalıyla simetrik): işlem kaydı ayrı bir INSERT'tü, hak ayrı
   // UPDATE. Araya kesinti girerse `already: true` yolu hakkı sonsuza dek engelliyordu. Artık ikisi

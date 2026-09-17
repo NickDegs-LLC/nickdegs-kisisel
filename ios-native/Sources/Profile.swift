@@ -1162,7 +1162,9 @@ struct PaywallSheet: View {
             return unit
         }()
         return Button {
-            Task { let ok = await iap.buy(p); premium = iap.purchased; if ok { dismiss() } else { failed = true } }
+            // 17.09 gece (Cursor e2e-2 #1): başarısızlıkta `premium`'a DOKUNMA — `apply` yerel bayrağı rapordan önce
+            // açıyor, `premium = iap.purchased` yazınca görünüm "Premium aktif" dalına geçip lastError'ı gizliyordu.
+            Task { let ok = await iap.buy(p); if ok { premium = iap.purchased; dismiss() } else { failed = true } }
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
