@@ -17,6 +17,7 @@ struct RecordBar: View {
     var body: some View {
         bar
             .task { loc.request() }
+            .onDisappear { loc.stop() }   // 17.09 gece: çubuk ekrandan çıkınca konum talebi kapansın (ok 7/24 yanıyordu)
             .confirmationDialog(L("Ne kaydı?","What are you recording?"), isPresented: $showTypePicker, titleVisibility: .visible) {
                 ForEach(RIDE_TYPES, id: \.id) { t in
                     Button(rideLabel(t.id)) { startRide(t.id) }
