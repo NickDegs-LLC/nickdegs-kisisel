@@ -188,7 +188,7 @@ function silmeSayfasi(tr) {
     s1: 'Silinen veriler',
     s1a: 'Hesab\u0131n ve profil bilgilerin (ad, kullan\u0131c\u0131 ad\u0131, avatar), arkada\u015f listen ve arkada\u015flik istekleri, sohbet mesajlar\u0131n, davet kodlar\u0131n, bildirim kay\u0131tlar\u0131n ve cihaz kimli\u011fin <b>an\u0131nda</b> silinir. Gezi kay\u0131tlar\u0131n, olu\u015fturdu\u011fun videolar ve GPS izlerin <b>en ge\u00e7 30 g\u00fcn i\u00e7inde</b> kal\u0131c\u0131 olarak silinir.',
     s2: 'Saklanan veriler',
-    s2a: 'Sat\u0131n alma ve abonelik kay\u0131tlar\u0131 (i\u015flem numaras\u0131, \u00fcr\u00fcn, tarih) yasal ve muhasebe y\u00fck\u00fcml\u00fcl\u00fckleri gere\u011fi saklan\u0131r. Bu kay\u0131tlar seni tan\u0131mlayan profil bilgisi i\u00e7ermez.',
+    s2a: 'Sat\u0131n alma ve abonelik kay\u0131tlar\u0131 (i\u015flem numaras\u0131, \u00fcr\u00fcn, tarih) yasal ve muhasebe y\u00fck\u00fcml\u00fcl\u00fckleri gere\u011fi saklan\u0131r. Bu kay\u0131tlarda ad\u0131n, kullan\u0131c\u0131 ad\u0131n, e-postan veya avatar\u0131n yer almaz; yaln\u0131zca iade ve abonelik e\u015fle\u015ftirmesi i\u00e7in gereken i\u00e7 hesap numaras\u0131 kal\u0131r.',
     i: 'Silme geri al\u0131namaz. Aktif bir aboneli\u011fin varsa hesab\u0131 silmek aboneli\u011fi iptal etmez \u2014 iptali App Store veya Google Play \u00fczerinden yapman gerekir.',
     e: '\u0130leti\u015fim',
   } : {
@@ -200,7 +200,7 @@ function silmeSayfasi(tr) {
     s1: 'What is deleted',
     s1a: 'Your account and profile (name, username, avatar), friends and friend requests, chat messages, invite codes, notification records and device identifier are deleted <b>immediately</b>. Your ride records, generated videos and GPS traces are permanently deleted <b>within 30 days</b>.',
     s2: 'What is kept',
-    s2a: 'Purchase and subscription records (transaction id, product, date) are retained for legal and accounting obligations. These records contain no identifying profile data.',
+    s2a: 'Purchase and subscription records (transaction id, product, date) are retained for legal and accounting obligations. They contain no name, username, email or avatar — only the internal account number needed to match refunds and subscriptions.',
     i: 'Deletion cannot be undone. Deleting your account does not cancel an active subscription \u2014 cancel it in the App Store or Google Play.',
     e: 'Contact',
   }
