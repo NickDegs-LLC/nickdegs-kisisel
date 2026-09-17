@@ -696,6 +696,33 @@ g.post('/api/iap/verify', authUser, async (c) => {
   const pid = pyStr(p.productId)
   const tid = pyStr(p.transactionId)
   if (!pid || !tid) hata(400, 'eksik işlem')
+
+  // 🔒 SATIN ALMAYI APPLE'A KİTLEME (17.09, Barış: "satın alımı Apple'a kitleyelim").
+  // Ürünün kendisi zaten Apple StoreKit JWS'iyle doğrulandı (yukarıda). Buradaki EK kapı,
+  // işlemi bildiren İSTEMCİNİN gerçek/kurcalanmamış bir Apple uygulaması olmasını şart koşar
+  // (App Attest ile doğrulanmış anahtarı var mı).
+  //
+  // ⚠️ ŞU AN SESSİZ MOD — BİLEREK. Ölçüm (17.09): attest_keys 0 satır, 5 premium kullanıcının
+  // yalnız 1'inde attest_pubkey var. Sert açılsaydı Apple satın almalarının %100'ü DURURDU.
+  // Bu yüzden yalnız ÖLÇER ve loglar. Sahada attest_keys dolup 'iap-attest-yok' sayacı sıfıra
+  // yaklaşınca KV'ye IAP_ATTEST_ZORLA=1 yazmak yeterli; kod değişikliği gerekmez.
+  // NOT: bu uç YALNIZ Apple'dır (storekitJwsDogrula). Android ayrı uçlardan geçer
+  // (/api/iap/google, /api/iap/google/boost) ve bu kapıdan ETKİLENMEZ.
+  const iapAttestZorla = await kvBayrak(c.env, 'IAP_ATTEST_ZORLA')
+  const attestVar = await db.prepare(
+    `SELECT 1 AS x FROM attest_keys WHERE uid = ?1
+     UNION ALL SELECT 1 FROM users WHERE uid = ?1 AND attest_pubkey IS NOT NULL LIMIT 1`)
+    .bind(user).first<{ x: number }>()
+  if (!attestVar) {
+    console.log(`iap-attest YOK user=${user} pid=${pid} zorla=${iapAttestZorla}`)
+    await attStat(db, 'ios', 'iap-attest-yok')
+    // zorlama açıkken: para Apple'da tahsil edilmiş olabilir ama hak VERİLMEZ ve istemci
+    // t.finish() ETMEZ (IAP.report false döner) → StoreKit işlemi sonraki açılışta tekrar sunar.
+    if (iapAttestZorla) hata(403, 'cihaz doğrulanamadı; uygulamayı kapatıp açın ve tekrar deneyin')
+  } else {
+    await attStat(db, 'ios', 'iap-attest-var')
+  }
+
   await kullaniciGarantile(db, user)
   const prof = await getUser(db, user)
   const kayit = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(tid).first<{ uid: string }>()
