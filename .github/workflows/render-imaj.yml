@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
     inputs:
       motor:
-        description: 'render (3B, sunucu/render-worker) | tactical (taktik, sunucu/cf/tactical-runpod)'
+        description: 'render (3B, sunucu/render-worker)'
         required: true
         type: choice
-        options: [render, tactical]
+        options: [render]
       dockerfile:
         description: 'Dockerfile adı (ör. Dockerfile.v152)'
         required: true
@@ -56,19 +56,18 @@ jobs:
           set -euo pipefail
           case "$MOTOR" in
             render) CTX=sunucu/render-worker ;;
-            tactical) CTX=sunucu/cf/tactical-runpod ;;
-            *) echo "::error::motor render|tactical"; exit 1 ;;
+            *) echo "::error::motor yalnız 'render' olabilir (18.09: taktik hattı kaldırıldı)"; exit 1 ;;
           esac
           [[ "$DF" =~ ^Dockerfile(\.[A-Za-z0-9_-]+)?$ ]] || { echo "::error::geçersiz dockerfile adı"; exit 1; }
           [[ "$ET" =~ ^v[0-9]+[A-Za-z0-9._-]*$ ]] || { echo "::error::etiket vNNN biçiminde olmalı"; exit 1; }
           [ -f "$CTX/$DF" ] || { echo "::error::$CTX/$DF yok"; exit 1; }
-          if [ -n "$BASE" ] && ! [[ "$BASE" =~ ^ghcr\.io/nickdegs/movelog-(render|tactical):[A-Za-z0-9._-]+$ ]]; then
+          if [ -n "$BASE" ] && ! [[ "$BASE" =~ ^ghcr\.io/nickdegs/movelog-render:[A-Za-z0-9._-]+$ ]]; then
             echo "::error::BASE yalnız ghcr.io/nickdegs/movelog-* olabilir"; exit 1
           fi
           echo "ctx=$CTX" >> "$GITHUB_OUTPUT"
           echo "imaj=ghcr.io/nickdegs/movelog-$MOTOR:$ET" >> "$GITHUB_OUTPUT"
 
-      - name: Disk aç (tactical tabanı ~10 GB)
+      - name: Disk aç (imaj tabanı büyük)
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           docker system prune -af >/dev/null

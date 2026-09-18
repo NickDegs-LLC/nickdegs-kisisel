@@ -9,8 +9,6 @@ Mac'ten (repo kökü, örn. `~/claude/matrix/nickdegs-kisisel`). Sırlar:
 ```bash
 bash sunucu/modal/gecis-yap.sh                 # uygular + dağıtır + doğrular
 bash sunucu/modal/gecis-yap.sh --geri          # RunPod'a geri döner (aynı hızda)
-bash sunucu/modal/gecis-yap.sh --yalniz-taktik # yalnız taktik (önce bu)
-bash sunucu/modal/gecis-yap.sh --yalniz-render # sonra 3B
 bash sunucu/modal/gecis-yap.sh --deploy-atla   # kaynakta Modal dalı + MODAL_SECRET canlıysa dağıtımı atla
 bash sunucu/modal/gecis-yap.sh --durum
 ```
@@ -41,19 +39,20 @@ Bayrak KV'de (`dispatch:motor`), kod değil → geri dönüş **yeniden dağıt�
 - Sır: `~/.nickdegs/anahtarlar/movelog-sunucu/modal-dispatch.conf` (600) + Modal `movelog-dispatch`
 
 Yanıt şekilleri RunPod ile **birebir aynı** (`{"id":...,"status":"IN_QUEUE"}` / `{"status":"COMPLETED","output":{...}}`).
-Dispatch her dalı KV motor bayrağına göre seçer: 3B `dispatch:motor` (`runpodGonder` / `modalGonder`);
-taktik `dispatch:motor-tac` doluysa onu, yoksa ana bayrağı (`taktikGonder` / `taktikModalGonder`).
-Geçiş sırası: önce yalnız taktik (`motor-tac=modal`), sonra 3B (`motor=modal`).
+Dispatch tek hattı KV `dispatch:motor` bayrağına göre seçer (`runpodGonder` / `modalGonder`).
+18.09: taktik hattı ve `dispatch:motor-tac` override'ı kaldırıldı — o anahtar KV'de duruyor
+ama HİÇBİR kod okumuyor.
 
 ---
 
 ## ⚠️ Geçmeden önce bilinmesi gerekenler
 
-1. ~~**Taktik dalı (`movelog-tactical`) TAŞINMADI.**~~
-   **✅ GÜNCEL (2026-09-14): taktik de taşındı** — `movelog_tactical.py` + `TAKTIK-GECIS.md`.
-   Artık iki hat da KV bayrağını izliyor, dolayısıyla "bakiye sıfırlanırsa taktik durur" riski
-   kalmadı. **Geçiş Mac'ten `sunucu/modal/gecis-yap.sh` ile:** betik `sunucu/cf/dispatch/src/index.ts`
-   içinde `taktikModalGonder` yoksa çıkar. Ayrıntı ve `movelog-tactical` sırrının içeriği: `TAKTIK-GECIS.md`.
+1. **Taktik hat 18.09'da KOMPLE KALDIRILDI.** `movelog_tactical.py`, `TAKTIK-GECIS.md`,
+   `cf/tactical-runpod/` ve dispatch'teki taktik dalı silindi; KV `dispatch:motor-tac` bayrağı
+   artık HİÇBİR kod tarafından okunmuyor. Tek hat kaldı: 3B (`movelog-render`), bayrağı
+   `dispatch:motor`. **Geçiş Mac'ten `sunucu/modal/gecis-yap.sh` ile.**
+   ⚠️ RunPod `movelog-tactical` endpoint'i (`yvkajd6x7mp1lj`) ve Modal taktik uygulaması
+   HÂLÂ AYAKTA — sunucuda RunPod/Modal kimliği olmadığı için sökülemedi, Barış'ta.
 2. **`_redispatch` Modal'da çalışmaz** (bilerek: `RUNPOD_API_KEY` sırra konmadı, yoksa Modal'dan
    RunPod'a iş sıçrardı). Karşılığı: GL bozuksa `Isci.render` exception atar → Modal taze
    konteynerde 2 kez dener (`modal.Retries(max_retries=2)`).

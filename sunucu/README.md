@@ -10,7 +10,7 @@ o güne dek kod yalnızca üretim sunucusunda (`/opt/matrix/...`) duruyordu, hi�
 
 | Dizin | Karşılığı (sunucu) | Ne işe yarar |
 |---|---|---|
-| `cf/` | `/opt/matrix/cf` | **Canlı backend** — Cloudflare Workers: `api` (kisisel-api.nickdegs.com), `gps` (gpsdata…), `dispatch`, `cron`, `harita-katman`, `tactical-runpod`. `db/migrations` = D1 şeması, `contracts/` = uç nokta sözleşmeleri, `tools/` = kesim/dağıtım betikleri |
+| `cf/` | `/opt/matrix/cf` | **Canlı backend** — Cloudflare Workers: `api` (kisisel-api.nickdegs.com), `gps` (gpsdata…), `dispatch`, `cron`, `harita-katman`. `db/migrations` = D1 şeması, `contracts/` = uç nokta sözleşmeleri, `tools/` = kesim/dağıtım betikleri |
 | `render-worker/` | `/opt/matrix/render-worker` | 3B/taktik video render motoru (RunPod imajı, v151) |
 | `modal/` | `/opt/matrix/modal` | Modal.com işçisi (RunPod yedeği; bakiye bitince devreye alınacak) |
 | `scripts/` | `/opt/matrix/scripts` | harita-proxy, pmtiles okuyucu, sağlık taraması, TTS ısıtma |

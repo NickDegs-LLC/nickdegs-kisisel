@@ -66,7 +66,9 @@ export const INCELEME = new Set(['appreview', 'appreview2'])
 // kullanımı keserdi. Asıl amaç maliyet değil, `boost` ürününü işlevli kılmak.
 const DAILY_VIDEO_CAP = 15                  // düz/kuşbakışı: ucuz ama sonsuz döngüye karşı tavan
 const DAILY_3D_CAP = 6                      // ölçülen zirve 5 → tavan 6
-const DAILY_AUTO_CAP = 1                    // Otonom en uzun render (hata metni zaten "günde 1" diyor)
+const DAILY_AUTO_CAP = 3                    // 18.09 Barış: "günde bir çok az" → 3.
+// ⚠️ Aylık tavanı ARTIRMAZ: KV butce-premium-usd 3,00 ÷ auto 0,24 ≈ ayda 12 video.
+// Günlük 3, kullanıcının ayı 4 günde bitirmesine izin verir; toplam yine ~12.
 // 🔴 FİKS 05.09 — MALİYET MODELİ ÖLÇÜME OTURTULDU (uçtan uca tarama bulgusu).
 // ÖLÇÜM: D1 `gpu_costs` → 912 GPU saniyesi / 1 adet 3B video (≈15,2 dk). RunPod flex fiyatlarıyla
 // ≈ $0,19-0,28. Kodda `'3d': 0.033` yazıyordu — gerçeğin 6-9 KATI DÜŞÜK. `flat: 0.0` ise
@@ -474,7 +476,7 @@ function kapasiteHatasi(why: string): never {
   if (why === 'butce')
     hata(429, "Bu ayki 3B üretim payını doldurdun 🙏 Kuşbakışı ve Düz görünüm hâlâ açık — onlar çok daha az pay kullanır, bu ay rahatça üretmeye devam edebilirsin. Payın her ayın 1'inde sıfırlanır.")
   if (why === 'auto')
-    hata(429, `Günlük Otonom limiti doldu (${DAILY_AUTO_CAP}/gün). Otonom video çok uzun olduğu için günde 1; Kısa/Orta/Uzun ile devam edebilir veya yarın tekrar Otonom deneyebilirsin.`)
+    hata(429, `Günlük Otonom limiti doldu (${DAILY_AUTO_CAP}/gün). Otonom en uzun render olduğu için günlük sınırlı; Kısa/Orta/Uzun ile devam edebilir veya yarın tekrar Otonom deneyebilirsin.`)
   if (why === '3d')
     hata(429, `Günlük 3D limiti doldu (${DAILY_3D_CAP}/gün). Düz/Flyover ile devam edebilir veya yarın 3D deneyebilirsin.`)
   hata(429, `Günlük video limiti doldu (${DAILY_VIDEO_CAP}/gün). Yarın tekrar deneyebilirsin.`)

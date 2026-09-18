@@ -1,4 +1,0 @@
-# v6 — SIDECAR PASSTHROUGH (v142 ile aynı düzeltme, taktik tarafı)
-ARG BASE=ghcr.io/nickdegs/movelog-tactical:v5
-FROM ${BASE}
-COPY harita_yan.py /app/harita_yan.py

@@ -1,5 +1,5 @@
 # Modal render uygulamaları → dağıtım (2026-09-15). Eskiden Mac'ten `modal deploy`; artık Mac gerekmez.
-# push (main): movelog_render.py / movelog_tactical.py değişince o uygulama dağıtılır + saglik() koşar.
+# push (main): movelog_render.py değişince uygulama dağıtılır + saglik() koşar.
 # Sırlar: MODAL_TOKEN_ID / MODAL_TOKEN_SECRET (daclen10 çalışma alanı). Modal sırları (ghcr, movelog-*) Modal'da durur.
 name: Modal render → dağıtım
 
@@ -8,14 +8,13 @@ on:
     branches: [main]
     paths:
       - 'sunucu/modal/movelog_render.py'
-      - 'sunucu/modal/movelog_tactical.py'
   workflow_dispatch:
     inputs:
       uygulama:
         description: 'Dağıtılacak Modal uygulaması'
         required: true
         type: choice
-        options: [render, tactical, ikisi]
+        options: [render]
       saglik:
         description: 'Dağıtımdan sonra saglik() koş (3B: kısa T4 GPU)'
         required: false
@@ -60,13 +59,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$OLAY" = "workflow_dispatch" ]; then
-            case "$SECIM" in render) U="render" ;; tactical) U="tactical" ;; ikisi) U="render tactical" ;; esac
+            case "$SECIM" in render) U="render" ;; *) echo "::error::yalnız 'render'"; exit 1 ;; esac
             S="$SAGLIK"
           else
             DEG=$(git diff --name-only "$ONCE" "$GITHUB_SHA" -- sunucu/modal)
             U=""
             echo "$DEG" | grep -qx 'sunucu/modal/movelog_render.py' && U="$U render"
-            echo "$DEG" | grep -qx 'sunucu/modal/movelog_tactical.py' && U="$U tactical"
             S="true"
           fi
           echo "uygulamalar=$U" >> "$GITHUB_OUTPUT"
