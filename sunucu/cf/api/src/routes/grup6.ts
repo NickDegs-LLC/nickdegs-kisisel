@@ -236,19 +236,8 @@ async function profileOf(env: Env, db: D1Database, u: string): Promise<Record<st
   if (p?.avatar_json) {
     try { avatar = JSON.parse(p.avatar_json) } catch { avatar = null }
   }
-  const ultraHam = !!Number(p?.ultra ?? 0)
   const adminHam = !!Number(p?.admin ?? 0)
-  // free_tactical: kill-switch (config, varsayılan AÇIK) + hesap-1 + cihaz-1 (main.py:1406)
-  let ftAcik = true
-  try {
-    const cfg = await db.prepare("SELECT value_json FROM config WHERE key = 'free_tactical_enabled'").first<{ value_json: string }>()
-    if (cfg) { try { ftAcik = pyTruthy(JSON.parse(cfg.value_json)) } catch { ftAcik = true } }
-  } catch { ftAcik = true }
-  let cihazKullanildi = false
-  if (p?.attest_key) {
-    const d = await db.prepare('SELECT 1 AS x FROM free_tactical_devices WHERE attest_key = ?1').bind(p.attest_key).first()
-    cihazKullanildi = d !== null
-  }
+  // 18.09: ultra / sokak_hak / free_tactical alanlari kaldirildi (Ultra katmani + sokak modu cikti).
   const svOff = await svKapali(env)   // tek KV anahtarı 'sv_off' (lib/ortak; bütünleştirme 08-30)
   return {
     username: u,
@@ -256,12 +245,9 @@ async function profileOf(env: Env, db: D1Database, u: string): Promise<Record<st
     handle: pyTruthy(p?.handle) ? String(p!.handle) : '',
     avatar: pyTruthy(avatar) ? avatar : { type: 'initials' },
     premium: !!Number(p?.premium ?? 0),
-    ultra: ultraHam || adminHam,                       // Ultra tier (admin bypass)
     sv_off: svOff,                                     // /opt/movelog/data/sv-kapali → KV bayrağı
-    sokak_hak: Math.trunc(Number(p?.sokak_hak ?? 0) || 0),
     video_hak: Math.trunc(Number(p?.video_hak ?? 0) || 0),
     sokak_hediye: false,                               // her zaman False (main.py:1400-1405)
-    free_tactical: !!(ftAcik && !(ultraHam || adminHam) && !Number(p?.free_tactical_used ?? 0) && (!p?.attest_key || !cihazKullanildi)),
     admin: adminHam,
   }
 }

@@ -134,43 +134,23 @@ async function resolveUser(db: D1Database, s: unknown): Promise<string | null> {
 
 type ProfilSatir = {
   name: string | null; handle: string | null; avatar_json: string | null
-  premium: number | null; ultra: number | null; admin: number | null
-  sokak_hak: number | null; video_hak: number | null
-  free_tactical_used: number | null; attest_key: string | null; lang: string | null
+  premium: number | null; admin: number | null
+  video_hak: number | null; lang: string | null
 }
 
 /** main.py _profile_of (1389-1407) birebir — alan KÜMESİ aynen korunur.
  *  Dönen `satir` GET /api/profile'ın lang-karşılaştırması için de kullanılır. */
 async function profilYukle(env: Env, uid: string): Promise<{ satir: ProfilSatir | null; profil: Record<string, unknown> }> {
-  const [uRes, cRes] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT name, handle, avatar_json, premium, ultra, admin, sokak_hak, video_hak,
-              free_tactical_used, attest_key, lang FROM users WHERE uid = ?1`).bind(uid),
-    env.DB.prepare(`SELECT value_json FROM config WHERE key = 'free_tactical_enabled'`),
-  ])
-  const satir = (uRes.results[0] as ProfilSatir | undefined) ?? null
-  const cfgSatir = cRes.results[0] as { value_json: string } | undefined
-
-  // kill-switch: db.get('free_tactical_enabled', True) — kayıt yoksa AÇIK (main.py:1406)
-  let ftAcik = true
-  if (cfgSatir) { try { ftAcik = !!JSON.parse(cfgSatir.value_json) } catch { ftAcik = true } }
+  // 18.09: free_tactical kill-switch sorgusu kalkinca batch tek sorguya indi.
+  const satir = await env.DB.prepare(
+    `SELECT name, handle, avatar_json, premium, admin, video_hak, lang
+       FROM users WHERE uid = ?1`).bind(uid).first<ProfilSatir>()
 
   // avatar: p.get('avatar') or {'type':'initials'} — Python'da boş obje de falsy
   let avatar: unknown = null
   if (satir?.avatar_json) { try { avatar = JSON.parse(satir.avatar_json) } catch { avatar = null } }
   if (!avatar || typeof avatar !== 'object' || Object.keys(avatar as object).length === 0) {
     avatar = { type: 'initials' }
-  }
-
-  const ultraVeyaAdmin = !!(satir?.ultra || satir?.admin)   // 'ultra' alanı = ultra||admin (main.py:1395)
-
-  // free_tactical: kill-switch + hesap-1 + cihaz-1 (main.py:1406); Python'ın tembel `and`
-  // sırası korunur — cihaz sorgusu yalnız öncekiler geçerse atılır.
-  let freeTactical = ftAcik && !ultraVeyaAdmin && !satir?.free_tactical_used
-  if (freeTactical && satir?.attest_key) {
-    const cihaz = await env.DB.prepare('SELECT 1 AS x FROM free_tactical_devices WHERE attest_key = ?1')
-      .bind(satir.attest_key).first()
-    freeTactical = cihaz === null
   }
 
   // Street View kill-switch dosyası (main.py:1398) → lib/ortak svKapali (tek KV anahtarı 'sv_off'):
@@ -183,12 +163,9 @@ async function profilYukle(env: Env, uid: string): Promise<{ satir: ProfilSatir 
     handle: satir?.handle || '',
     avatar,
     premium: !!satir?.premium,
-    ultra: ultraVeyaAdmin,
     sv_off: svOff,
-    sokak_hak: Math.trunc(Number(satir?.sokak_hak ?? 0)) || 0,
     video_hak: Math.trunc(Number(satir?.video_hak ?? 0)) || 0,
     sokak_hediye: false,   // SABİT false — eski sürüm uyumluluğu, alan KALDIRILAMAZ (main.py:1400-1405)
-    free_tactical: freeTactical,
     admin: !!satir?.admin,
   }
   return { satir, profil }

@@ -89,15 +89,14 @@ function cmpPy(a: string, b: string): number {
 // _profile_of için gereken users kolon alt-kümesi (main.py:1388-1410)
 type ProfilKaynak = {
   uid: string; name: string | null; handle: string | null; avatar_json: string | null
-  premium: number | null; ultra: number | null; admin: number | null
-  sokak_hak: number | null; video_hak: number | null
-  free_tactical_used: number | null; attest_key: string | null
+  premium: number | null; admin: number | null
+  video_hak: number | null
 }
 
 type ProfilOut = {
   username: string; name: string; handle: string; avatar: Record<string, unknown>
-  premium: boolean; ultra: boolean; sv_off: boolean; sokak_hak: number; video_hak: number
-  sokak_hediye: false; free_tactical: boolean; admin: boolean
+  premium: boolean; sv_off: boolean; video_hak: number
+  sokak_hediye: false; admin: boolean
   status?: 'friend' | 'outgoing' | 'incoming' | 'none'
 }
 
@@ -105,23 +104,17 @@ type ProfilOut = {
  * main.py:1388-1410 _profile_of eşleniği (satır yoksa Python'daki boş-profil davranışı).
  * svOff/ftEnabled/ftDevices istek başına BİR kez okunur, satırlara dağıtılır (sözleşme TUZAK-1).
  */
-function profileOf(uid: string, r: ProfilKaynak | undefined,
-                   svOff: boolean, ftEnabled: boolean, ftDevices: Set<string>): ProfilOut {
-  const ultra = !!r?.ultra, admin = !!r?.admin
-  const attest = r?.attest_key || ''
+function profileOf(uid: string, r: ProfilKaynak | undefined, svOff: boolean): ProfilOut {
+  const admin = !!r?.admin
   return {
     username: uid,
     name: r?.name || uid,                             // p.get("name") or u
     handle: r?.handle || '',
     avatar: avatarOf(r?.avatar_json),
     premium: !!r?.premium,
-    ultra: ultra || admin,                            // Ultra tier (admin bypass) — main.py:1393
     sv_off: svOff,
-    sokak_hak: Math.trunc(Number(r?.sokak_hak ?? 0) || 0),
     video_hak: Math.trunc(Number(r?.video_hak ?? 0) || 0),
     sokak_hediye: false,                              // 2026-08-28: her zaman False (main.py:1404)
-    free_tactical: !!(ftEnabled && !(ultra || admin) && !r?.free_tactical_used
-                      && (!attest || !ftDevices.has(attest))),
     admin,
   }
 }
@@ -300,21 +293,17 @@ g.get('/api/users/find', authUser, async (c) => {
   const qqLen = [...qq].length      // Python len() = kod NOKTASI sayısı; JS .length UTF-16 birimi (emoji sorguda sapar)
   if (qqLen < 2) return c.json({ users: [] })
   const db = c.env.DB
-  const [frRes, outRes, inRes, ftRes, usersRes] = await db.batch([
+  const [frRes, outRes, inRes, usersRes] = await db.batch([
     db.prepare('SELECT friend_uid FROM friends WHERE uid = ?1').bind(user),
     db.prepare('SELECT target_uid FROM friend_requests WHERE requester_uid = ?1').bind(user),   // my_out
     db.prepare('SELECT requester_uid FROM friend_requests WHERE target_uid = ?1').bind(user),   // my_in
-    db.prepare(`SELECT value_json FROM config WHERE key = 'free_tactical_enabled'`),
     db.prepare(
-      `SELECT uid, name, handle, avatar_json, premium, ultra, admin,
-              sokak_hak, video_hak, free_tactical_used, attest_key
+      `SELECT uid, name, handle, avatar_json, premium, admin, video_hak
          FROM users ORDER BY rowid`),                                     // dict iterasyon sırası eşleniği
   ])
   const myFriends = new Set((frRes.results as { friend_uid: string }[]).map((r) => r.friend_uid))
   const myOut = new Set((outRes.results as { target_uid: string }[]).map((r) => r.target_uid))
   const myIn = new Set((inRes.results as { requester_uid: string }[]).map((r) => r.requester_uid))
-  const ftCfg = ftRes.results[0] as { value_json: string } | undefined
-  const ftEnabled = ftCfg ? !!parseJson<unknown>(ftCfg.value_json, true) : true  // db.get(..., True)
   const svOff = await svKapali(c.env)            // lib/ortak — tek KV anahtarı 'sv_off'; hata yutulur (os.path.exists eşleniği)
 
   const eslesen: ProfilKaynak[] = []
@@ -327,18 +316,8 @@ g.get('/api/users/find', authUser, async (c) => {
     if (eslesen.length >= 15) break
   }
 
-  // free_tactical cihaz-dedup: yalnız eşleşenlerin attest anahtarları sorgulanır
-  const anahtarlar = eslesen.map((r) => r.attest_key).filter((k): k is string => !!k)
-  const ftDevices = new Set<string>()
-  if (anahtarlar.length > 0) {
-    const dp = anahtarlar.map((_, i) => `?${i + 1}`).join(',')
-    const dRes = await db.prepare(`SELECT attest_key FROM free_tactical_devices WHERE attest_key IN (${dp})`)
-      .bind(...anahtarlar).all<{ attest_key: string }>()
-    for (const r of dRes.results) ftDevices.add(r.attest_key)
-  }
-
   const out: ProfilOut[] = eslesen.map((r) => {
-    const p = profileOf(r.uid, r, svOff, ftEnabled, ftDevices)
+    const p = profileOf(r.uid, r, svOff)
     p.status = myFriends.has(r.uid) ? 'friend'
              : myOut.has(r.uid) ? 'outgoing'
              : myIn.has(r.uid) ? 'incoming' : 'none'

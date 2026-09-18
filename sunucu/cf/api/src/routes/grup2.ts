@@ -162,9 +162,9 @@ async function gunlukKm(db: D1Database, uid: string, t0: number): Promise<number
 // ---------------------------------------------------------------------------
 type Profil = {
   username: string; name: string; handle: string; avatar: unknown
-  premium: boolean; ultra: boolean; sv_off: boolean
-  sokak_hak: number; video_hak: number; sokak_hediye: false
-  free_tactical: boolean; admin: boolean
+  premium: boolean; sv_off: boolean
+  video_hak: number; sokak_hediye: false
+  admin: boolean
 }
 
 async function profilleri(env: Env, uids: string[]): Promise<Map<string, Profil>> {
@@ -172,33 +172,17 @@ async function profilleri(env: Env, uids: string[]): Promise<Map<string, Profil>
   if (uids.length === 0) return out
   type Satir = {
     uid: string; name: string | null; handle: string | null; avatar_json: string | null
-    premium: number | null; ultra: number | null; admin: number | null
-    sokak_hak: number | null; video_hak: number | null
-    free_tactical_used: number | null; attest_key: string | null
+    premium: number | null; admin: number | null
+    video_hak: number | null
   }
   const ph = uids.map((_, i) => `?${i + 1}`).join(', ')
   const rows = ((await env.DB.prepare(
-    `SELECT uid, name, handle, avatar_json, premium, ultra, admin, sokak_hak, video_hak,
-            free_tactical_used, attest_key
+    `SELECT uid, name, handle, avatar_json, premium, admin, video_hak
        FROM users WHERE uid IN (${ph})`).bind(...uids).all<Satir>()).results ?? [])
   const satirlar = new Map(rows.map((r) => [r.uid, r]))
-  // bedava-taktik kill-switch (config; yoksa varsayılan AÇIK — main.py:1406 db.get(..., True))
-  let ftAcik = true
-  const cfg = await env.DB.prepare("SELECT value_json FROM config WHERE key = 'free_tactical_enabled'")
-    .first<{ value_json: string }>()
-  if (cfg) { try { ftAcik = !!JSON.parse(cfg.value_json) } catch { ftAcik = true } }
+  // 18.09: free_tactical kill-switch + cihaz-dedup KALDIRILDI (Ultra/taktik cikti).
   // sv-kapali dosya bayrağı → lib/ortak svKapali (tek KV anahtarı 'sv_off'; bütünleştirme 08-30)
   const svOff = await svKapali(env)
-  // free_tactical cihaz-dedup (free_tactical_devices tablosu)
-  const cihazSeti = new Set<string>()
-  const anahtarlar = rows.map((r) => r.attest_key).filter((k): k is string => !!k)
-  if (anahtarlar.length) {
-    const ph2 = anahtarlar.map((_, i) => `?${i + 1}`).join(', ')
-    const dr = ((await env.DB.prepare(
-      `SELECT attest_key FROM free_tactical_devices WHERE attest_key IN (${ph2})`)
-      .bind(...anahtarlar).all<{ attest_key: string }>()).results ?? [])
-    for (const d of dr) cihazSeti.add(d.attest_key)
-  }
   for (const u of uids) {
     const r = satirlar.get(u)
     let avatar: unknown = null
@@ -212,13 +196,9 @@ async function profilleri(env: Env, uids: string[]): Promise<Map<string, Profil>
       handle: r?.handle || '',
       avatar,
       premium: !!r?.premium,
-      ultra: !!(r?.ultra || r?.admin),               // _profile_of'ta admin ultra SAYILIR (1395)
       sv_off: svOff,
-      sokak_hak: Math.trunc(Number(r?.sokak_hak ?? 0)) || 0,
       video_hak: Math.trunc(Number(r?.video_hak ?? 0)) || 0,
       sokak_hediye: false,                            // kalıcı kural (main.py:1405)
-      free_tactical: !!(ftAcik && !(r?.ultra || r?.admin) && !r?.free_tactical_used
-        && (!r?.attest_key || !cihazSeti.has(r.attest_key))),
       admin: !!r?.admin,
     })
   }

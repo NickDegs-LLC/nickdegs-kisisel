@@ -228,33 +228,19 @@ async function smsfixGet(env: Env, phone: string): Promise<string | null> {
 type ProfilBaglam = {
   satirlar: Map<string, UserRow>
   svOff: boolean
-  ftAcik: boolean
-  ftCihazlar: Set<string>
 }
 
 async function profilBaglam(env: Env, uids: string[]): Promise<ProfilBaglam> {
   const benzersiz = [...new Set(uids)].filter(Boolean)
   const satirlar = new Map<string, UserRow>()
-  if (!benzersiz.length) return { satirlar, svOff: false, ftAcik: true, ftCihazlar: new Set() }
+  if (!benzersiz.length) return { satirlar, svOff: false }
   const ph = benzersiz.map((_, i) => `?${i + 1}`).join(',')
   const r = await env.DB.prepare(`SELECT * FROM users WHERE uid IN (${ph})`).bind(...benzersiz).all<UserRow>()
   for (const row of r.results) satirlar.set(row.uid, row)
   // sv-kapali dosya bayrağı → lib/ortak svKapali (tek KV anahtarı 'sv_off'; main.py:1398 eşleniği)
   const svOff = await svKapali(env)
-  // kill-switch: anahtar hiç yazılmamışsa AÇIK (main.py:1406 get(..., True))
-  let ftAcik = true
-  const cfg = await env.DB.prepare("SELECT value_json FROM config WHERE key = 'free_tactical_enabled'")
-    .first<{ value_json: string }>()
-  if (cfg) { try { ftAcik = !!JSON.parse(cfg.value_json) } catch { ftAcik = true } }
-  const anahtarlar = [...satirlar.values()].map((x) => x.attest_key).filter((x): x is string => !!x)
-  const ftCihazlar = new Set<string>()
-  if (anahtarlar.length) {
-    const ph2 = anahtarlar.map((_, i) => `?${i + 1}`).join(',')
-    const c2 = await env.DB.prepare(`SELECT attest_key FROM free_tactical_devices WHERE attest_key IN (${ph2})`)
-      .bind(...anahtarlar).all<{ attest_key: string }>()
-    for (const row of c2.results) ftCihazlar.add(row.attest_key)
-  }
-  return { satirlar, svOff, ftAcik, ftCihazlar }
+  // 18.09: free_tactical kill-switch + cihaz-dedup KALDIRILDI (Ultra/taktik cikti).
+  return { satirlar, svOff }
 }
 
 function profilOf(b: ProfilBaglam, u: string) {
@@ -267,13 +253,9 @@ function profilOf(b: ProfilBaglam, u: string) {
     handle: p?.handle || '',
     avatar: avatar || { type: 'initials' },
     premium: !!p?.premium,
-    ultra: !!(p?.ultra || p?.admin),                 // Ultra tier (admin bypass, main.py:1395)
     sv_off: b.svOff,
-    sokak_hak: int0(p?.sokak_hak ?? 0),
     video_hak: int0(p?.video_hak ?? 0),
     sokak_hediye: false,                             // TUZAK: HER ZAMAN false (eski sürüm uyumu, main.py:1405)
-    free_tactical: !!(b.ftAcik && !(p?.ultra || p?.admin) && !p?.free_tactical_used &&
-      (!p?.attest_key || !b.ftCihazlar.has(p.attest_key))),  // kill-switch + hesap-1 + cihaz-1 (main.py:1406)
     admin: !!p?.admin,
   }
 }

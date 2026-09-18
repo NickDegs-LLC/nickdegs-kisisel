@@ -234,33 +234,16 @@ async function profileOf(env: Env, u: string): Promise<Record<string, unknown>> 
   if (p?.avatar_json) { try { avatar = JSON.parse(p.avatar_json) } catch { avatar = null } }
   // sv-kapali bayrak dosyası → lib/ortak svKapali (tek KV anahtarı 'sv_off'; anahtar VARSA kapalı)
   const svOff = await svKapali(env)
-  // kill-switch: config.free_tactical_enabled — yoksa TRUE (db.get(..., True))
-  let ftAcik = true
-  try {
-    const row = await env.DB.prepare("SELECT value_json FROM config WHERE key = 'free_tactical_enabled'")
-      .first<{ value_json: string }>()
-    if (row) ftAcik = Boolean(JSON.parse(row.value_json))
-  } catch { ftAcik = true }
-  // cihaz-dedup: attest_key free_tactical_devices'ta mı?
-  let cihazKullandi = false
-  if (p?.attest_key) {
-    const d = await env.DB.prepare('SELECT 1 AS x FROM free_tactical_devices WHERE attest_key = ?1')
-      .bind(p.attest_key).first()
-    cihazKullandi = d !== null
-  }
+  // 18.09: ultra / sokak_hak / free_tactical alanlari kaldirildi (Ultra katmani + sokak modu cikti).
   return {
     username: u,
     name: p?.name || u,
     handle: p?.handle || '',
     avatar: avatar || { type: 'initials' },
     premium: !!p?.premium,
-    ultra: !!(p?.ultra || p?.admin),
     sv_off: svOff,
-    sokak_hak: int_(p?.sokak_hak),
     video_hak: int_(p?.video_hak),
     sokak_hediye: false,   // SABİT false — eski sürüm uyumluluğu (main.py:1400-1405)
-    free_tactical: !!(ftAcik && !(p?.ultra || p?.admin) && !p?.free_tactical_used
-      && (!p?.attest_key || !cihazKullandi)),
     admin: !!p?.admin,
   }
 }

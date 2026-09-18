@@ -172,76 +172,6 @@ function cevrimici(kvTs: number, row: UserRow | null | undefined, nowTs: number)
 }
 
 // ---------- _profile_of (main.py:1389-1407) ----------
-type ProfilCtx = { svOff: boolean; ftEnabled: boolean; ftKullanilmis: Set<string> }
-
-async function profilCtxYukle(env: Env): Promise<Omit<ProfilCtx, 'ftKullanilmis'>> {
-  // sv_off: /opt/movelog/data/sv-kapali bayrak dosyası → lib/ortak svKapali (tek KV anahtarı 'sv_off')
-  const svOff = await svKapali(env)
-  // free_tactical_enabled kill-switch: D1 config tablosu (varsayılan true — main.py:1406)
-  let ftEnabled = true
-  try {
-    const r = await env.DB.prepare("SELECT value_json FROM config WHERE key = 'free_tactical_enabled'")
-      .first<{ value_json: string }>()
-    if (r) ftEnabled = !!JSON.parse(r.value_json)
-  } catch { ftEnabled = true }
-  return { svOff, ftEnabled }
-}
-
-async function ftCihazlar(db: D1Database, anahtarlar: string[]): Promise<Set<string>> {
-  const s = new Set<string>()
-  if (!anahtarlar.length) return s
-  const ph = anahtarlar.map(() => '?').join(',')
-  const r = await db.prepare(`SELECT attest_key FROM free_tactical_devices WHERE attest_key IN (${ph})`)
-    .bind(...anahtarlar).all<{ attest_key: string }>()
-  for (const x of r.results) s.add(x.attest_key)
-  return s
-}
-
-function profilOf(uid: string, row: UserRow | null | undefined, ctx: ProfilCtx): Record<string, unknown> {
-  let avatar: unknown = null
-  try { avatar = row?.avatar_json ? JSON.parse(row.avatar_json) : null } catch { avatar = null }
-  return {
-    username: uid,
-    name: row?.name || uid,
-    handle: row?.handle || '',
-    avatar: pyTruthy(avatar) ? avatar : { type: 'initials' },   // Python `or`: {} de FALSY → varsayılan
-    premium: !!row?.premium,
-    ultra: !!(row?.ultra || row?.admin),
-    sv_off: ctx.svOff,
-    sokak_hak: Math.trunc(Number(row?.sokak_hak || 0)),
-    video_hak: Math.trunc(Number(row?.video_hak || 0)),
-    sokak_hediye: false,                                   // main.py:1405 — her zaman False
-    free_tactical: !!(ctx.ftEnabled && !(row?.ultra || row?.admin) && !row?.free_tactical_used
-      && (!row?.attest_key || !ctx.ftKullanilmis.has(row.attest_key))),
-    admin: !!row?.admin,
-  }
-}
-
-/**
- * 🔴 FİKS 05.09 — GEREKSİZ VERİ SIZINTISI. `profilOf` TAM profili döküyor: `video_hak`,
- * `sokak_hak`, `free_tactical`, `sv_off`, `admin`. Sohbet listesinde ve DM başlığında bunlar
- * KARŞI TARAFA gidiyordu — muhatabın kaç video hakkı kaldığı ya da admin olup olmadığı
- * kimseyi ilgilendirmez. Gösterim için gereken alanlar burada kırpılır (main.py mirası).
- */
-function profilKirp(p: Record<string, unknown>): Record<string, unknown> {
-  return {
-    username: p.username, name: p.name, handle: p.handle,
-    avatar: p.avatar, premium: p.premium, ultra: p.ultra,
-  }
-}
-
-// ---------- dm satırı → mesaj nesnesi (alan KÜMESİ main.py msg dict'i ile aynı) ----------
-type DmRow = {
-  id: string; user_a: string; user_b: string; frm: string
-  msg_type: string; text: string | null; media: string | null; ts: number
-}
-function mesajNesnesi(r: DmRow): Record<string, unknown> {
-  const m: Record<string, unknown> = { id: r.id, frm: r.frm, text: r.text ?? '', ts: r.ts, type: r.msg_type }
-  if (r.media) m.media = r.media                           // Python: yalnız truthy media yazılır (main.py:4090-4091)
-  return m
-}
-
-
 // ---------- günlük özet ayar nesnesi (main.py _summary_settings 2795-2806) ----------
 function ozetAyarlar(row: UserRow | null): Record<string, unknown> {
   let prefs: Record<string, unknown> = {}
@@ -307,13 +237,13 @@ g.post('/api/admin/costs', async (c) => {
   const rate = pyFloat('usd_per_sec' in body ? body.usd_per_sec : 0.0003)   // geçersiz → 500 (Python float() gibi)
   const month = (body.month as string) || new Date().toISOString().slice(0, 7)   // UTC YYYY-MM (main.py:1935)
   const r = await c.env.DB.prepare(
-    `SELECT g.uid, g.videos, g.secs, g.g3d_secs, u.name, u.premium, u.ultra
+    `SELECT g.uid, g.videos, g.secs, g.g3d_secs, u.name, u.premium
      FROM gpu_costs g LEFT JOIN users u ON u.uid = g.uid
      WHERE g.month = ?1 ORDER BY g.rowid`)   // ekleme sırası = Python dict sırası (eşit secs tie-break'i)
-    .bind(month).all<{ uid: string; videos: number; secs: number; g3d_secs: number; name: string | null; premium: number | null; ultra: number | null }>()
+    .bind(month).all<{ uid: string; videos: number; secs: number; g3d_secs: number; name: string | null; premium: number | null }>()
   const users = r.results.map((m) => ({
     user: m.uid, name: m.name || m.uid,
-    premium: !!m.premium, ultra: !!m.ultra,
+    premium: !!m.premium,
     videos: m.videos, gpu_secs: m.secs, g3d_secs: m.g3d_secs ?? 0,
     est_usd: round2(m.secs * rate),
   }))
