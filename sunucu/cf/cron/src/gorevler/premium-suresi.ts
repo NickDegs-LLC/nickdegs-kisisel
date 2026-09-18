@@ -54,36 +54,20 @@ const DOKUNMA = new Set(['appreview', 'appreview2'])
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, now, log } = c
   const esik = now - EK_SURE_GUN * 86400
-  // 🔴 17.09 gece (migration 0011, çift katman): aktif/süresiz ULTRA'sı olan satır premium süresi dolsa da
-  // DÜŞÜRÜLMEZ (Ultra ⊃ Premium; Ultra kendi tarihiyle yaşar). Ultra'nın kendi bitişi ayrıca aşağıda.
+  // 18.09: Ultra katmanı kaldırıldı → düşürme artık YALNIZ premium_until'e bakar.
+  // (Eski çift katman koruması — "aktif/süresiz Ultra'sı varsa premium düşürülmez" — konusuz kaldı.)
   const r = await env.DB.prepare(
-    `SELECT uid, premium_until, ultra FROM users
-      WHERE premium = 1 AND premium_until IS NOT NULL AND premium_until < ?1
-        AND NOT (ultra = 1 AND (ultra_until IS NULL OR ultra_until >= ?2))`)
-    .bind(esik, now).all<{ uid: string; premium_until: number; ultra: number | null }>()
+    `SELECT uid, premium_until FROM users
+      WHERE premium = 1 AND premium_until IS NOT NULL AND premium_until < ?1`)
+    .bind(esik).all<{ uid: string; premium_until: number }>()
   const dolan = r.results.filter((u) => !DOKUNMA.has(u.uid))
   const korunan = r.results.length - dolan.length
   if (korunan) log(`${korunan} inceleme hesabı korundu (düşürülmedi)`)
 
   const acik = (await env.KV.get('premium-dusur')) === '1'
 
-  // ULTRA'nın kendi süresi: premium devam etse bile (yıllık Premium + aylık Ultra) Ultra ayrıca düşer.
-  const ru = await env.DB.prepare(
-    `SELECT uid, ultra_until FROM users
-      WHERE ultra = 1 AND ultra_until IS NOT NULL AND ultra_until < ?1`)
-    .bind(esik).all<{ uid: string; ultra_until: number }>()
-  const ultraDolan = ru.results.filter((u) => !DOKUNMA.has(u.uid))
-  if (ultraDolan.length) {
-    const uo = ultraDolan.map((u) => `${u.uid} (${Math.floor((now - u.ultra_until) / 86400)} gün önce)`).join(', ')
-    if (!acik) log(`⚠️ ${ultraDolan.length} ULTRA süresi dolmuş ama DÜŞÜRME KAPALI: ${uo}`)
-    else {
-      for (const u of ultraDolan) {
-        await env.DB.prepare('UPDATE users SET ultra = 0, updated_at = ?2 WHERE uid = ?1').bind(u.uid, now).run()
-        log(`ultra düşürüldü (premium kendi tarihiyle devam): ${u.uid}`)
-      }
-      await bildirimBekleyen(env, `💳 ${ultraDolan.length} kullanıcının ULTRA'sı süre dolduğu için düşürüldü: ${uo.slice(0, 200)}`, 'Move Log Abonelik')
-    }
-  }
+  // 18.09: ULTRA'nın kendi süre düşürme bloğu KALDIRILDI (Ultra katmanı çıktı).
+  // ⚠️ users.ultra / users.ultra_until KOLONLARI DURUYOR — artık okunmuyor ve yazılmıyor.
 
   if (!dolan.length) { log('süresi dolmuş premium yok'); return }
   const ozet = dolan
@@ -100,7 +84,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   }
 
   for (const u of dolan) {
-    await env.DB.prepare('UPDATE users SET premium = 0, ultra = 0, updated_at = ?2 WHERE uid = ?1')
+    await env.DB.prepare('UPDATE users SET premium = 0, updated_at = ?2 WHERE uid = ?1')
       .bind(u.uid, now).run()
     // Düşürme SESSİZ olmasın: kullanıcı neden özelliklerini kaybettiğini bilsin ve geri dönüş
     // yolunu görsün. Abonelik hâlâ geçerliyse uygulamayı açması premium'u geri getirir

@@ -14,15 +14,13 @@ export const DOKUNMA = new Set(['appreview', 'appreview2'])
 
 export type AbonelikIstek = {
   aktif: boolean
-  ultra: boolean
   bitis: number          // epoch saniye
   zorlaPasif?: boolean
 }
 
 export type AbonelikKarar =
   | 'aktif'
-  | 'dusuruldu'          // premium=0 ve ultra=0
-  | 'ultra-dusuruldu'    // 17.09 gece: yalniz ultra=0 (Premium kendi tarihiyle devam eder)
+  | 'dusuruldu'          // premium=0
   | 'korundu:inceleme'
   | 'korundu:suresiz'
   | 'korundu:baska-hak'
@@ -46,29 +44,15 @@ export function abonelikKarar(
   uid: string,
   premiumUntil: number | null | undefined,
   istek: AbonelikIstek,
-  // 🔴 17.09 gece — ÇİFT KATMAN (migration 0011). Premium ve Ultra App Store'da AYRI gruplar → ikisi aynı
-  // anda aktif olabilir. Tek `premium_until`'den karar vermek Premium yenilenince aktif Ultra'yı düşürüyor,
-  // Ultra dolunca (Premium daha uzunsa) Ultra'yı HİÇ düşürmüyordu. Artık her olay YALNIZ kendi katmanına bakar.
-  ultraUntil?: number | null,
-  ultraFlag?: number | null,
 ): AbonelikKarar {
   const aktif = istek.zorlaPasif ? false : istek.aktif
   if (aktif) return 'aktif'
   if (DOKUNMA.has(uid)) return 'korundu:inceleme'
   const pay = istek.bitis + 86400
-  if (istek.ultra) {
-    // ULTRA ürünü pasifleşiyor → ultra_until'e göre karar; premium ayrıca kendi tarihine bakar
-    if (ultraUntil === null || ultraUntil === undefined) return 'korundu:suresiz'
-    if (ultraUntil > pay) return 'korundu:baska-hak'
-    const premiumKalir = premiumUntil === null || premiumUntil === undefined || premiumUntil > pay
-    return premiumKalir ? 'ultra-dusuruldu' : 'dusuruldu'
-  }
-  // PREMIUM ürünü pasifleşiyor
+  // 18.09: Ultra katmani kaldirildi -> tek katman. Karar YALNIZ premium_until'e bakar.
   if (premiumUntil === null || premiumUntil === undefined) return 'korundu:suresiz'
   if (premiumUntil > pay) return 'korundu:baska-hak'
-  // Aktif/süresiz bir Ultra varsa Premium özellikleri de onunla yaşar (Ultra ⊃ Premium) — düşürme
-  const ultraAktif = ultraFlag === 1 && (ultraUntil === null || ultraUntil === undefined || ultraUntil > pay)
-  return ultraAktif ? 'korundu:baska-hak' : 'dusuruldu'
+  return 'dusuruldu'
 }
 
 /** Apple bildirim tipi + işlem tarihleri → aktif mi, bitiş epoch'u ne. */
@@ -115,20 +99,14 @@ export async function abonelikUygula(
 ): Promise<AbonelikKarar> {
   const ts = simdi()
   if (!(istek.zorlaPasif ? false : istek.aktif)) {
-    const row = await db.prepare('SELECT premium_until, ultra, ultra_until FROM users WHERE uid = ?1')
-      .bind(uid).first<{ premium_until: number | null; ultra: number | null; ultra_until: number | null }>()
-    const karar = abonelikKarar(uid, row ? row.premium_until : null, istek, row?.ultra_until, row?.ultra)
+    const row = await db.prepare('SELECT premium_until FROM users WHERE uid = ?1')
+      .bind(uid).first<{ premium_until: number | null }>()
+    const karar = abonelikKarar(uid, row ? row.premium_until : null, istek)
     if (karar === 'dusuruldu') {
-      await db.prepare('UPDATE users SET premium = 0, ultra = 0, updated_at = ?1 WHERE uid = ?2')
+      await db.prepare('UPDATE users SET premium = 0, updated_at = ?1 WHERE uid = ?2')
         .bind(ts, uid).run()
       if (ctx) {
         await adminq(ctx.env, `💳 Move Log abonelik bitti: ${ctx.ad} · ${ctx.platform} · ${ctx.tip}`)
-      }
-    } else if (karar === 'ultra-dusuruldu') {
-      // 17.09 gece: Ultra bitti ama Premium (kendi tarihiyle / süresiz) devam ediyor → yalnız ultra=0
-      await db.prepare('UPDATE users SET ultra = 0, updated_at = ?1 WHERE uid = ?2').bind(ts, uid).run()
-      if (ctx) {
-        await adminq(ctx.env, `💳 Move Log ULTRA bitti (Premium devam): ${ctx.ad} · ${ctx.platform} · ${ctx.tip}`)
       }
     }
     return karar
@@ -141,16 +119,11 @@ export async function abonelikUygula(
   //    Premium olayı ultra'ya ve ultra_until'e DOKUNMAZ. Süresiz Ultra (ultra=1, ultra_until NULL) süresiz kalır.
   await db.prepare(
     `UPDATE users SET premium = 1,
-       ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
-       ultra_until = CASE WHEN ?1 = 1
-                          THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
-                                     ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
-                          ELSE ultra_until END,
        premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
-                            ELSE MAX(COALESCE(premium_until, 0), ?2) END,
-       updated_at = ?3
-     WHERE uid = ?4`)
-    .bind(istek.ultra ? 1 : 0, istek.bitis, ts, uid).run()
+                            ELSE MAX(COALESCE(premium_until, 0), ?1) END,
+       updated_at = ?2
+     WHERE uid = ?3`)
+    .bind(istek.bitis, ts, uid).run()
   return 'aktif'
 }
 

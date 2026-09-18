@@ -50,8 +50,10 @@ const td = new TextDecoder()
 // ---------------------------------------------------------------------------
 const IAP_BUNDLE_ID = 'com.nickdegs.kisisel'
 const BOOST_2X_ID = 'com.nickdegs.kisisel.boost.daily2x'
-const SOKAK_IDS: Record<string, number> = { 'com.nickdegs.kisisel.sokak.tek': 1, 'com.nickdegs.kisisel.sokak.uclu': 3 }
+// 18.09: Street View paketi kimlikleri KALDIRILDI — sokak modu uygulamadan cikti.
 const VIDEO_IDS: Record<string, number> = { 'com.nickdegs.kisisel.video.uclu': 3, 'com.nickdegs.kisisel.video.besli': 5 }
+// 18.09: Ultra katmani kaldirildi AMA kimlikler SUB_IDS'te MIRAS olarak KALIYOR — ucusta bir
+// Ultra yenilemesi 'bilinmeyen urun' 400'une dusup Premium'u kapatmasin. Ultra AYRICALIGI yok.
 const ULTRA_IDS = new Set(['com.nickdegs.kisisel.ultra.monthly', 'com.nickdegs.kisisel.ultra.yearly'])
 const SUB_IDS = new Set(['com.nickdegs.kisisel.premium.monthly', 'com.nickdegs.kisisel.premium.yearly', ...ULTRA_IDS])
 const ANDROID_PKG = 'com.nickdegs.movelog'
@@ -61,7 +63,6 @@ const ANDROID_BOOST_SKU = 'boost_daily2x'
 // boost vardı). Apple ürünlerinin Play karşılıkları; adlar birebir eşlenik (…video.uclu → video_uclu).
 // GÜVENLİK: sku istemciden gelir ama Google purchases.products doğrulaması token'ı ÜRÜNE bağlar —
 // sahte sku ile başka ürünün hakkı alınamaz (Google 400 döner, aşağıda 'satın alma doğrulanamadı').
-const ANDROID_SOKAK_IDS: Record<string, number> = { sokak_tek: 1, sokak_uclu: 3 }
 const ANDROID_VIDEO_IDS: Record<string, number> = { video_uclu: 3, video_besli: 5 }
 
 // Apple Root CA - G3 (pinli, main.py:1486) — StoreKit2 JWS zinciri buna kadar doğrulanır
@@ -743,7 +744,7 @@ g.post('/api/iap/verify', authUser, async (c) => {
   }
 
   if (SUB_IDS.has(pid)) {
-    const ultra = ULTRA_IDS.has(pid) ? 1 : 0     // premium abonelik → ultra False (main.py:1545)
+    // 18.09: Ultra katmani kalkti — her abonelik urunu YALNIZ premium acar (ultra yazilmaz).
     const exp = p.expiresDate
     // (İşlem sahipliği 409 kontrolü artık yukarıda, tüm ürün türleri için.)
     // 🔴 FİKS 17.09 — İADE / SÜRE. İade edilmiş (revocationDate dolu) ya da süresi çoktan geçmiş
@@ -771,16 +772,11 @@ g.post('/api/iap/verify', authUser, async (c) => {
       // NULL korunur, süre yalnız UZAR, daha uzun süren başka hak kısaltılmaz.
       yaz.push(db.prepare(
         `UPDATE users SET premium = 1,
-           ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
-           ultra_until = CASE WHEN ?1 = 1
-                              THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
-                                         ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
-                              ELSE ultra_until END,
            premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
-                                ELSE MAX(COALESCE(premium_until, 0), ?2) END,
-           updated_at = ?3
-         WHERE uid = ?4`)
-        .bind(ultra, expSn, ts, user))
+                                ELSE MAX(COALESCE(premium_until, 0), ?1) END,
+           updated_at = ?2
+         WHERE uid = ?3`)
+        .bind(expSn, ts, user))
     } else {
       // sandbox VEYA expiresDate yok → premium açılır, süre yazılmaz (düşürme kapsamı dışında)
       // 🔴 FİKS 17.09 gece (Cursor e2e #3): `ultra` burada DÜZ SET'ti → süresiz Ultra'sı olan hesap
@@ -788,10 +784,8 @@ g.post('/api/iap/verify', authUser, async (c) => {
       // alınca ultra=0 oluyor, taktik özellikler 402'ye düşüyor → inceleme REDDİ. 05.09 fiksi
       // premium_until'i korumuş, ultra'yı unutmuştu. Sandbox/süresiz işlem hiçbir hakkı DÜŞÜRMEZ:
       // ultra yalnız YÜKSELİR (bu abonelik ultra ise 1, değilse eski değer kalır).
-      yaz.push(db.prepare(
-        `UPDATE users SET premium = 1, ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
-           updated_at = ?2 WHERE uid = ?3`)
-        .bind(ultra, ts, user))
+      yaz.push(db.prepare('UPDATE users SET premium = 1, updated_at = ?1 WHERE uid = ?2')
+        .bind(ts, user))
     }
     if (!kayit)
       yaz.push(db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
@@ -808,27 +802,10 @@ g.post('/api/iap/verify', authUser, async (c) => {
       const deneme = pyTruthy(p.offerType) ? ' (deneme/tanıtım teklifi)' : ''
       const say = await uyeSay(db)
       await adminq(c.env,
-        `💰 Move Log Abonelik\n${ad} → ${ultra ? 'ULTRA' : 'Premium'} · iOS${deneme}\n` +
+        `💰 Move Log Abonelik\n${ad} → Premium · iOS${deneme}\n` +
         `Ürün: ${pid.split('.').pop()} · bitiş ${expS}\nToplam: ${say.abone} abone · ${say.n} üye`)
     }
     return c.json({ ok: true, premium: true })
-  }
-
-  if (Object.hasOwn(SOKAK_IDS, pid)) {   // Python `pid in SOKAK_IDS` = yalnız KENDİ anahtarları (JS `in` prototipe de bakar)
-    if (kayit) return c.json({ ok: true, already: true, sokak: Math.trunc(Number(prof?.sokak_hak ?? 0) || 0) })
-    const adet = SOKAK_IDS[pid]
-    // 🔴 FİKS 17.09 — ATOMİKLİK. Önce INSERT (D1'de her ifade AYRI commit), sonra ayrı UPDATE vardı:
-    // araya kesinti girerse işlem KAYITLI ama hak VERİLMEMİŞ kalıyor; tekrar denemede `kayit`
-    // görülüp `already: true` dönüyor ve hak BİR DAHA hiç yazılmıyordu. batch = tek transaction.
-    const r = await db.batch<{ sokak_hak: number }>([
-      db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
-        .bind(tid, user, pid, ts),
-      db.prepare('UPDATE users SET sokak_hak = COALESCE(sokak_hak, 0) + ?1, updated_at = ?2 WHERE uid = ?3 RETURNING sokak_hak')
-        .bind(adet, ts, user),
-    ])
-    const toplam = Math.trunc(Number(r[1]?.results?.[0]?.sokak_hak ?? adet))
-    await adminq(c.env, `💰 Move Log Sokak Hakkı\n${ad} → ${adet} hak · iOS\nÜrün: ${pid.split('.').pop()}\nToplam hakkı: ${toplam}`)
-    return c.json({ ok: true, sokak: toplam })
   }
 
   if (Object.hasOwn(VIDEO_IDS, pid)) {
@@ -901,7 +878,7 @@ g.post('/api/iap/google', authUser, async (c) => {
     await kullaniciGarantile(db, user)
     const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
     const pids = lineItems.map((li) => pyStr(nesne(li).productId))
-    const ultra = pids.some((x) => x.includes('ultra'))   // "ultra" içeren ürün → ultra tier
+    // 18.09: Ultra katmani kalkti — Play aboneligi de YALNIZ premium acar.
     // 🔴 FİKS 05.09: `premium_until` YAZILMIYORDU ("iOS'tan farklı" diye bilinçli bırakılmış).
     // Sonuç: Android abonesinin bitiş tarihi hiçbir yerde tutulmuyor → abonelik iptal edilse bile
     // premium sonsuza dek açık kalıyor ve `premium-suresi` görevi (premium_until IS NULL olanı
@@ -914,23 +891,16 @@ g.post('/api/iap/google', authUser, async (c) => {
       // iap-abonelik.ts:118-128 ile AYNI CASE: NULL korunur, süre yalnız UZAR.
       await db.prepare(
         `UPDATE users SET premium = 1,
-           ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
-           ultra_until = CASE WHEN ?1 = 1
-                              THEN (CASE WHEN ultra = 1 AND ultra_until IS NULL THEN NULL
-                                         ELSE MAX(COALESCE(ultra_until, 0), ?2) END)
-                              ELSE ultra_until END,
            premium_until = CASE WHEN premium = 1 AND premium_until IS NULL THEN NULL
-                                ELSE MAX(COALESCE(premium_until, 0), ?2) END,
-           updated_at = ?3
-         WHERE uid = ?4`)
-        .bind(ultra ? 1 : 0, expTs, ts, user).run()
+                                ELSE MAX(COALESCE(premium_until, 0), ?1) END,
+           updated_at = ?2
+         WHERE uid = ?3`)
+        .bind(expTs, ts, user).run()
     } else {
       // 🔴 FİKS 17.09 gece (Cursor e2e #3, iOS dalıyla simetrik): bitiş okunamayan Google aboneliği
       // süresiz Ultra'yı DÜŞÜRMESİN — ultra yalnız yükselir.
-      await db.prepare(
-        `UPDATE users SET premium = 1, ultra = CASE WHEN ?1 = 1 THEN 1 ELSE COALESCE(ultra, 0) END,
-           updated_at = ?2 WHERE uid = ?3`)
-        .bind(ultra ? 1 : 0, ts, user).run()
+      await db.prepare('UPDATE users SET premium = 1, updated_at = ?1 WHERE uid = ?2')
+        .bind(ts, user).run()
     }
     if (ilkDogrulama) {
       const li0 = nesne(lineItems[0])
@@ -940,10 +910,10 @@ g.post('/api/iap/google', authUser, async (c) => {
       const prof = await getUser(db, user)
       const ad = pyTruthy(prof?.name) ? String(prof!.name) : user.slice(0, 10)
       await adminq(c.env,
-        `💰 Move Log Abonelik\n${ad} → ${ultra ? 'ULTRA' : 'Premium'} · Android\n` +
+        `💰 Move Log Abonelik\n${ad} → Premium · Android\n` +
         `Ürün: ${pids.join(', ') || 'google-sub'} · bitiş ${expS}\nToplam: ${say.abone} abone · ${say.n} üye`)
     }
-    return c.json({ ok: true, premium: true, ultra })   // 05.09: premium_until artık YAZILIYOR
+    return c.json({ ok: true, premium: true })   // 05.09: premium_until artık YAZILIYOR
   }
   hata(400, `abonelik aktif değil (${state})`)
 })
@@ -957,9 +927,8 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
   if (!tok) hata(400, 'eksik satın alma')
   // BEYAZ LİSTE (1.61): bilinmeyen sku sessizce BOOST'a yazılmasın (eskiden her sku boost sayılırdı).
   // 1.60 istemcisi sku GÖNDERMEZ → varsayılan boost_daily2x, bu dal onu bozmaz.
-  const sokakAdet = Object.hasOwn(ANDROID_SOKAK_IDS, sku) ? ANDROID_SOKAK_IDS[sku] : 0
   const videoAdet = Object.hasOwn(ANDROID_VIDEO_IDS, sku) ? ANDROID_VIDEO_IDS[sku] : 0
-  if (sku !== ANDROID_BOOST_SKU && !sokakAdet && !videoAdet) hata(400, 'bilinmeyen ürün')
+  if (sku !== ANDROID_BOOST_SKU && !videoAdet) hata(400, 'bilinmeyen ürün')
   const at = await saErisimToken(c.env, 'androidpublisher')
   if (!at) hata(503, 'doğrulama servisi hazır değil')
   // sku istemciden gelir ve URL'e girer → encodeURIComponent ŞART (sözleşme notu)
@@ -989,10 +958,10 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
   // Şema notu: Google boost'ta pid kolonuna sku değeri yazılır (iap_transactions pid ?? sku sözleşmesi)
   await kullaniciGarantile(db, user)
 
-  // ---- SOKAK / VİDEO PAKETİ (Android 1.61) — Apple dalıyla (satır 601-632) simetrik ----
-  if (sokakAdet || videoAdet) {
-    const kolon = sokakAdet ? 'sokak_hak' : 'video_hak'
-    const adet = sokakAdet || videoAdet
+  // ---- VİDEO PAKETİ (Android 1.61) — Apple dalıyla simetrik. 18.09: sokak paketi kaldırıldı ----
+  if (videoAdet) {
+    const kolon = 'video_hak'
+    const adet = videoAdet
     const rp = await db.batch<Record<string, number>>([
       db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
         .bind(oid, user, sku, ts),
@@ -1002,10 +971,8 @@ g.post('/api/iap/google/boost', authUser, async (c) => {
     const toplam = Math.trunc(Number(rp[1]?.results?.[0]?.[kolon] ?? adet))
     const prof = await getUser(db, user)
     const ad = pyTruthy(prof?.name) ? String(prof!.name) : user.slice(0, 10)
-    await adminq(c.env, sokakAdet
-      ? `💰 Move Log Sokak Hakkı\n${ad} → ${adet} hak · Android\nÜrün: ${sku}\nToplam hakkı: ${toplam}`
-      : `💰 Move Log Video Paketi\n${ad} → ${adet} video · Android\nÜrün: ${sku}\nToplam hakkı: ${toplam}`)
-    return sokakAdet ? c.json({ ok: true, sokak: toplam }) : c.json({ ok: true, video: toplam })
+    await adminq(c.env, `💰 Move Log Video Paketi\n${ad} → ${adet} video · Android\nÜrün: ${sku}\nToplam hakkı: ${toplam}`)
+    return c.json({ ok: true, video: toplam })
   }
 
   // 🔴 FİKS 17.09 — ATOMİKLİK: işlem kaydı + boost çarpanı TEK batch (boostArtir gövdesi 224-231).
@@ -1029,7 +996,7 @@ const RTDN_SA_VARSAYILAN = 'movelog-deploy@move-log-500805.iam.gserviceaccount.c
 const GOOGLE_ISS = new Set(['https://accounts.google.com', 'accounts.google.com'])
 
 function tuketilebilirMi(pid: string): boolean {
-  return Object.hasOwn(SOKAK_IDS, pid) || Object.hasOwn(VIDEO_IDS, pid) || pid === BOOST_2X_ID
+  return Object.hasOwn(VIDEO_IDS, pid) || pid === BOOST_2X_ID
 }
 
 function epochMs(v: unknown): number {
@@ -1108,10 +1075,7 @@ function googleMaxBitis(d: Record<string, unknown>): number {
   return m
 }
 
-function googleUltraMi(d: Record<string, unknown>): boolean {
-  const lineItems = Array.isArray(d.lineItems) ? (d.lineItems as Record<string, unknown>[]) : []
-  return lineItems.some((li) => pyStr(nesne(li).productId).includes('ultra'))
-}
+// 18.09: googleUltraMi() KALDIRILDI — Ultra katmani cikti, tek cagirani kalmadi.
 
 async function iapUidBul(db: D1Database, ...tidler: string[]): Promise<string | null> {
   const dolu = tidler.filter(Boolean)
@@ -1179,7 +1143,7 @@ g.post('/api/iap/apple/bildirim', async (c) => {
       const grace = epochMs(renewal.gracePeriodExpiresDate)
       const dur = appleAboneDurum(tip, tx.revocationDate, exp, grace, ts)
       const karar = await abonelikUygula(db, uid, {
-        aktif: dur.aktif, ultra: ULTRA_IDS.has(pid), bitis: dur.bitis,
+        aktif: dur.aktif, bitis: dur.bitis,
       }, { env: c.env, ad, platform: 'apple', tip })
       await kaydet({ uid, pid, karar, bitis: dur.bitis })
       return c.json({ ok: true })
@@ -1189,8 +1153,8 @@ g.post('/api/iap/apple/bildirim', async (c) => {
       // parasını geri alıp sokak/video hakkını KULLANMAYA devam ediyordu. MAX(0,…) ile negatife düşmez.
       // BOOST istisna: günlük 2x çarpanı satın alındığı GÜNE yazılır (render_counts boost_<gün>);
       // iade günler sonra gelir, o günün sayacı çoktan geçmiştir → geri alınacak bir şey yok.
-      const geri = SOKAK_IDS[pid] ?? VIDEO_IDS[pid] ?? 0
-      const kolon = Object.hasOwn(SOKAK_IDS, pid) ? 'sokak_hak' : 'video_hak'
+      const geri = VIDEO_IDS[pid] ?? 0
+      const kolon = 'video_hak'
       if (geri > 0) {
         await db.prepare(
           `UPDATE users SET ${kolon} = MAX(0, COALESCE(${kolon}, 0) - ?1), updated_at = ?2 WHERE uid = ?3`)
@@ -1198,7 +1162,7 @@ g.post('/api/iap/apple/bildirim', async (c) => {
       }
       await kaydet({ uid, pid, karar: geri > 0 ? `iade:${kolon}-${geri}` : 'yok-sayildi:boost-iade' })
       await adminq(c.env, `💸 Move Log iade: ${ad} · ${pid.split('.').pop() || pid}`
-        + (geri > 0 ? ` · ${geri} ${kolon === 'sokak_hak' ? 'sokak' : 'video'} hakkı geri alındı` : ''))
+        + (geri > 0 ? ` · ${geri} video hakkı geri alındı` : ''))
       return c.json({ ok: true })
     }
     await kaydet({ uid, pid, karar: 'yok-sayildi:' + (tip || 'bilinmeyen') })
@@ -1267,7 +1231,7 @@ g.post('/api/iap/google/bildirim', async (c) => {
         const play = await googleSubV2(c.env, tok)
         const kendiBitis = play.status === 200 && play.d ? googleMaxBitis(play.d) : 0
         const bitis = kendiBitis || now
-        const karar = await abonelikUygula(db, uid, { aktif: false, ultra: false, bitis, zorlaPasif: true },
+        const karar = await abonelikUygula(db, uid, { aktif: false, bitis, zorlaPasif: true },
           { env: c.env, ad, platform: 'google', tip: 'voided' })
         if (!kendiBitis && karar !== 'dusuruldu')
           await adminq(c.env, `💸 Move Log iade (abonelik) elle kontrol: ${ad} · bitiş okunamadı (${play.status}) · ${karar}`)
@@ -1285,8 +1249,8 @@ g.post('/api/iap/google/bildirim', async (c) => {
           .bind(oid2 || '-', tok || '-').first<{ uid: string; pid: string }>()
         : null
       const sku2 = pyStr(islem?.pid)
-      const geri = ANDROID_SOKAK_IDS[sku2] ?? ANDROID_VIDEO_IDS[sku2] ?? 0
-      const kolon = Object.hasOwn(ANDROID_SOKAK_IDS, sku2) ? 'sokak_hak' : 'video_hak'
+      const geri = ANDROID_VIDEO_IDS[sku2] ?? 0
+      const kolon = 'video_hak'
       const sahip = uid || pyStr(islem?.uid)
       if (geri > 0 && sahip) {
         await db.prepare(
@@ -1298,7 +1262,7 @@ g.post('/api/iap/google/bildirim', async (c) => {
       await kaydet({ tip: 'voided', alt_tip: oid2 || null, uid: sahip || uid, pid: tok || null,
         karar: geri > 0 ? `iade:${kolon}-${geri}` : 'yok-sayildi:boost-iade' })
       await adminq(c.env, `💸 Move Log iade: ${ad} · ${oid2 || tok || 'google'}`
-        + (geri > 0 ? ` · ${geri} ${kolon === 'sokak_hak' ? 'sokak' : 'video'} hakkı geri alındı` : ''))
+        + (geri > 0 ? ` · ${geri} video hakkı geri alındı` : ''))
       return c.json({ ok: true })
     }
     if (pyTruthy(dev.subscriptionNotification)) {
@@ -1346,7 +1310,7 @@ g.post('/api/iap/google/bildirim', async (c) => {
       }
       const prof = await getUser(db, uid)
       const karar = await abonelikUygula(db, uid, {
-        aktif: durum === 'aktif', ultra: googleUltraMi(d), bitis,
+        aktif: durum === 'aktif', bitis,
       }, { env: c.env, ad: kullaniciAdi(prof?.name, uid), platform: 'google', tip: ntype || 'sub' })
       await kaydet({ tip: ntype || 'sub', alt_tip: subId || null, uid, pid: tok, karar, bitis })
       return c.json({ ok: true })
