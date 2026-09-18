@@ -151,10 +151,13 @@ async function queueCloudVideo(
     mode: vmode, speed: vspeed, aspect: vaspect, premium: true, ts: simdi(), track,
     line: (prefs.video_line as string) || CFG.video_line_color,
     dot: (prefs.video_dot as string) || CFG.video_dot_color,
-    // ⚠️ MOTOR SÖZLEŞMESİ: route-video.py `ultra=` bayrağını Ultra KATMANI için değil EN İYİ
-    // KARO KAYNAĞI için okuyor (proxy en yüksek zoom + fill-extrusion). Google 3D öldüğünden
-    // (GOOGLE_3D_OLU=1) beri başka etkisi yok. Tek katmanda herkes en iyisini alır → sabit true.
-    ultra: true,
+    // ⚠️ MOTOR SÖZLEŞMESİ — DEĞİŞTİRMEDEN ÖNCE OKU: bu bayrak "Ultra katmanı" DEĞİL, karo
+    // tavanı demek. render3d.js:72 `IN.ultra ? 'ultra' : 'premium'` → `?k=` → karo.js:33
+    // `tavan = k==='premium' ? 17 : 18`. true yapmak z18 = kare başına 4 KAT karo ve o yük
+    // Hooder'ın ORTAK haritasına biner. Barış 18.09: "Herkes z17 (mevcut Premium)".
+    // Bayrağın başka etkisi YOK: Google 3B dalları GOOGLE_3D_OLU=1 ile ölü, satStyle zaten
+    // ondan bağımsız true, çıkıntılı bina `kabartma`ya bağlı (mühürlü false).
+    ultra: false,
   }
   if (isSummary) {
     job.camdist = (prefs.summary_vid_cam as string) || 'orta'
@@ -324,7 +327,7 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
           ride_id: vrid, key: vkey, user: uid, date: trGun(vst), ts: vst, to: ven, type: a.type,
           mode: (prefs.video_mode as string) || '3d',
           speed: CFG.video_speed, aspect: (prefs.video_aspect as string) || CFG.video_aspect,
-          size: obj.size, ultra: true,
+          size: obj.size, ultra: false,   // bkz. queueCloudVideo'daki karo tavanı notu
         })
         log(`  ✅ OTO-VİDEO LAND: ${vrid} — R2'de hazırdı, render-done D1'e işlendi`)
         continue

@@ -228,10 +228,13 @@ export async function kos(c: GorevCtx): Promise<void> {
       from: Math.trunc(st), to: Math.trunc(en), day: gun, ride_id: rid, type: 'moto', mode: '3d',
       speed: 'medium', aspect: '16:9', premium: true, ts: now, track: t1, mates,
       line: (leadPrefs.video_line as string) || '#00e5ff', dot: (leadPrefs.video_dot as string) || '#ff3b30',
-    // ⚠️ MOTOR SÖZLEŞMESİ: route-video.py `ultra=` bayrağını Ultra KATMANI için değil EN İYİ
-    // KARO KAYNAĞI için okuyor (proxy en yüksek zoom + fill-extrusion). Google 3D öldüğünden
-    // (GOOGLE_3D_OLU=1) beri başka etkisi yok. Tek katmanda herkes en iyisini alır → sabit true.
-    ultra: true,
+      // ⚠️ MOTOR SÖZLEŞMESİ — DEĞİŞTİRMEDEN ÖNCE OKU: bu bayrak "Ultra katmanı" DEĞİL, karo
+      // tavanı demek. render3d.js:72 `IN.ultra ? 'ultra' : 'premium'` → `?k=` → karo.js:33
+      // `tavan = k==='premium' ? 17 : 18`. true yapmak z18 = kare başına 4 KAT karo ve o yük
+      // Hooder'ın ORTAK haritasına biner. Barış 18.09: "Herkes z17 (mevcut Premium)".
+      // Bayrağın başka etkisi YOK: Google 3B dalları GOOGLE_3D_OLU=1 ile ölü, satStyle zaten
+      // ondan bağımsız true, çıkıntılı bina `kabartma`ya bağlı (mühürlü false).
+      ultra: false,
     }
     // 🔴 18.09 Barış: chase (takip) kamerası artık TÜM grup videolarında — ek maliyet yok,
     // aynı render, farklı kamera açısı. Eskiden Ultra'lı üye varsa açılıyordu.

@@ -105,7 +105,7 @@ async function yenidenUret(c: GorevCtx, v: VideoRow): Promise<{ vid: string; nok
     mode: v.mode || 'flyover',
     speed: v.speed || 'medium',
     aspect: v.aspect || '16:9',
-    premium: true, ultra: true, ts: now,        // motor sözleşmesi: en iyi karo kaynağı
+    premium: true, ultra: false, ts: now,   // ultra=karo tavanı (z18); Barış: herkes z17
     oto: true,                     // 05.09: onarım da GPU parası harcar → aylık bütçeye işlenir
 
     lang: prof.lang || 'en',
