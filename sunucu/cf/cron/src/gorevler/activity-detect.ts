@@ -134,9 +134,11 @@ async function queueCloudVideo(
   if (track.length < 3) { log('  → bulut: iz<3 nokta, video atlandı'); return }
   const rday = trGun(st)
   const rideId = isSummary ? `${rday}_ozet_${st}` : `${rday}_${st}`
+  // 🔴 18.09 Barış: TEK KATMAN — otonom video ürünün FARKI, herkes 3B alır (Ultra kalktı).
+  // Kullanıcı prefs.video_mode ile hâlâ daha ucuz bir moda inebilir; varsayılan 3B.
   const vmode = forceMode || (isSummary
     ? (prefs.summary_vid_mode as string) || CFG.video_mode
-    : (prefs.video_mode as string) || (prof.ultra ? '3d' : CFG.video_mode))
+    : (prefs.video_mode as string) || '3d')
   const vspeed = isSummary ? (prefs.summary_vid_speed as string) || CFG.video_speed : CFG.video_speed
   const vaspect = isSummary ? (prefs.summary_vid_aspect as string) || CFG.video_aspect : CFG.video_aspect
   const job: Record<string, unknown> = {
@@ -149,7 +151,10 @@ async function queueCloudVideo(
     mode: vmode, speed: vspeed, aspect: vaspect, premium: true, ts: simdi(), track,
     line: (prefs.video_line as string) || CFG.video_line_color,
     dot: (prefs.video_dot as string) || CFG.video_dot_color,
-    ultra: !!prof.ultra,
+    // ⚠️ MOTOR SÖZLEŞMESİ: route-video.py `ultra=` bayrağını Ultra KATMANI için değil EN İYİ
+    // KARO KAYNAĞI için okuyor (proxy en yüksek zoom + fill-extrusion). Google 3D öldüğünden
+    // (GOOGLE_3D_OLU=1) beri başka etkisi yok. Tek katmanda herkes en iyisini alır → sabit true.
+    ultra: true,
   }
   if (isSummary) {
     job.camdist = (prefs.summary_vid_cam as string) || 'orta'
@@ -324,9 +329,9 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
       if (obj) {
         await renderDone(env, {
           ride_id: vrid, key: vkey, user: uid, date: trGun(vst), ts: vst, to: ven, type: a.type,
-          mode: (prefs.video_mode as string) || (prof.ultra ? '3d' : CFG.video_mode),
+          mode: (prefs.video_mode as string) || '3d',
           speed: CFG.video_speed, aspect: (prefs.video_aspect as string) || CFG.video_aspect,
-          size: obj.size, ultra: !!prof.ultra,
+          size: obj.size, ultra: true,
         })
         log(`  ✅ OTO-VİDEO LAND: ${vrid} — R2'de hazırdı, render-done D1'e işlendi`)
         continue

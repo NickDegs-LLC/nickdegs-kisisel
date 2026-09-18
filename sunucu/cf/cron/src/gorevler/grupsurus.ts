@@ -92,8 +92,8 @@ export async function kos(c: GorevCtx): Promise<void> {
   const aktifSet = new Set(aktif.results.map((r) => r.device))
   if (!aktifSet.size) { log('bugün aktif cihaz yok'); return }
   const users = await env.DB.prepare(
-    'SELECT uid, name, handle, lang, premium, ultra, tracker_id, prefs_json FROM users WHERE tracker_id IS NOT NULL')
-    .all<{ uid: string; name: string | null; handle: string | null; lang: string | null; premium: number | null; ultra: number | null; tracker_id: string; prefs_json: string | null }>()
+    'SELECT uid, name, handle, lang, premium, tracker_id, prefs_json FROM users WHERE tracker_id IS NOT NULL')
+    .all<{ uid: string; name: string | null; handle: string | null; lang: string | null; premium: number | null; tracker_id: string; prefs_json: string | null }>()
   const userDev = new Map<string, string>()
   const prof = new Map<string, (typeof users.results)[number]>()
   for (const u of users.results) {
@@ -179,7 +179,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     if (Object.keys(sent).some((k) => k.startsWith(pfx) && /^\d+$/.test(k.slice(pfx.length)) &&
       Math.abs(Number(k.slice(pfx.length)) - kod) <= 1)) continue
     const names = new Map(members.map((u) => [u, gorunenAd(prof.get(u)).trim() || 'Rider']))
-    const tiers = new Map(members.map((u) => [u, prof.get(u)?.ultra ? 2 : prof.get(u)?.premium ? 1 : 0]))
+    const tiers = new Map(members.map((u) => [u, prof.get(u)?.premium ? 1 : 0]))
     log(`BİRLİKTE SÜRÜŞ (${members.length} kişi): ${members.map((u) => names.get(u)).join(' + ')} ${km.toFixed(1)}km`)
     if (![...tiers.values()].some((t) => t > 0)) {
       // hepsi free: günde 1 upsell
@@ -211,7 +211,6 @@ export async function kos(c: GorevCtx): Promise<void> {
     }
     if (t1.length < 3 || !mates.length) { log('  -> iz çok kısa, atlandı'); continue }
     const rid = `${gun}_grup_${Math.trunc(st)}`
-    const ultra = members.some((u) => prof.get(u)?.ultra)
     // kulüp etiketi: 3+ kişi aynı kulüpteyse video adı kulüp adı
     let vidName = names.get(lead)!
     if (members.length >= 3) {
@@ -229,11 +228,16 @@ export async function kos(c: GorevCtx): Promise<void> {
       from: Math.trunc(st), to: Math.trunc(en), day: gun, ride_id: rid, type: 'moto', mode: '3d',
       speed: 'medium', aspect: '16:9', premium: true, ts: now, track: t1, mates,
       line: (leadPrefs.video_line as string) || '#00e5ff', dot: (leadPrefs.video_dot as string) || '#ff3b30',
-      ultra,
+    // ⚠️ MOTOR SÖZLEŞMESİ: route-video.py `ultra=` bayrağını Ultra KATMANI için değil EN İYİ
+    // KARO KAYNAĞI için okuyor (proxy en yüksek zoom + fill-extrusion). Google 3D öldüğünden
+    // (GOOGLE_3D_OLU=1) beri başka etkisi yok. Tek katmanda herkes en iyisini alır → sabit true.
+    ultra: true,
     }
-    if (ultra) job.cam = 'chase'
+    // 🔴 18.09 Barış: chase (takip) kamerası artık TÜM grup videolarında — ek maliyet yok,
+    // aynı render, farklı kamera açısı. Eskiden Ultra'lı üye varsa açılıyordu.
+    job.cam = 'chase'
     const kid = await renderKuyruk(env, job, 'grupsurus')
-    log(`  -> KUYRUK grup videosu: ${kid} • ${gusers.length} sürücü • ultra=${ultra}`)
+    log(`  -> KUYRUK grup videosu: ${kid} • ${gusers.length} sürücü`)
     sent[`${pfx}${kod}`] = now; changed = true
   }
   if (changed) await kvJsonYaz(env, 'grupsurus:sent', sent, 14 * 86400)

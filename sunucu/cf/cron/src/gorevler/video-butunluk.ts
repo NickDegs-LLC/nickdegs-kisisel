@@ -77,8 +77,8 @@ async function yenidenUret(c: GorevCtx, v: VideoRow): Promise<{ vid: string; nok
   const uid = v.uid || ''
   if (!uid) return 'videos.uid boş'
   const prof = await env.DB.prepare(
-    'SELECT uid, name, handle, lang, tracker_id, premium, ultra, prefs_json FROM users WHERE uid = ?1')
-    .bind(uid).first<{ uid: string; name: string | null; handle: string | null; lang: string | null; tracker_id: string | null; premium: number | null; ultra: number | null; prefs_json: string | null }>()
+    'SELECT uid, name, handle, lang, tracker_id, premium, prefs_json FROM users WHERE uid = ?1')
+    .bind(uid).first<{ uid: string; name: string | null; handle: string | null; lang: string | null; tracker_id: string | null; premium: number | null; prefs_json: string | null }>()
   if (!prof) return 'kullanıcı kaydı yok'
   const dev = prof.tracker_id || ''
   if (!dev) return 'kullanıcının tracker_id\'si yok'
@@ -105,7 +105,7 @@ async function yenidenUret(c: GorevCtx, v: VideoRow): Promise<{ vid: string; nok
     mode: v.mode || 'flyover',
     speed: v.speed || 'medium',
     aspect: v.aspect || '16:9',
-    premium: true, ultra: !!prof.ultra, ts: now,
+    premium: true, ultra: true, ts: now,        // motor sözleşmesi: en iyi karo kaynağı
     oto: true,                     // 05.09: onarım da GPU parası harcar → aylık bütçeye işlenir
 
     lang: prof.lang || 'en',

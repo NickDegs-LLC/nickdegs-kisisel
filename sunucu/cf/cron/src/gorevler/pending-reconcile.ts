@@ -82,7 +82,7 @@ export async function kos(c: GorevCtx): Promise<void> {
       } catch { /* varsayılanlar */ }
       await renderDone(env, {
         ride_id: pv.vid, key, user: pv.uid, date: pv.date ?? trGun(pv.ts || now), ts: pv.ts || 0,
-        to: pv.to_ts || 0, type: typ, mode: pv.mode || 'tactical', speed: 'medium', aspect, size: obj.size,
+        to: pv.to_ts || 0, type: typ, mode: pv.mode || 'flyover', speed: 'medium', aspect, size: obj.size,
       })
       log(`FINALIZE ${pv.vid} (video vardı -> kilit açıldı)`); acted++
     } else if (age > staleOf(pv.mode)) {

@@ -217,7 +217,7 @@ export async function renderDone(env: Env, body: Record<string, unknown>): Promi
   const gs = int0(body.gpu_secs)
   if (body.user && gs > 0) {
     const ay = new Date().toISOString().slice(0, 7)
-    const g3d = body.ultra && body.mode === '3d' ? gs : 0
+    const g3d = body.mode === '3d' ? gs : 0                             // 18.09: katman değil MOD ölçülüyor
     await env.DB.prepare(
       `INSERT INTO gpu_costs (uid, month, secs, videos, g3d_secs, created_at, updated_at) VALUES (?1,?2,?3,1,?4,?5,?5)
        ON CONFLICT(uid, month) DO UPDATE SET secs=secs+?3, videos=videos+1, g3d_secs=g3d_secs+?4, updated_at=?5`)

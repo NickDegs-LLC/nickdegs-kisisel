@@ -98,13 +98,13 @@ export async function kvListe(env: Env, prefix: string, sinir = 1000): Promise<s
 // users tablosu — cron görevlerinin sık okuduğu kolonlar
 export type ProfilRow = {
   uid: string; name: string | null; handle: string | null; alias: string | null; lang: string | null
-  premium: number | null; ultra: number | null; admin: number | null
+  premium: number | null; admin: number | null
   tracker_id: string | null; summary_enabled: number | null; summary_hour: number | null
   yerel_son: number | null; last_seen_at: number | null; welcomed: number | null
   prefs_json: string | null; state_json: string | null; badges_json: string | null; tv: number
 }
 export const PROFIL_KOLON =
-  'uid, name, handle, alias, lang, premium, ultra, admin, tracker_id, summary_enabled, summary_hour, yerel_son, last_seen_at, welcomed, prefs_json, state_json, badges_json, tv'
+  'uid, name, handle, alias, lang, premium, admin, tracker_id, summary_enabled, summary_hour, yerel_son, last_seen_at, welcomed, prefs_json, state_json, badges_json, tv'
 
 export function gorunenAd(p: { name?: string | null; handle?: string | null; uid?: string } | null | undefined): string {
   return (p?.name || p?.handle || (p?.uid ?? '').slice(0, 8) || '?') as string
