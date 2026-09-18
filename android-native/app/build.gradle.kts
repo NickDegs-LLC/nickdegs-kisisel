@@ -85,7 +85,8 @@ dependencies {
     // kütüphane hiçbir yerden kullanılmaz hâle geldi, APK'yı boşuna büyütüyordu.
     implementation("com.android.billingclient:billing-ktx:8.0.0")   // Play zorunlulugu: 7.x 31 Agu 2026'da reddedilecek
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
-    implementation("io.livekit:livekit-android:2.18.2")   // 1.9 canlı interkom (kulüp sesli oda)
+    // 18.09: io.livekit:livekit-android KALDIRILDI — canlı interkom/telsiz uygulamadan çıktı,
+    // kütüphane hiçbir yerden kullanılmıyordu ve APK'yı boşuna büyütüyordu (osmdroid ile aynı gerekçe).
     implementation("com.google.android.gms:play-services-wearable:19.0.0")   // Wear OS saat köprüsü
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-messaging-ktx")   // FCM push bildirimleri

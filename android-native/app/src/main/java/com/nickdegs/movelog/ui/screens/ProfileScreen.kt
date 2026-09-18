@@ -26,7 +26,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import com.nickdegs.movelog.data.Billing
 import com.nickdegs.movelog.data.Convo
-import com.nickdegs.movelog.data.SOKAK_SKULARI
 import com.nickdegs.movelog.data.Store
 import com.nickdegs.movelog.data.VIDEO_SKULARI
 import com.nickdegs.movelog.ui.L
@@ -64,7 +63,6 @@ fun ProfileScreen(store: Store) {
                 bitti(ok)
                 if (ok) boostMsg = when {
                     sku in VIDEO_SKULARI -> L("Video hakkın eklendi 🎬", "Video credits added 🎬")
-                    sku in SOKAK_SKULARI -> L("Sokak hakkın eklendi 🛣️", "Street credits added 🛣️")
                     else -> L("Bugünkü limitin 2 katına çıktı 🚀", "Today's limit doubled 🚀")
                 }
             }
@@ -143,18 +141,17 @@ fun ProfileScreen(store: Store) {
         }
 
         // Tek seferlik paketler (1.61) — abonelik istemeyene. Play'de olmayan sku kart üretmez.
-        items((VIDEO_SKULARI + SOKAK_SKULARI).filter { billing.paketler.containsKey(it) }) { sku ->
-            val sokakMi = sku in SOKAK_SKULARI
-            val adet = when (sku) { "video_uclu" -> 3; "video_besli" -> 5; "sokak_tek" -> 1; else -> 3 }
+        // 18.09: sokak (Street View) paketleri kaldırıldı — yalnız video paketleri kaldı.
+        items(VIDEO_SKULARI.filter { billing.paketler.containsKey(it) }) { sku ->
+            val adet = when (sku) { "video_uclu" -> 3; "video_besli" -> 5; else -> 3 }
             Surface(color = Brand.card, shape = RoundedCornerShape(22.dp),
                 modifier = Modifier.fillMaxWidth().clickable {
                     (ctx as? android.app.Activity)?.let { billing.buyPaket(it, sku) } }) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (sokakMi) Icons.Filled.Streetview else Icons.Filled.Movie, null, tint = Brand.accent)
+                    Icon(Icons.Filled.Movie, null, tint = Brand.accent)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (sokakMi) L("$adet sokak videosu", "$adet street videos")
-                             else L("$adet video paketi", "$adet video pack"),
+                        Text(L("$adet video paketi", "$adet video pack"),
                             color = Color.White, fontWeight = FontWeight.Bold)
                         Text(L("Aboneliksiz, tek seferlik", "One-time, no subscription"),
                             color = Color(0xFF9AA4B2), fontSize = 13.sp)

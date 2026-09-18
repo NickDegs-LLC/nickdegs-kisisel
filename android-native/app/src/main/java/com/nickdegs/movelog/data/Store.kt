@@ -80,13 +80,11 @@ class Store(app: Application) : AndroidViewModel(app) {
     var me by mutableStateOf("")
     var displayName by mutableStateOf("")
     var premium by mutableStateOf(prefs.getBoolean("nd_premium", false))
-    var ultra by mutableStateOf(prefs.getBoolean("nd_ultra", false))   // Ultra tier: Google 3D + kamera modları + Street View
-    var freeTactical by mutableStateOf(prefs.getBoolean("nd_free_tactical", false))   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (iOS 1.57 paritesi)
-    val canTactical: Boolean get() = ultra || freeTactical                            // Ultra VEYA bedava hak -> taktik açık
+    // 18.09: ultra / freeTactical / canTactical / sokakHak KALDIRILDI — tek abonelik katmanı: Premium.
+    // (Cihazdaki "nd_ultra" / "nd_free_tactical" tercihleri öksüz kalır, zararsız; okuyan kimse yok.)
     // Paket hakları (1.61). Yalnız GÖSTERİM içindir; gerçek kapı sunucuda (/api/rides/generate 402 döner).
     var videoHak by mutableStateOf(0)
-    var sokakHak by mutableStateOf(0)
-    val canGenerate: Boolean get() = premium || ultra || videoHak > 0 || freeTactical
+    val canGenerate: Boolean get() = premium || videoHak > 0
     var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
@@ -108,7 +106,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 val rc = c.responseCode
                 if (rc == 200) {
                     val o = JSONObject(c.inputStream.bufferedReader().readText())
-                    me = o.optString("username", me); persistPremium(o.optBoolean("premium", premium)); persistUltra(o.optBoolean("ultra", ultra))
+                    me = o.optString("username", me); persistPremium(o.optBoolean("premium", premium))
                 }
                 rc
             } catch (e: Exception) { -1 }
@@ -153,9 +151,6 @@ class Store(app: Application) : AndroidViewModel(app) {
     }
     fun persistPremium(v: Boolean) {
         premium = v; prefs.edit().putBoolean("nd_premium", v).apply()
-    }
-    fun persistUltra(v: Boolean) {
-        ultra = v; prefs.edit().putBoolean("nd_ultra", v).apply()
     }
     fun signOut() { persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN }
 
@@ -268,12 +263,8 @@ class Store(app: Application) : AndroidViewModel(app) {
         displayName = o.optString("name", displayName)
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
-        persistPremium(o.optBoolean("premium", premium)); persistUltra(o.optBoolean("ultra", ultra))
-        // TEK-SEFERLİK BEDAVA AKSİYON (iOS 1.57 paritesi): yeni kullanıcıya 1 ücretsiz taktik video hakkı.
-        freeTactical = o.optBoolean("free_tactical", false)
-        prefs.edit().putBoolean("nd_free_tactical", freeTactical).apply()
+        persistPremium(o.optBoolean("premium", premium))
         videoHak = o.optInt("video_hak", 0)
-        sokakHak = o.optInt("sokak_hak", 0)
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -510,7 +501,7 @@ class Store(app: Application) : AndroidViewModel(app) {
         return ok
     }
 
-    // Tüketilebilir (boost / video paketi / sokak paketi) -> sunucu hakkı yazar.
+    // Tüketilebilir (boost / video paketi) -> sunucu hakkı yazar. (18.09: sokak paketi kaldırıldı.)
     // sku GÖNDERİLİR: sunucu 1.61'den beri beyaz liste uyguluyor, sku'suz istek boost sayılır.
     suspend fun verifyGoogleBoost(token: String, sku: String = BOOST_SKU): Boolean {
         val d = req("/api/iap/google/boost", "POST",
@@ -520,7 +511,6 @@ class Store(app: Application) : AndroidViewModel(app) {
         if (ok) {
             // Sunucu güncel toplamı döner; profili beklemeden sayaçları tazele
             if (o.has("video")) videoHak = o.optInt("video", videoHak)
-            if (o.has("sokak")) sokakHak = o.optInt("sokak", sokakHak)
         }
         return ok
     }
@@ -540,37 +530,6 @@ class Store(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) { null }
     }
 
-    // ---- Sohbet (Harita sekmesi içi) ----
-    suspend fun conversations(): List<Convo> {
-        val d = req("/api/chat/list") ?: return emptyList()
-        val arr = JSONObject(d).optJSONArray("conversations") ?: JSONArray()
-        return (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            val last = o.optJSONObject("last")?.optString("text") ?: ""
-            Convo(o.optString("username", ""), o.optString("name", null),
-                o.optBoolean("online", false), o.optInt("unread", 0), last)
-        }
-    }
-
-    // Bir kişiyle mesajlar + karşı profil
-    suspend fun chatWith(other: String): Pair<List<Msg>, String> {
-        val d = req("/api/chat/with/$other") ?: return emptyList<Msg>() to other
-        val o = JSONObject(d)
-        val arr = o.optJSONArray("messages") ?: JSONArray()
-        val msgs = (0 until arr.length()).map { i ->
-            val m = arr.getJSONObject(i)
-            Msg(m.optString("id"), m.optString("frm"), m.optString("text"), m.optLong("ts"),
-                m.optString("type", "text"), m.optString("media", ""))
-        }
-        val name = o.optJSONObject("peer")?.optString("name") ?: other
-        return msgs to name
-    }
-
-    suspend fun chatSend(to: String, text: String): Boolean {
-        val body = JSONObject().put("to", to).put("text", text)
-        val d = req("/api/chat/send", "POST", body) ?: return false
-        return JSONObject(d).optBoolean("ok", false)
-    }
 
     // ---- Canlı konumlar (Harita) ----
     suspend fun positions(): List<Position> {
@@ -640,70 +599,7 @@ class Store(app: Application) : AndroidViewModel(app) {
     suspend fun setGroupVideoPref(pref: String): Boolean =
         req("/api/groupvideo", "PUT", JSONObject().put("pref", pref)) != null
 
-    // ==================== 1.7 KULÜPLER + LİDERLİK ====================
-    suspend fun clubs(): List<Club> {
-        val d = req("/api/clubs") ?: return emptyList()
-        val arr = JSONObject(d).optJSONArray("clubs") ?: JSONArray()
-        return (0 until arr.length()).map { parseClub(arr.getJSONObject(it)) }
-    }
-    suspend fun createClub(name: String): Club? {
-        val d = req("/api/clubs", "POST", JSONObject().put("name", name)) ?: return null
-        return parseClub(JSONObject(d))
-    }
-    suspend fun joinClub(code: String): Club? {
-        val d = req("/api/clubs/join", "POST", JSONObject().put("code", code)) ?: return null
-        return parseClub(JSONObject(d))
-    }
-    suspend fun clubDetail(id: String): Club? {
-        val d = req("/api/clubs/$id") ?: return null
-        return parseClub(JSONObject(d))
-    }
-    suspend fun leaveClub(id: String): Boolean = req("/api/clubs/leave", "POST", JSONObject().put("id", id)) != null
-    suspend fun kickClubMember(id: String, user: String): Boolean =
-        req("/api/clubs/kick", "POST", JSONObject().put("id", id).put("user", user)) != null
-    suspend fun renameClub(id: String, name: String): Club? {
-        val d = req("/api/clubs/rename", "POST", JSONObject().put("id", id).put("name", name)) ?: return null
-        return parseClub(JSONObject(d))
-    }
-    // Haftalık km — arkadaşlar + kulüp arkadaşları; (satırlar, kendi_sıram)
-    suspend fun leaderboard(): Pair<List<LeaderRow>, Int> {
-        val d = req("/api/leaderboard") ?: return emptyList<LeaderRow>() to 0
-        val o = JSONObject(d)
-        val arr = o.optJSONArray("week") ?: JSONArray()
-        val rows = (0 until arr.length()).map {
-            val r = arr.getJSONObject(it)
-            LeaderRow(r.optString("username", ""), r.optString("name", ""),
-                r.optDouble("km", 0.0), r.optInt("rides", 0), avatarEmojiOf(r))
-        }
-        return rows to o.optInt("me", 0)
-    }
 
-    // ==================== 1.8 GÜVENLİK / ROZET / WRAPPED / CANLI TAKİP / PAYLAŞIM ====================
-    suspend fun safety(): SafetyInfo {
-        val d = req("/api/safety") ?: return SafetyInfo("", true, true, "")
-        val o = JSONObject(d); val bp = o.optJSONObject("buddy_profile")
-        return SafetyInfo(o.optString("buddy", ""), o.optBoolean("arrive", true),
-            o.optBoolean("longstop", true), bp?.optString("name", "") ?: "")
-    }
-    suspend fun setSafety(buddy: String?, arrive: Boolean?, longstop: Boolean?): Boolean {
-        val b = JSONObject()
-        if (buddy != null) b.put("buddy", buddy)
-        if (arrive != null) b.put("arrive", arrive)
-        if (longstop != null) b.put("longstop", longstop)
-        return req("/api/safety", "PUT", b) != null
-    }
-    suspend fun badges(): List<String> {
-        val d = req("/api/badges") ?: return emptyList()
-        val arr = JSONObject(d).optJSONArray("badges") ?: JSONArray()
-        return (0 until arr.length()).map { arr.getString(it) }
-    }
-    suspend fun wrapped(): WrappedStats? {
-        val d = req("/api/wrapped") ?: return null
-        val o = JSONObject(d); val ba = o.optJSONArray("badges") ?: JSONArray()
-        return WrappedStats(o.optInt("year", 0), o.optDouble("km", 0.0), o.optInt("rides", 0),
-            o.optDouble("hours", 0.0), o.optDouble("longest_km", 0.0), o.optInt("night_rides", 0),
-            (0 until ba.length()).map { ba.getString(it) })
-    }
     suspend fun liveStart(friend: String): Boolean {
         val d = req("/api/live/start", "POST", JSONObject().put("user", friend)) ?: return false
         return JSONObject(d).optBoolean("fresh", false)
@@ -726,36 +622,7 @@ class Store(app: Application) : AndroidViewModel(app) {
         hrShareLocal = on; prefs.edit().putBoolean("nd_hrshare", on).apply()
         return req("/api/live/hr-share", "POST", JSONObject().put("on", on)) != null
     }
-    // ==================== ÇİFT CANLI TELSİZ (2 kişilik canlı sesli sohbet) ====================
-    suspend fun vcInvite(friend: String): Boolean =
-        req("/api/voicecall/invite", "POST", JSONObject().put("user", friend)) != null
-    suspend fun vcRespond(from: String, accept: Boolean): Boolean =
-        req("/api/voicecall/respond", "POST", JSONObject().put("user", from).put("accept", accept)) != null
-    /** dönen: (inviteFrom, inviteName, goPeer, goName) */
-    suspend fun vcStatus(): Array<String?> {
-        val d = req("/api/voicecall/status") ?: return arrayOf(null, null, null, null)
-        val o = JSONObject(d)
-        fun s(k: String) = if (o.isNull(k)) null else o.optString(k)
-        return arrayOf(s("invite_from"), s("invite_name"), s("go_peer"), s("go_name"))
-    }
     /** dönen: (url, token, peerName) */
-    suspend fun vcToken(peer: String): Triple<String, String, String>? {
-        val esc = java.net.URLEncoder.encode(peer, "UTF-8")
-        val d = req("/api/voicecall/token?peer=$esc") ?: return null
-        val o = JSONObject(d)
-        val u = o.optString("url"); val t = o.optString("token")
-        if (u.isEmpty() || t.isEmpty()) return null
-        return Triple(u, t, o.optString("peer_name", peer))
-    }
-    // PTT ÇAKIŞMA: basılı tutarken karşı tarafın butonu pasifleşsin
-    suspend fun pttBusySet(friend: String, on: Boolean) {
-        req("/api/ptt/busy", "POST", JSONObject().put("user", friend).put("on", on))
-    }
-    suspend fun pttBusyOf(friend: String): Boolean {
-        val esc = java.net.URLEncoder.encode(friend, "UTF-8")
-        val d = req("/api/ptt/busy/$esc") ?: return false
-        return JSONObject(d).optBoolean("busy", false)
-    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     suspend fun sendBeacon() {
         val ctx = getApplication<Application>()
@@ -817,46 +684,6 @@ class Store(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ==================== 1.9 İNTERKOM + TELSİZ ====================
-    // (url, token, room) — LiveKit odası
-    suspend fun intercomToken(cid: String): Triple<String, String, String>? {
-        val d = req("/api/intercom/$cid/token") ?: return null
-        val o = JSONObject(d); val u = o.optString("url", ""); val t = o.optString("token", "")
-        if (u.isEmpty() || t.isEmpty()) return null
-        return Triple(u, t, o.optString("room", ""))
-    }
-    suspend fun pttSend(club: String, data: ByteArray): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val c = (URL("$API/api/ptt/send?club=$club").openConnection() as HttpURLConnection)
-            c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
-            c.setRequestProperty("Content-Type", "audio/mp4")
-            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
-                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-            c.doOutput = true; c.outputStream.use { it.write(data) }
-            c.responseCode in 200..299
-        } catch (e: Exception) { false }
-    }
-    // ÇİFTLER: bir arkadaşa sesli mesaj (kulüp gerekmez, ÜCRETSİZ). /api/ptt/send-user
-    suspend fun pttSendUser(user: String, data: ByteArray): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val c = (URL("$API/api/ptt/send-user?user=$user").openConnection() as HttpURLConnection)
-            c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 30000
-            c.setRequestProperty("Content-Type", "audio/mp4")
-            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
-                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-            c.doOutput = true; c.outputStream.use { it.write(data) }
-            c.responseCode in 200..299
-        } catch (e: Exception) { false }
-    }
-    suspend fun pttGet(id: String): ByteArray? = withContext(Dispatchers.IO) {
-        try {
-            val c = (URL("$API/api/ptt/$id").openConnection() as HttpURLConnection)
-            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
-                c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-            c.connectTimeout = 15000; c.readTimeout = 30000
-            if (c.responseCode == 200) c.inputStream.readBytes() else null
-        } catch (e: Exception) { null }
-    }
 
     // ---- parse yardımcıları ----
     private fun avatarEmojiOf(o: JSONObject): String {

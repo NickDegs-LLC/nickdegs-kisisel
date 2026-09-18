@@ -1,4 +1,14 @@
 node_modules/
+
+# 18.09: Android derleme artıkları YANLIŞLIKLA commit'lenmişti (2508 dosya + imzalı .aab +
+# generated kaynaklarda FCM anahtarı). Dal push EDİLMEDEN fark edildi, geçmiş yeniden kuruldu.
+# `git add -A android-native` bu dizinleri de sahneye alıyordu — bir daha almasın.
+android-native/app/build/
+android-native/.gradle/
+android-native/.local/
+build/
+.gradle/
+
 ios/App/Pods/
 ios/App/App/public/
 ios/App/Podfile.lock

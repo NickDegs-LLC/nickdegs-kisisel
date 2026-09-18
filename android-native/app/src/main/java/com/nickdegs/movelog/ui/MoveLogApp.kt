@@ -106,15 +106,16 @@ fun MoveLogApp(store: Store) {
     }
 
     var sel by remember { mutableStateOf(0) }
-    // Bildirim dokunma -> ilgili sekme (chat->Sohbet, videos->Videolar, voice/friends/wave->Topluluk)
-    // 16.09: harita sekmesi kalktı; telsiz/sesli mesaj Topluluk sekmesinde olduğu için voice oraya gider.
+    // Bildirim dokunma -> ilgili sekme (videos->Videolarım, friends/wave->Arkadaşlar, profile->Profil)
+    // 18.09: Sohbet sekmesi KALDIRILDI (yazılı sohbet + telsiz tamamen çıktı), Topluluk sadeleşip
+    // "Arkadaşlar" oldu -> sekme indeksleri 1 kaydı. 'chat'/'map'/'voice' route'ları artık
+    // karşılıksız; sunucu eski sürümlere göndermeye devam edebilir, sessizce yok sayılır.
     LaunchedEffect(com.nickdegs.movelog.AppNav.route) {
         val r = com.nickdegs.movelog.AppNav.route ?: return@LaunchedEffect
         when (r.substringBefore(":")) {
             "videos" -> sel = 1
-            "chat", "map" -> sel = 3
-            "voice", "friends", "wave" -> sel = 4
-            "profile" -> sel = 5
+            "friends", "wave" -> sel = 3
+            "profile" -> sel = 4
         }
         com.nickdegs.movelog.AppNav.route = null
     }
@@ -122,8 +123,9 @@ fun MoveLogApp(store: Store) {
         Tab(L("Rotalar", "Routes"), Icons.Filled.Map),
         Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
-        Tab(L("Sohbet", "Chat"), Icons.Filled.Chat),
-        Tab(L("Topluluk", "Community"), Icons.Filled.Groups),
+        // 18.09: "Sohbet" sekmesi kaldırıldı; "Topluluk" -> "Arkadaşlar" (yalnız arkadaş ekleme +
+        // ikili sürüş videosu tercihi kalıyor). "Friends" anahtarı Strings.kt'de ZATEN var -> 12 dil hazır.
+        Tab(L("Arkadaşlar", "Friends"), Icons.Filled.Groups),
         Tab(L("Profil", "Profile"), Icons.Filled.Person),
     )
 
@@ -152,8 +154,7 @@ fun MoveLogApp(store: Store) {
                 0 -> RoutesScreen(store)
                 1 -> VideosScreen(store)
                 2 -> SummariesScreen(store)
-                3 -> ChatScreen(store)
-                4 -> CommunityScreen(store)
+                3 -> CommunityScreen(store)
                 else -> ProfileScreen(store)
             }
         }

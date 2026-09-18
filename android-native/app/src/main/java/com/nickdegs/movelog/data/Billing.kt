@@ -13,8 +13,9 @@ import kotlin.coroutines.resume
 const val BOOST_SKU = "boost_daily2x"
 // Video/Sokak paketleri (1.61) — Play ürün adları Apple'ınkilerle eşlenik: …video.uclu → video_uclu
 val VIDEO_SKULARI = listOf("video_uclu", "video_besli")
-val SOKAK_SKULARI = listOf("sokak_tek", "sokak_uclu")
-private val TUKETILEBILIR = listOf(BOOST_SKU) + VIDEO_SKULARI + SOKAK_SKULARI
+// 18.09: SOKAK_SKULARI ("sokak_tek"/"sokak_uclu") KALDIRILDI — Street View/Sokak modu uygulamadan
+// çıktı. ⚠️ TUKETILEBILIR aynı ifadede kullanıyordu, birlikte düzeltildi (yoksa derleme kırılırdı).
+private val TUKETILEBILIR = listOf(BOOST_SKU) + VIDEO_SKULARI
 
 class Billing(
     context: Context,
@@ -29,8 +30,6 @@ class Billing(
 ) {
     var monthly by mutableStateOf<Pair<ProductDetails, String>?>(null)   // (ürün, offerToken)
     var yearly by mutableStateOf<Pair<ProductDetails, String>?>(null)
-    var ultraMonthly by mutableStateOf<Pair<ProductDetails, String>?>(null)   // ULTRA: Google 3D + kameralar + Street View
-    var ultraYearly by mutableStateOf<Pair<ProductDetails, String>?>(null)
     var boost by mutableStateOf<ProductDetails?>(null)                   // consumable; Play'de yoksa null kalır (buton gizli)
     // Paket ürünleri sku -> detay; Play'de olmayan sku haritaya hiç girmez (o kart gizli kalır)
     var paketler by mutableStateOf<Map<String, ProductDetails>>(emptyMap())
@@ -74,21 +73,7 @@ class Billing(
                 }
             }
         }
-        // ULTRA subscription (Play'de yoksa liste boş -> null kalır, buton gizli)
-        val uparams = QueryProductDetailsParams.newBuilder().setProductList(
-            listOf(QueryProductDetailsParams.Product.newBuilder()
-                .setProductId("ultra").setProductType(BillingClient.ProductType.SUBS).build())
-        ).build()
-        client.queryProductDetailsAsync(uparams) { _, res ->
-            val p = res.productDetailsList.firstOrNull() ?: return@queryProductDetailsAsync
-            p.subscriptionOfferDetails?.forEach { offer ->
-                val period = offer.pricingPhases.pricingPhaseList.lastOrNull()?.billingPeriod ?: ""
-                when {
-                    period.contains("Y") || offer.basePlanId.contains("year") -> ultraYearly = p to offer.offerToken
-                    period.contains("M") || offer.basePlanId.contains("month") -> ultraMonthly = p to offer.offerToken
-                }
-            }
-        }
+        // 18.09: ULTRA abonelik sorgusu KALDIRILDI (tek katman: premium).
         // Tüketilebilirler (INAPP): boost + video/sokak paketleri. Play'de olmayan sku listeye hiç girmez.
         val bparams = QueryProductDetailsParams.newBuilder().setProductList(
             TUKETILEBILIR.map {

@@ -15,14 +15,8 @@
 -dontwarn kotlinx.coroutines.**
 -keepclassmembers class kotlin.Metadata { *; }
 
-# ── LiveKit (canlı telsiz/interkom) ─────────────────────────────────────────
-# WebRTC JNI: native tarafın isimle bulduğu sınıf/metotlar kırpılırsa ses hattı ÇALIŞMA ANINDA ölür.
--keep class io.livekit.android.** { *; }
--keep class livekit.** { *; }
--keep class org.webrtc.** { *; }
--dontwarn org.webrtc.**
--keep class com.github.davidliu.audioswitch.** { *; }
--dontwarn com.github.davidliu.audioswitch.**
+# ── LiveKit kuralları KALDIRILDI (18.09) ────────────────────────────────────
+# Canlı telsiz/interkom uygulamadan çıktı, livekit-android bağımlılığı da kaldırıldı.
 
 # ── Google ile giriş (Credential Manager + Google ID) ───────────────────────
 # googleid kütüphanesi Bundle anahtarlarını sınıf adıyla çözüyor.

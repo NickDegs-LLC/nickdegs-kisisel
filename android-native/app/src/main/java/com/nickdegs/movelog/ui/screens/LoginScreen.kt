@@ -48,7 +48,7 @@ fun LoginScreen(store: Store) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Move Log", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Brand.accent)
-            Text(L("Rotalar · Aktivite · Telsiz", "Routes · Activity · Walkie-talkie"),
+            Text(L("Rotalar · Aktivite · Otonom Video", "Routes · Activity · Autonomous Video"),
                 color = Color(0xFF9AA4B2))
             Spacer(Modifier.height(6.dp))
 

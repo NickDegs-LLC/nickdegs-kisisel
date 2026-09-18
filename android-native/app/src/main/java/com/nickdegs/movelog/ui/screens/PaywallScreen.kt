@@ -69,30 +69,7 @@ fun PaywallScreen(store: Store, onClose: () -> Unit) {
         Spacer(Modifier.height(10.dp))
         PlanCard(L("Aylık", "Monthly"), billing.priceOf(billing.monthly), null, sel == 0) { sel = 0 }
 
-        // ULTRA yükseltme (Play'de ürün varsa): Google 3D + kamera modları + Street View
-        if (billing.ultraYearly != null || billing.ultraMonthly != null) {
-            Spacer(Modifier.height(16.dp))
-            Text(L("Ultra — Taktik görev videoları", "Ultra — Tactical mission videos"),
-                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(L("Askeri tarzda taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita katmanı, sinematik kamera açıları ve 4 kat aylık video hakkı.",
-                   "Military-style tactical mission videos, highest-resolution map layer with 3D buildings, cinematic camera angles and 4x monthly video quota."),
-                color = Color(0xFF9AA4B2), fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
-            billing.ultraYearly?.let { uy ->
-                Button(onClick = { activity?.let { billing.buy(it, uy) } }, enabled = billing.ready,
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Text(L("Ultra Yıllık", "Ultra Yearly") + "   " + billing.priceOf(uy), fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-            billing.ultraMonthly?.let { um ->
-                Button(onClick = { activity?.let { billing.buy(it, um) } }, enabled = billing.ready,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A3340)),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Text(L("Ultra Aylık", "Ultra Monthly") + "   " + billing.priceOf(um))
-                }
-            }
-        }
+        // 18.09: ULTRA yükseltme bloğu KALDIRILDI — tek abonelik katmanı var: Premium.
 
         Spacer(Modifier.weight(1f))
         Button(

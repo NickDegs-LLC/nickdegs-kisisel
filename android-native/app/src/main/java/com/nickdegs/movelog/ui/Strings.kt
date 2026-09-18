@@ -13,12 +13,11 @@ private fun currentLang(): String {
 
 // İngilizce anahtara göre 12-dil çeviri (eksikse İngilizce'ye düşer)
 private val TRANS: Map<String, Map<String, String>> = mapOf(
-    "Routes · Activity · Walkie-talkie" to mapOf("tr" to "Rotalar · Aktivite · Telsiz","de" to "Routen · Aktivität · Funk","fr" to "Itinéraires · Activité · Talkie-walkie","es" to "Rutas · Actividad · Walkie","it" to "Percorsi · Attività · Radio","pt" to "Rotas · Atividade · Rádio","ru" to "Маршруты · Активность · Рация","ja" to "ルート · アクティビティ · トランシーバー","zh" to "路线 · 活动 · 对讲机","ko" to "경로 · 활동 · 무전기","ar" to "المسارات · النشاط · لاسلكي"),
+    "Routes · Activity · Autonomous Video" to mapOf("tr" to "Rotalar · Aktivite · Otonom Video","de" to "Routen · Aktivität · Autonomes Video","fr" to "Itinéraires · Activité · Vidéo autonome","es" to "Rutas · Actividad · Vídeo autónomo","it" to "Percorsi · Attività · Video autonomo","pt" to "Rotas · Atividade · Vídeo autônomo","ru" to "Маршруты · Активность · Автономное видео","ja" to "ルート · アクティビティ · 自動生成ビデオ","zh" to "路线 · 活动 · 自动视频","ko" to "경로 · 활동 · 자동 영상","ar" to "المسارات · النشاط · فيديو تلقائي"),
     "Username" to mapOf("tr" to "Kullanıcı","de" to "Benutzer","fr" to "Identifiant","es" to "Usuario","it" to "Utente","pt" to "Usuário","ru" to "Пользователь","ja" to "ユーザー名","zh" to "用户名","ko" to "사용자 이름","ar" to "اسم المستخدم"),
     "Password" to mapOf("tr" to "Parola","de" to "Passwort","fr" to "Mot de passe","es" to "Contraseña","it" to "Password","pt" to "Senha","ru" to "Пароль","ja" to "パスワード","zh" to "密码","ko" to "비밀번호","ar" to "كلمة المرور"),
     "Sign in" to mapOf("tr" to "Giriş yap","de" to "Anmelden","fr" to "Se connecter","es" to "Iniciar sesión","it" to "Accedi","pt" to "Entrar","ru" to "Войти","ja" to "サインイン","zh" to "登录","ko" to "로그인","ar" to "تسجيل الدخول"),
     "Routes" to mapOf("tr" to "Rotalar","de" to "Routen","fr" to "Itinéraires","es" to "Rutas","it" to "Percorsi","pt" to "Rotas","ru" to "Маршруты","ja" to "ルート","zh" to "路线","ko" to "경로","ar" to "المسارات"),
-    "Chat" to mapOf("tr" to "Sohbet","de" to "Chat","fr" to "Discussion","es" to "Chat","it" to "Chat","pt" to "Conversa","ru" to "Чат","ja" to "チャット","zh" to "聊天","ko" to "채팅","ar" to "الدردشة"),
     "Map" to mapOf("tr" to "Harita","de" to "Karte","fr" to "Carte","es" to "Mapa","it" to "Mappa","pt" to "Mapa","ru" to "Карта","ja" to "マップ","zh" to "地图","ko" to "지도","ar" to "الخريطة"),
     "Stats" to mapOf("tr" to "İstatistik","de" to "Statistik","fr" to "Stats","es" to "Stats","it" to "Statistiche","pt" to "Estatísticas","ru" to "Статистика","ja" to "統計","zh" to "统计","ko" to "통계","ar" to "الإحصاءات"),
     "Profile" to mapOf("tr" to "Profil","de" to "Profil","fr" to "Profil","es" to "Perfil","it" to "Profilo","pt" to "Perfil","ru" to "Профиль","ja" to "プロフィール","zh" to "个人资料","ko" to "프로필","ar" to "الملف"),
@@ -58,8 +57,11 @@ private val TRANS: Map<String, Map<String, String>> = mapOf(
     "Sign-in failed, please try again." to mapOf("tr" to "Giriş yapılamadı, tekrar dene.","de" to "Anmeldung fehlgeschlagen, bitte erneut versuchen.","fr" to "Échec de la connexion, réessayez.","es" to "No se pudo iniciar sesión, inténtalo de nuevo.","it" to "Accesso non riuscito, riprova.","pt" to "Falha ao entrar, tente novamente.","ru" to "Не удалось войти, попробуйте ещё раз.","ja" to "サインインに失敗しました。もう一度お試しください。","zh" to "登录失败，请重试。","ko" to "로그인 실패, 다시 시도하세요.","ar" to "فشل تسجيل الدخول، حاول مرة أخرى."),
     "No account? One is created automatically." to mapOf("tr" to "Hesabın yoksa otomatik oluşturulur.","de" to "Kein Konto? Es wird automatisch erstellt.","fr" to "Pas de compte ? Il sera créé automatiquement.","es" to "¿Sin cuenta? Se crea automáticamente.","it" to "Nessun account? Ne viene creato uno automaticamente.","pt" to "Sem conta? Uma é criada automaticamente.","ru" to "Нет аккаунта? Он создастся автоматически.","ja" to "アカウントがなくても自動で作成されます。","zh" to "没有账号？将自动创建。","ko" to "계정이 없으면 자동으로 생성됩니다.","ar" to "لا حساب لديك؟ سيُنشأ تلقائيًا."),
     // 16.09: burada "Routes · Activity · Live location" anahtarı İKİNCİ kez tanımlıydı (yinelenen girdi,
-    // Kotlin mapOf'ta sonuncusu kazanıyordu). Slogan telsize döndüğü için yinelenen girdi kaldırıldı;
-    // geçerli tek tanım yukarıda "Routes · Activity · Walkie-talkie".
+    // Kotlin mapOf'ta sonuncusu kazanıyordu); yinelenen girdi kaldırıldı.
+    // 18.09: telsiz kalktığı için slogan "Routes · Activity · Autonomous Video" oldu — geçerli tek
+    // tanım yukarıda. ⚠️ L() çeviriyi İNGİLİZCE metne göre arar: çağrı yerini (LoginScreen.kt)
+    // değiştirirken bu anahtarı da AYNI commit'te değiştir, yoksa 10 dil sessizce İngilizce'ye düşer.
+    // "Chat" anahtarı 18.09'da kaldırıldı (yazılı sohbet çıktı, kodda 0 kullanım kaldı).
     "Detection sensitivity" to mapOf("tr" to "Algılama hassasiyeti","de" to "Erkennungsgenauigkeit","fr" to "Précision de détection","es" to "Precisión de detección","it" to "Precisione di rilevamento","pt" to "Precisão de detecção","ru" to "Точность отслеживания","ja" to "検出感度","zh" to "检测精度","ko" to "감지 정밀도","ar" to "دقة التتبّع"),
     "High" to mapOf("tr" to "Hassas","de" to "Hoch","fr" to "Élevée","es" to "Alta","it" to "Alta","pt" to "Alta","ru" to "Высокая","ja" to "高","zh" to "高","ko" to "높음","ar" to "عالية"),
     "Balanced" to mapOf("tr" to "Dengeli","de" to "Ausgewogen","fr" to "Équilibrée","es" to "Equilibrada","it" to "Bilanciata","pt" to "Equilibrada","ru" to "Сбаланс.","ja" to "バランス","zh" to "均衡","ko" to "균형","ar" to "متوازنة"),
