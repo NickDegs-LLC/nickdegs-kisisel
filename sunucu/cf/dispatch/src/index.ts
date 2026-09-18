@@ -51,8 +51,8 @@ async function bildirimYaz(env: Env, msg: string): Promise<void> {
   } catch { /* yut */ }
 }
 
-// AYLIK KULLANICI BÜTÇESİ — varsayılanlar ortak/src/maliyet.ts (api ile aynı düğme);
-// KV `butce-ultra-usd` / `butce-premium-usd` ile deploy'suz ayarlanır.
+// AYLIK KULLANICI BÜTÇESİ — varsayılan ortak/src/maliyet.ts (api ile aynı düğme);
+// KV `butce-premium-usd` ile deploy'suz ayarlanır (18.09: tek katman, `butce-ultra-usd` ölü).
 // NEDEN BURADA: `grup1.bumpDailyCap` YALNIZ `/api/rides/generate` yolunda çalışıyor. Otomatik
 // üretim (activity-detect), onarım (video-butunluk) ve bekçi yolları HİÇBİR kullanıcı bütçesine
 // girmiyordu — yani abonelik başına maliyet üst sınırı fiilen YOKTU. Cron tarafı işleri
@@ -72,10 +72,10 @@ async function parkEt(
 async function aylikButce(
   env: Env, uid: string, bedel: number,
 ): Promise<{ ok: true } | { ok: false; harcanan: number; butce: number }> {
-  const u = await env.DB.prepare('SELECT premium, ultra, admin FROM users WHERE uid = ?1')
-    .bind(uid).first<{ premium: number | null; ultra: number | null; admin: number | null }>()
+  const u = await env.DB.prepare('SELECT premium, admin FROM users WHERE uid = ?1')
+    .bind(uid).first<{ premium: number | null; admin: number | null }>()
   if (!u) return { ok: true }                                   // kullanıcı yoksa engelleme
-  const butce = await aylikButceLimit(env.KV, !!u.ultra)
+  const butce = await aylikButceLimit(env.KV)
   // ⚠️ grup1.ts TR gününe göre ay üretiyor (trDay). Burada UTC kullanılırsa ayın 1'i
   // 00:00-03:00 TR arası İKİ FARKLI kovaya yazılır ve bütçe sıfırlanmış gibi görünür.
   const ay = 'ay_' + trGunu(simdi()).slice(0, 7)
@@ -111,9 +111,9 @@ async function butceKapisi(
     const anahtar = `gpu:gun:${gun}`
     const harcanan = parseFloat((await env.KV.get(anahtar)) || '0') || 0
     const jb = job as Record<string, unknown> | undefined
-    // grup1.ts'teki `tur` sıralamasıyla aynı: pacman -> sv, speed=auto -> auto, sonra mod.
-    // grup1.ts `turMaliyet` ile aynı: pacman -> sv, 3d -> 3d, auto -> auto, sonra mod.
-    const mod = String(jb?.cam === 'pacman' ? 'sv' : jb?.mode === '3d' ? '3d' : jb?.speed === 'auto' ? 'auto' : (jb?.mode ?? 'flyover'))
+    // grup1.ts `turMaliyet` ile aynı: 3d -> 3d, speed=auto -> auto, sonra mod.
+    // 18.09: `cam === 'pacman' -> sv` dalı KALKTI (Sokak/Street View ürünü kaldırıldı).
+    const mod = String(jb?.mode === '3d' ? '3d' : jb?.speed === 'auto' ? 'auto' : (jb?.mode ?? 'flyover'))
     const bedel = await modMaliyet(env.KV, mod, 0.1)
     if (harcanan + bedel > limit) return { ok: false, harcanan, limit, tur: 'gunluk' }
     // OTOMATİK işler (cron/onarım/bekçi) kullanıcının AYLIK bütçesine de girer — API yolu

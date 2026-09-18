@@ -10,14 +10,15 @@ export type MotorAd = 'runpod' | 'modal'
 // RunPod = filo ortalaması 1195 GPU-sn ≈ $0,375; Modal = 07.09 ölçümü T4 15,4 dk $0,2323
 // (CPU+RAM DAHİL), yukarı yuvarlandı; flyover/flat ölçülen 40-60 GPU-sn, muhafazakâr 0,05.
 export const MOTOR_MALIYET: Record<MotorAd, Record<string, number>> = {
-  runpod: { '3d': 0.38, auto: 0.38, flyover: 0.05, flat: 0.05, sv: 4.9 },
-  modal: { '3d': 0.24, auto: 0.24, flyover: 0.05, flat: 0.05, sv: 4.9 },
+  runpod: { '3d': 0.38, auto: 0.38, flyover: 0.05, flat: 0.05 },
+  modal: { '3d': 0.24, auto: 0.24, flyover: 0.05, flat: 0.05 },
 }
 
 // GPU maliyeti ≤ aylık net gelirin %30'u (premium.monthly $4,99 → net $4,24 → %29,5;
-// ultra.monthly $9,99 → net $8,49 → %29,4; Small Business Program kaydı Barış tarafından
-// teyit edildi → komisyon %15).
-export const BUTCE_VARSAYILAN = { premium: 1.25, ultra: 2.5 }
+// Small Business Program kaydı Barış tarafından teyit edildi → komisyon %15).
+// 18.09 TEK KATMAN: Ultra kalktı. `ultra` varsayılanı ve KV `butce-ultra-usd` artık OKUNMUYOR;
+// canlı tavan tek düğmede: KV `butce-premium-usd` (bugün 3.00).
+export const BUTCE_VARSAYILAN = { premium: 1.25 }
 
 /** TR günü YYYY-MM-DD — dispatch trGunu / cron trGun ile aynı (UTC+3). */
 export const TR_OFS = 3 * 3600
@@ -53,11 +54,13 @@ export async function modMaliyet(kv: KVNamespace, mod: string, varsayilan: numbe
   return Number.isFinite(n) ? n : varsayilan
 }
 
-/** KV 'butce-ultra-usd' / 'butce-premium-usd' sayı ise onu, değilse BUTCE_VARSAYILAN. */
-export async function aylikButceLimit(kv: KVNamespace, ultra: boolean): Promise<number> {
-  const varsayilan = ultra ? BUTCE_VARSAYILAN.ultra : BUTCE_VARSAYILAN.premium
+/** KV 'butce-premium-usd' sayı ise onu, değilse BUTCE_VARSAYILAN.premium (tek katman).
+ *  ⚠️ `n >= 0` bilinçli: 0 GEÇERLİ bir tavan sayılır ve HERKESİ bloklar — tavanı kapatmak
+ *  isteyen büyük bir sayı yazmalı, 0 değil (bkz. 18.09 olayı). */
+export async function aylikButceLimit(kv: KVNamespace): Promise<number> {
+  const varsayilan = BUTCE_VARSAYILAN.premium
   try {
-    const v = await kv.get(ultra ? 'butce-ultra-usd' : 'butce-premium-usd')
+    const v = await kv.get('butce-premium-usd')
     const n = v === null ? NaN : parseFloat(v)
     return Number.isFinite(n) && n >= 0 ? n : varsayilan
   } catch { return varsayilan }

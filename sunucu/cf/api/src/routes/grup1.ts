@@ -9,7 +9,7 @@
 //   POST   /api/rides/photo                 (main.py:2204)
 //   POST   /api/rides/{ride_id}/type        (main.py:2228)
 //   POST   /api/rides/upload                (main.py:2435 + _parse_route_file 2367)
-//   POST   /api/rides/generate              (main.py:2512 + _bump_daily_cap 2273 + _sv_guard 2489)
+//   POST   /api/rides/generate              (main.py:2512 + _bump_daily_cap 2273)
 //   POST   /api/rides/{ride_id}/regenerate  (main.py:2636)
 //
 // SAPMA NOTLARI (gölge-diff işaretleri):
@@ -41,7 +41,6 @@ import type { AppEnv, Env } from '../lib/env'
 import { authUser } from '../lib/auth'
 import { BARIS_UID, etkinSahip, getUser, ornekMi, simdi } from '../lib/db'
 import { hata } from '../lib/hata'
-import { svKapali } from '../lib/ortak'
 import { aylikButceLimit, modMaliyet } from '../../../ortak/src/maliyet'
 
 const g = new Hono<AppEnv>()
@@ -54,32 +53,10 @@ type ExtEnv = Env & {
 
 // ---------- sabitler (main.py eşlenikleri) ----------
 const TYPE_EMOJI: Record<string, string> = { moto: '🏍️', car: '🚗', bike: '🚲', run: '🏃', walk: '🚶' }
-// ---------------------------------------------------------------------------
-// SOKAK GÖRÜNÜMÜ — KİLOMETREYE GÖRE (Barış 05.09: "ürün başına satıyoruz, kilometre kilometre
-// uzunluğuna göre ayarla").
-// ÖLÇÜM (bu oturumda doğrulandı):
-//  · `render-worker/scripts/streetview.py:34` rotayı 8 m'ye interpole eder → 125 pano/km.
-//  · `:60` `_MAXP = 700` PANO TAVANI var → maliyet uzunluktan BAĞIMSIZ olarak ~$4,90'da duruyor.
-//    (Bir denetim ajanı "100 km = $87,50" demişti; bu tavanı kaçırmış, iddia GEÇERSİZ.)
-//  · Google SKU: Street View Static görselleri 10.000/ay ÜCRETSİZ, sonrası $0,0056-0,007/pano.
-//    Street View METADATA (`3168-48A9-5C8C`) tamamen ÜCRETSİZ ve sınırsız → km ile artan
-//    metadata çağrıları hiçbir şeye mal olmuyor.
-//  · `svcache/` R2 önbelleği: aynı yol ikinci kez render edilirse pano maliyeti $0.
-// SONUÇ: ürün her uzunlukta kârlı; ASIL sorun KALİTE. 700 pano 100 km'ye yayılınca 143 metrede
-// bir kare kalıyor — hyperlapse değil slayt gösterisi. Kullanıcı $9,99 ödeyip kötü video alıyor.
-// TASARIM: hak = kilometre. 1 sokak hakkı = 6 km TAM DETAY (700 pano @ 8 m = 5,6 km + pay).
-// Daha uzun rota daha çok hak yer VE motorun pano bütçesi hakla birlikte büyür → ödediğin
-// kadar detay alırsın. Üst sınır 3 hak (RAM emniyeti: 700 pano ≈ 2 GB, 2100 ≈ 6 GB).
 // App Store inceleme hesapları — üretim tavanlarından muaf (bkz. bumpDailyCap ve dispatch).
 // Aynı liste cron/gorevler/premium-suresi.ts DOKUNMA kümesiyle bilinçli olarak eşleşir.
 export const INCELEME = new Set(['appreview', 'appreview2'])
 
-const SV_KM_KREDI = 6                       // 1 sokak hakkı kaç km kapsar
-const SV_MAX_KREDI = 3                      // tek videoda en fazla kaç hak (motor RAM tavanı)
-const SV_PANO_KREDI = 700                   // hak başına pano bütçesi (streetview.py _MAXP)
-const SV_USD_KM = 0.875                     // 125 pano/km × $0,007
-const SV_USD_KREDI = 4.9                    // 700 pano × $0,007 (hak başına tavan)
-const SV_MAX_KM = SV_KM_KREDI * SV_MAX_KREDI // 18 km — bu sınırın üstünde video KALİTESİ çöküyor
 // 🔴 05.09: ÜÇÜ DE 0 (= ölü) idi. İki sonucu vardı: (1) tek bir günde aylık payın tamamı
 // yanabiliyordu, (2) $1,99'luk `boost` ürünü ("günlük limitin 2 katına çıkar") HİÇBİR ŞEY
 // vermiyordu — `mult` çarpanı yalnız bu sabitlerle kullanılıyor, sıfırla çarpılınca etkisiz.
@@ -90,8 +67,6 @@ const SV_MAX_KM = SV_KM_KREDI * SV_MAX_KREDI // 18 km — bu sınırın üstünd
 const DAILY_VIDEO_CAP = 15                  // düz/kuşbakışı: ucuz ama sonsuz döngüye karşı tavan
 const DAILY_3D_CAP = 6                      // ölçülen zirve 5 → tavan 6
 const DAILY_AUTO_CAP = 1                    // Otonom en uzun render (hata metni zaten "günde 1" diyor)
-const DAILY_SV_CAP = 2                      // bilgi amaçlı (sv artık yalnız sokak_hak ile)
-void DAILY_SV_CAP
 // 🔴 FİKS 05.09 — MALİYET MODELİ ÖLÇÜME OTURTULDU (uçtan uca tarama bulgusu).
 // ÖLÇÜM: D1 `gpu_costs` → 912 GPU saniyesi / 1 adet 3B video (≈15,2 dk). RunPod flex fiyatlarıyla
 // ≈ $0,19-0,28. Kodda `'3d': 0.033` yazıyordu — gerçeğin 6-9 KATI DÜŞÜK. `flat: 0.0` ise
@@ -101,24 +76,6 @@ void DAILY_SV_CAP
 // YENİ KURAL: GPU maliyeti ≤ net gelirin %30'u → katkı marjı ~%66.
 //   premium.monthly $4,99 → net $4,24 → 1,25    ultra.monthly $9,99 → net $8,49 → 2,50
 //   Small Business Program kaydı Barış tarafından teyit edildi → komisyon %15.
-
-// Sokak-limiti mesajı 12 dilde (main.py:2473-2486 birebir)
-const SV_MSG: Record<string, string> = {
-  tr: "Vay be, {km} km'lik bir yolculuk! 🏍️ Sokak görünümü rotayı gerçek sokak fotoğraflarıyla kare kare işlediği için bu uzunlukta desteklenmiyor (en fazla {mx} km). Bu dev rota için 3B görünüm çok daha güzel sonuç verir — Sokak modunu şehir turlarında dene! 🙏",
-  en: "Wow, a {km} km journey! 🏍️ Street view builds your route frame-by-frame from real street photos, so it isn't supported for rides this long (max {mx} km). For an epic route like this, 3D view looks amazing — save Street mode for city rides! 🙏",
-  de: "Wow, eine {km} km lange Fahrt! 🏍️ Die Straßenansicht baut deine Route Bild für Bild aus echten Straßenfotos auf und wird daher bei so langen Fahrten nicht unterstützt (max. {mx} km). Für so eine epische Route sieht die 3D-Ansicht großartig aus — nutze den Straßenmodus für Stadtfahrten! 🙏",
-  fr: "Waouh, un trajet de {km} km ! 🏍️ La vue Rue construit votre itinéraire image par image à partir de vraies photos de rue, elle n'est donc pas disponible pour des trajets aussi longs (max {mx} km). Pour un itinéraire aussi épique, la vue 3D est superbe — gardez le mode Rue pour la ville ! 🙏",
-  es: "¡Vaya, un viaje de {km} km! 🏍️ La vista de calle crea tu ruta fotograma a fotograma con fotos reales de la calle, por lo que no está disponible para rutas tan largas (máx. {mx} km). Para una ruta tan épica, la vista 3D queda espectacular — ¡usa el modo Calle en la ciudad! 🙏",
-  it: "Wow, un viaggio di {km} km! 🏍️ La vista Strada costruisce il percorso fotogramma per fotogramma da vere foto stradali, quindi non è supportata per percorsi così lunghi (max {mx} km). Per un percorso così epico la vista 3D è fantastica — usa la modalità Strada in città! 🙏",
-  ru: "Ого, поездка на {km} км! 🏍️ Режим улиц собирает маршрут кадр за кадром из реальных уличных фото, поэтому он недоступен для таких длинных поездок (макс. {mx} км). Для такого эпичного маршрута отлично подойдёт 3D-вид — а режим улиц оставь для города! 🙏",
-  ar: "يا له من رحلة بطول {km} كم! 🏍️ عرض الشارع يبني مسارك إطارًا بإطار من صور شوارع حقيقية، لذا لا يدعم الرحلات بهذا الطول (بحد أقصى {mx} كم). لمسار ملحمي كهذا، العرض ثلاثي الأبعاد رائع — جرّب وضع الشارع في جولات المدينة! 🙏",
-  pt: "Uau, uma viagem de {km} km! 🏍️ A vista de rua monta sua rota quadro a quadro com fotos reais de rua, então não é compatível com trajetos tão longos (máx. {mx} km). Para uma rota épica assim, a vista 3D fica incrível — use o modo Rua nos passeios pela cidade! 🙏",
-  ja: "すごい、{km} kmの旅ですね！🏍️ ストリートビューは実際の街路写真からルートを1コマずつ作成するため、これほど長いルートには対応していません（最大 {mx} km）。この壮大なルートには3Dビューがおすすめです — ストリートモードは街乗りでどうぞ！🙏",
-  ko: "와, {km} km의 여정이네요! 🏍️ 거리 보기는 실제 거리 사진으로 경로를 한 프레임씩 만들기 때문에 이렇게 긴 경로는 지원되지 않아요 (최대 {mx} km). 이런 멋진 경로에는 3D 보기가 훨씬 잘 어울려요 — 거리 모드는 도심 주행에서 사용해 보세요! 🙏",
-  zh: "哇，{km} 公里的旅程！🏍️ 街景模式需要用真实街拍照片逐帧生成路线，因此不支持这么长的路线（最长 {mx} 公里）。如此壮观的路线用 3D 视图效果更棒 — 街景模式留给城市骑行吧！🙏",
-}
-
-const SOKAK_BAKIM_MSG = 'Sokak görünümü şu anda bakımda 🛠️ Gerçek sokak fotoğrafları sağlayıcısında geçici bir sorun var. Bu arada 3B görünüm tüm ihtişamıyla çalışıyor — onu deneyebilirsin, düzelince haber vereceğiz 🙏'
 
 // ---------- Python semantiği yardımcıları ----------
 /** Python str(): None→'None', True/False→'True'/'False'. */
@@ -333,12 +290,6 @@ function havM(a: { lat: number; lon: number }, b: { lat: number; lon: number }):
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
-function trackKm(track: Array<{ lat: number; lon: number }>): number {
-  let km = 0
-  for (let i = 1; i < (track?.length ?? 0); i++) km += havM(track[i - 1], track[i]) / 1000
-  return km
-}
-
 /** GPX/TCX ISO8601 → epoch sn (main.py _xiso). */
 function xiso(s: string): number | null {
   if (!s) return null
@@ -442,62 +393,14 @@ function parseRouteFile(metin: string): TrackPt[] {
   return track
 }
 
-// ---------- Sokak guard + dil (main.py 2489-2509) ----------
-function reqLang(c: Context<AppEnv>): string {
-  try {
-    const al = (c.req.header('accept-language') || '').toLowerCase()
-    for (const code of Object.keys(SV_MSG)) {
-      if (al.startsWith(code) || al.includes(`,${code}`) || al.includes(` ${code}`)) return code
-    }
-  } catch { /* boş */ }
-  return 'en'
-}
-
-/**
- * Sokak videosunun rota uzunluğu (km). Sıra: yüklenen iz → `rides.km` → D1 positions.
- * `null` = ölçülemedi (o durumda eski süre-tabanlı emniyet devreye girer).
- */
-async function svKmOlc(
-  db: D1Database, user: string, upl: TrackPt[] | null, frm: number, to: number,
-): Promise<number | null> {
-  if (upl && upl.length > 1) return trackKm(upl)
-  const rid = `${trDay(frm)}_${Math.trunc(frm)}`
-  const r = await db.prepare('SELECT km FROM rides WHERE rid = ?1').bind(rid).first<{ km: number | null }>()
-  if (r?.km && Number(r.km) > 0) return Number(r.km)
-  const u = await db.prepare('SELECT tracker_id FROM users WHERE uid = ?1').bind(user)
-    .first<{ tracker_id: string | null }>()
-  if (!u?.tracker_id) return null
-  const q = await db.prepare(
-    'SELECT lat, lon FROM positions WHERE device = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts')
-    .bind(u.tracker_id, Math.floor(frm), Math.floor(to)).all<{ lat: number; lon: number }>()
-  if ((q.results?.length ?? 0) < 2) return null
-  return trackKm(q.results)
-}
-
-/** Rota uzunluğu → gereken sokak hakkı (kilometre başına ürün; Barış 05.09). */
-function svKrediGerek(km: number | null): number {
-  if (km === null || !(km > 0)) return 1
-  return Math.min(SV_MAX_KREDI, Math.max(1, Math.ceil(km / SV_KM_KREDI)))
-}
-
-function svGuard(cam: unknown, upl: TrackPt[] | null, frm: number, to: number, lang: string): void {
-  if (cam !== 'pacman') return
-  const km = upl ? trackKm(upl) : null
-  const uzun = (km !== null && km > SV_MAX_KM) || (km === null && to - frm > 4 * 3600)
-  if (uzun) {
-    const msg = SV_MSG[lang] ?? SV_MSG.en
-    hata(400, msg.replace('{km}', km !== null ? km.toFixed(0) : '999+').replace('{mx}', String(SV_MAX_KM)))
-  }
-}
-
 // ---------- günlük limit + aylık bütçe (main.py _bump_daily_cap 2273-2337) ----------
 // D1 yazımları ERTELENİR (stmts) — orijinaldeki "bellekte değiştir, _save'de kalıcılaştır"
 // semantiği korunur: araya giren HTTPException'da hiçbir sayaç/hak yazılmaz.
 type Prof = Record<string, unknown>
 async function bumpDailyCap(
-  db: D1Database, kv: KVNamespace, user: string, prof: Prof, mode: string, speed: string, cam: string,
-  hakOdendi = false, svKm: number | null = null,
-): Promise<{ ok: boolean; why: string; stmts: D1PreparedStatement[]; svKredi?: number }> {
+  db: D1Database, kv: KVNamespace, user: string, prof: Prof, mode: string, speed: string,
+  hakOdendi = false,
+): Promise<{ ok: boolean; why: string; stmts: D1PreparedStatement[] }> {
   // 🔴 FİKS 05.09: admin ÖNCE tamamen muaftı — "limitsiz VE sayaçsız". Barış admin olduğu için
   // kendi harcaması hiçbir yerde görünmüyordu ve bakiye eridiğinde nedeni ölçülemiyordu.
   // Artık: LİMİTSİZ (üretim asla engellenmez) ama SAYILIR (aylık sayaç işlenir).
@@ -520,32 +423,23 @@ async function bumpDailyCap(
        (counter_key NOT LIKE 'ay\\_%' ESCAPE '\\' AND counter_key NOT LIKE '%' || ?3))`,
   ).bind(user, ayk, today))
 
-  const svKredi = svKrediGerek(svKm)          // sokak: kaç hak yiyecek (kilometreye göre)
   // 🔴 İKİ AYRI SINIFLANDIRMA (adversaryel doğrulama bulgusu):
   //  · `tur` = GÜNLÜK TAVAN kovası — `auto` kendi tavanına (DAILY_AUTO_CAP) girmeli, bu yüzden
   //    mod'dan ÖNCE bakılır.
   //  · `turMaliyet` = FİYAT kovası — MOD'a göre. Eskiden tek bir `tur` vardı ve `auto` mod'dan
   //    önce geldiği için UCUZ bir flat+auto videosu en pahalı fiyattan faturalanıyordu.
   const modKova = mode === '3d' ? '3d' : mode === 'flyover' ? 'flyover' : 'flat'
-  const tur = cam === 'pacman' ? 'sv' : speed === 'auto' ? 'auto' : modKova
-  const turMaliyet = cam === 'pacman' ? 'sv'
-    : mode === '3d' ? '3d'
+  const tur = speed === 'auto' ? 'auto' : modKova
+  const turMaliyet = mode === '3d' ? '3d'
     : speed === 'auto' ? 'auto'               // uzun ama 3B değil → 3B ile aynı kovada
     : modKova
-  // Sokak maliyeti UZUNLUKLA artar ama pano tavanı yüzünden hak başına $4,90'da durur.
-  const maliyet = turMaliyet === 'sv'
-    ? Math.min(svKm !== null && svKm > 0 ? svKm * SV_USD_KM : SV_USD_KREDI, SV_USD_KREDI * svKredi)
-    : await modMaliyet(kv, turMaliyet, 0.02)
-  const butce = await aylikButceLimit(kv, !!prof.ultra)
+  const maliyet = await modMaliyet(kv, turMaliyet, 0.02)
+  const butce = await aylikButceLimit(kv)                              // 18.09: tek katman
   const harcanan = Number(u[ayk] ?? 0)
-  // 🔴 FİKS 05.09 — ÖDENMİŞ HAK İKİ KEZ ÖDETİLİYORDU.
-  //  (a) `video_hak`: kullanıcı video paketini SATIN ALIYOR, hak düşülüyor VE üstüne aylık
-  //      bütçeden de düşülüyordu → 5'li paket alan biri 3-4 video sonra kalanını kullanamıyordu.
-  //  (b) `sokak_hak`: bu ön-kontrol `tur === 'sv'` dalından ÖNCE çalışıyor ve maliyeti 4,9
-  //      sayıyor. Yeni (doğru) tavanlarla `0 + 4,9 > 2,60` HER ZAMAN doğru olurdu → satın
-  //      alınmış sokak hakları %100 ölürdü. Sokak dalı zaten `rcInc(ayk, 0)` ile doğru yapılmış;
-  //      eksik olan yalnız bu ön-kontrolün onu atlaması.
-  const kredili = hakOdendi || (tur === 'sv' && Math.trunc(Number(prof.sokak_hak ?? 0)) >= svKredi)
+  // 🔴 FİKS 05.09 — ÖDENMİŞ HAK İKİ KEZ ÖDETİLİYORDU: kullanıcı video paketini SATIN ALIYOR,
+  // hak düşülüyor VE üstüne aylık bütçeden de düşülüyordu → 5'li paket alan biri 3-4 video
+  // sonra kalanını kullanamıyordu. (18.09: `sokak_hak` dalı ürünle birlikte kalktı.)
+  const kredili = hakOdendi
   const mult = 1 + Math.trunc(Number(u['boost_' + today] ?? 0))       // IAP boost yalnız OKUNUR
   // Boost aylık paya da eklenir: günlük tavanı 2'ye katlamak, aylık pay dolmuşsa kullanıcıya
   // hiçbir şey vermez — ödediği şeyin ulaşılabilir olması için pay da genişlemeli.
@@ -559,23 +453,6 @@ async function bumpDailyCap(
      ON CONFLICT(uid, counter_key) DO UPDATE SET value = ROUND(value + ?3, 4), updated_at = ?4`,
   ).bind(user, k, inc, now)
 
-  if (tur === 'sv') {                                                 // SOKAK: yalnız satın alınmış hak
-    // 🔴 05.09 — KİLOMETREYE GÖRE: 1 hak = SV_KM_KREDI km. Uzun rota daha çok hak yer ve
-    // motorun pano bütçesi de hakla birlikte büyür (job.sv_pano) → ödediğin kadar detay.
-    if (Math.trunc(Number(prof.sokak_hak ?? 0)) >= svKredi) {
-      stmts.push(db.prepare('UPDATE users SET sokak_hak = COALESCE(sokak_hak, 0) - ?3, updated_at = ?2 WHERE uid = ?1')
-        .bind(user, now, svKredi))
-      stmts.push(rcInc('sv_' + today, svKredi))
-      stmts.push(rcInc(ayk, 0))                                       // bütçeden DÜŞMEZ (kullanıcı ödedi)
-      return { ok: true, why: '', stmts, svKredi }
-    }
-    // admin hak satın almadan da üretebilir (eski davranış korunur), ama sayaca işlenir
-    if (adminSinirsiz) {
-      stmts.push(rcInc('sv_' + today, svKredi)); stmts.push(rcInc(ayk, maliyet))
-      return { ok: true, why: '', stmts, svKredi }
-    }
-    return { ok: false, why: `sv:${svKredi}:${Math.trunc(Number(prof.sokak_hak ?? 0))}`, stmts: [] }
-  }
   if (tur === 'auto') {
     if (!adminSinirsiz && DAILY_AUTO_CAP && Number(u['auto_' + today] ?? 0) >= DAILY_AUTO_CAP) return { ok: false, why: 'auto', stmts: [] }
     stmts.push(rcInc('auto_' + today, 1))
@@ -592,25 +469,10 @@ async function bumpDailyCap(
 }
 
 function kapasiteHatasi(why: string): never {
-  // 🔴 FİKS 05.09: metin YANLIŞTI — kullanıcıyı en PAHALI moda yönlendiriyordu.
-  // "Sokak payın büyük kısmını kullanır" artık geçersiz: sokak 27.08'den beri ayrı ürün ve
-  // satın alınmış hak bütçeden HİÇ düşmüyor. Payı tüketen şey 3B'nin kendisi (düz videonun
-  // ~7,6 katı). Doğru yönlendirme: 3B yerine Kuşbakışı/Düz.
+  // 🔴 FİKS 05.09: metin kullanıcıyı en PAHALI moda yönlendiriyordu. Payı tüketen şey 3B'nin
+  // kendisi (düz videonun ~7,6 katı) → doğru yönlendirme: 3B yerine Kuşbakışı/Düz.
   if (why === 'butce')
     hata(429, "Bu ayki 3B üretim payını doldurdun 🙏 Kuşbakışı ve Düz görünüm hâlâ açık — onlar çok daha az pay kullanır, bu ay rahatça üretmeye devam edebilirsin. Payın her ayın 1'inde sıfırlanır.")
-  // 05.09: sokak artık KİLOMETREYE göre — mesaj kaç hak gerektiğini ve kaçı olduğunu söylesin.
-  if (why.startsWith('sv')) {
-    const [, g, v] = why.split(':')
-    const gerek = Number(g) || 1
-    const varOlan = Number(v) || 0
-    if (gerek > 1) {
-      hata(429, `Bu rota ${gerek} Sokak hakkı gerektiriyor (her hak ${SV_KM_KREDI} km kapsar) — ${varOlan} hakkın var 🙏 ` +
-        'Sokak modu gerçek sokak fotoğraflarını kare kare işlediği için ayrı bir üründür; uzun rota daha çok fotoğraf demek. ' +
-        'Uygulamadan Sokak hakkı alabilir ya da daha kısa bir bölüm seçebilirsin.')
-    }
-    hata(429, `Sokak videosu hakkın kalmadı 🙏 Her hak ${SV_KM_KREDI} km sokak görüntüsü kapsar. ` +
-      'Uygulamadan Sokak hakkı satın alabilirsin. Bu arada Kuşbakışı ve Düz görünüm aylık payından çok az kullanır.')
-  }
   if (why === 'auto')
     hata(429, `Günlük Otonom limiti doldu (${DAILY_AUTO_CAP}/gün). Otonom video çok uzun olduğu için günde 1; Kısa/Orta/Uzun ile devam edebilir veya yarın tekrar Otonom deneyebilirsin.`)
   if (why === '3d')
@@ -932,35 +794,14 @@ g.post('/api/rides/generate', authUser, async (c) => {
   const yaz: D1PreparedStatement[] = []                                // ERTELENMİŞ yazımlar (_save eşleniği)
   const now = simdi()
 
-  const isTac = body.mode === 'tactical'
-  const hasUltra = !!(prof.ultra || prof.admin)
-  const ftk = (prof.attest_key as string) || ''
-
-  // TEK-SEFERLİK BEDAVA TAKTİK (main.py:2520-2527): kill-switch + hesap başına 1 + cihaz başına 1
-  let bedavaTaktik = false
+  // 18.09: TEK-SEFERLİK BEDAVA TAKTİK + Ultra taktik kapısı KALKTI (taktik modu kaldırıldı).
   let hakOdendi = false          // satın alınmış video hakkıyla üretim (aylık bütçeden düşmez)
-  if (isTac && !hasUltra && !prof.free_tactical_used) {
-    let enabled = true                                                 // db.get('free_tactical_enabled', True)
-    const cfg = await db.prepare(`SELECT value_json FROM config WHERE key = 'free_tactical_enabled'`).first<{ value_json: string }>()
-    if (cfg) { try { enabled = !!JSON.parse(cfg.value_json) } catch { enabled = true } }
-    let cihazKullandi = false
-    if (enabled && ftk)
-      cihazKullandi = !!(await db.prepare('SELECT 1 AS x FROM free_tactical_devices WHERE attest_key = ?1').bind(ftk).first())
-    bedavaTaktik = enabled && !cihazKullandi
-  }
-  if (bedavaTaktik) {
-    yaz.push(db.prepare('UPDATE users SET free_tactical_used = 1, updated_at = ?2 WHERE uid = ?1').bind(user, now))
-    if (ftk) yaz.push(db.prepare('INSERT OR IGNORE INTO free_tactical_devices (attest_key, created_at, updated_at) VALUES (?1, ?2, ?2)').bind(ftk, now))
-  } else {
-    // VİDEO HAKKI (main.py:2529-2541): free katman üretmez; paket varsa hak düşer
-    if (!prof.premium) {
-      const vh = Math.trunc(Number(prof.video_hak ?? 0))
-      if (vh <= 0) hata(402, 'video premium özelliği')
-      if (isTac) hata(402, 'Tactical, Ultra aboneliğine özeldir')
-      yaz.push(db.prepare('UPDATE users SET video_hak = COALESCE(video_hak, 0) - 1, updated_at = ?2 WHERE uid = ?1').bind(user, now))
-      hakOdendi = true      // 05.09: satın alınmış hakla üretim aylık bütçeden DÜŞMEZ
-    }
-    if (isTac && !hasUltra) hata(402, 'Tactical, Ultra aboneliğine özeldir')
+  // VİDEO HAKKI (main.py:2529-2541): free katman üretmez; paket varsa hak düşer
+  if (!prof.premium) {
+    const vh = Math.trunc(Number(prof.video_hak ?? 0))
+    if (vh <= 0) hata(402, 'video premium özelliği')
+    yaz.push(db.prepare('UPDATE users SET video_hak = COALESCE(video_hak, 0) - 1, updated_at = ?2 WHERE uid = ?1').bind(user, now))
+    hakOdendi = true      // 05.09: satın alınmış hakla üretim aylık bütçeden DÜŞMEZ
   }
 
   // YÜKLENEN GPX/TCX izi (Traccar'sız yol) — R2 tracks/{frm}.json
@@ -970,7 +811,6 @@ g.post('/api/rides/generate', authUser, async (c) => {
   if (uplObj) { try { upl = (await uplObj.json()) as TrackPt[] } catch { upl = null } }
   if (upl && !upl.length) upl = null    // Python'da [] falsy: `if not _upl` Traccar'a düşer (JS'te [] truthy — parite)
   const nowF = Date.now() / 1000
-  svGuard(bget(body, 'cam', ''), upl, pyFloat(bget(body, 'from', 0)), pyFloat(bget(body, 'to', nowF)), reqLang(c))
 
   let traccarId: number | null = 0
   if (!upl) {
@@ -982,20 +822,10 @@ g.post('/api/rides/generate', authUser, async (c) => {
 
   // req sözleşmesi (main.py:2562-2583 birebir; kabartma MÜHÜRLÜ false)
   const speed = ['fast', 'medium', 'slow', 'auto'].includes(body.speed as string) ? (body.speed as string) : 'medium'
-  const mode = bget(body, 'mode', 'flyover')
-  const ultra = !!(prof.ultra || prof.admin)
-  // 🔴 FİKS 05.09 — SATILAN AMA KULLANILAMAYAN ÜRÜN. Sokak paketi (`grup6.ts` SOKAK_IDS dalı)
-  // HERKESE satılıyor, ama `cam='pacman'` yalnız Ultra'ya açıktı → Ultra olmayan biri $9,99
-  // ödeyip hakkı hiç kullanamıyordu. Barış 05.09: "ürün başına satıyoruz."
-  // Sokak hakkı satın almış kullanıcı, Ultra olmasa da o hakkı kullanabilir; render motoru
-  // sokak dalını `ultra` bayrağına bakarak seçtiği için (route-video.py CAMMODE=='pacman' &&
-  // ULTRA) o istekte ultra bayrağı da açılır — kullanıcı zaten bu görsel ürünün parasını ödedi.
-  const sokakHakVar = Math.trunc(Number(prof.sokak_hak ?? 0)) > 0
-  const camIstek = body.cam as string
-  const cam = camIstek === 'pacman' ? ((ultra || sokakHakVar) ? 'pacman' : '')
-    : camIstek === 'chase' ? (ultra ? 'chase' : '')
-    : ''
-  const sokakUltra = ultra || cam === 'pacman'
+  // 18.09: `tactical` modu KALKTI. Güncellenmemiş istemciler (Android 1.70 / iOS 1.67) hâlâ
+  // gönderiyor → 402 yerine 3B'ye çevriliyor: kullanıcı hata değil gerçek bir video alır.
+  const modeHam = bget(body, 'mode', 'flyover')
+  const mode = modeHam === 'tactical' ? '3d' : modeHam
   // 🔴 FİKS 05.09: gövdede `music` anahtarı YOKSA sunucu da kullanıcının son yüklediği parçayı
   // ("active") seçiyordu — istemcideki otomatik seçimden AYRI üçüncü kaynak. Barış: "garip bir
   // müzik çalıyor, müzik seçmediğim halde". Varsayılan artık SESSİZ; müzik yalnız istemci
@@ -1007,9 +837,7 @@ g.post('/api/rides/generate', authUser, async (c) => {
     from: pyFloat(bget(body, 'from', 0)), to: pyFloat(bget(body, 'to', nowF)),
     type: bget(body, 'type', 'moto'),
     mode,
-    aspect: body.mode === 'tactical' && body.aspect === '4:5'
-      ? '4:5'
-      : body.aspect === '9:16' || body.mode === 'tactical' ? '9:16' : '16:9',
+    aspect: body.aspect === '4:5' ? '4:5' : body.aspect === '9:16' ? '9:16' : '16:9',
     speed,
     premium: !!bget(body, 'premium', false),
     music, ts: now,
@@ -1020,24 +848,13 @@ g.post('/api/rides/generate', authUser, async (c) => {
     theme: ['thermal', 'night', 'day', 'auto'].includes(body.theme as string) ? body.theme : 'default',
     callsign: [...pyStr(bget(body, 'callsign', '')).toUpperCase()].filter((ch) => /[\p{L}\p{N} -]/u.test(ch)).join('').slice(0, 16),
     reel: !!body.reel,
-    cam, ultra: sokakUltra,
     photodir: `${user}_${frmInt}`,
   }
   yaz.push(...videoRenkStmts(db, user, body))
 
-  // SOKAK bakım bayrağı (lib/ortak svKapali — tek KV anahtarı 'sv_off') — sayaç HARCANMADAN 503 (main.py:2589-2590)
-  if (req.cam === 'pacman' && (await svKapali(env))) hata(503, SOKAK_BAKIM_MSG)
-
-  // SOKAK: rota uzunluğunu ölç → kaç hak yiyeceğini ve motorun pano bütçesini belirle
-  const svKm = req.cam === 'pacman'
-    ? await svKmOlc(db, user, upl, pyFloat(bget(body, 'from', 0)), pyFloat(bget(body, 'to', nowF)))
-    : null
-  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string,
-    req.cam as string, hakOdendi, svKm)
+  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string, hakOdendi)
   if (!kap.ok) kapasiteHatasi(kap.why)
   yaz.push(...kap.stmts)
-  // Ödenen hak kadar pano bütçesi → uzun rotada da 8 m aralık korunur (slayt gösterisi olmaz).
-  if (req.cam === 'pacman') req.sv_pano = SV_PANO_KREDI * (kap.svKredi ?? 1)
 
   // BENZERSİZ VIDEO ID: {gün}_{from}_{üretim_ts} (main.py:2602-2606)
   const day = trDay(frmInt)
@@ -1092,7 +909,6 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
   if (uplObj) { try { upl = (await uplObj.json()) as TrackPt[] } catch { upl = null } }
   if (upl && !upl.length) upl = null    // Python [] falsy paritesi (bkz. generate)
   if (upl && upl[upl.length - 1]?.t && to <= frm + 2 * 3600 + 1) to = Number(upl[upl.length - 1].t)
-  svGuard(bget(body, 'cam', ''), upl, frm, to, reqLang(c))
 
   let traccarId: number | null = 0
   if (!upl) {
@@ -1103,19 +919,6 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
   }
 
   const speed = ['fast', 'medium', 'slow', 'auto'].includes(body.speed as string) ? (body.speed as string) : 'medium'
-  const ultra = !!(prof.ultra || prof.admin)
-  // 🔴 FİKS 05.09 — SATILAN AMA KULLANILAMAYAN ÜRÜN. Sokak paketi (`grup6.ts` SOKAK_IDS dalı)
-  // HERKESE satılıyor, ama `cam='pacman'` yalnız Ultra'ya açıktı → Ultra olmayan biri $9,99
-  // ödeyip hakkı hiç kullanamıyordu. Barış 05.09: "ürün başına satıyoruz."
-  // Sokak hakkı satın almış kullanıcı, Ultra olmasa da o hakkı kullanabilir; render motoru
-  // sokak dalını `ultra` bayrağına bakarak seçtiği için (route-video.py CAMMODE=='pacman' &&
-  // ULTRA) o istekte ultra bayrağı da açılır — kullanıcı zaten bu görsel ürünün parasını ödedi.
-  const sokakHakVar = Math.trunc(Number(prof.sokak_hak ?? 0)) > 0
-  const camIstek = body.cam as string
-  const cam = camIstek === 'pacman' ? ((ultra || sokakHakVar) ? 'pacman' : '')
-    : camIstek === 'chase' ? (ultra ? 'chase' : '')
-    : ''
-  const sokakUltra = ultra || cam === 'pacman'
   // 🔴 FİKS 05.09: gövdede `music` anahtarı YOKSA sunucu da kullanıcının son yüklediği parçayı
   // ("active") seçiyordu — istemcideki otomatik seçimden AYRI üçüncü kaynak. Barış: "garip bir
   // müzik çalıyor, müzik seçmediğim halde". Varsayılan artık SESSİZ; müzik yalnız istemci
@@ -1126,7 +929,7 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
     name: (prof.name as string) || user,
     from: frm, to,
     type: bget(body, 'type', meta?.ride_type ?? 'moto'),
-    mode: bget(body, 'mode', 'flyover'),
+    mode: bget(body, 'mode', 'flyover') === 'tactical' ? '3d' : bget(body, 'mode', 'flyover'),
     aspect: body.aspect === '9:16' ? '9:16' : '16:9',                  // regenerate'te 4:5 dalı YOK
     speed,
     premium: !!bget(body, 'premium', false),
@@ -1138,18 +941,12 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
     theme: ['thermal', 'night', 'day', 'auto'].includes(body.theme as string) ? body.theme : 'default',
     callsign: [...pyStr(bget(body, 'callsign', '')).toUpperCase()].filter((ch) => /[\p{L}\p{N} -]/u.test(ch)).join('').slice(0, 16),
     reel: !!body.reel,
-    cam, ultra: sokakUltra,
     photodir: `${user}_${frmInt}`,
   }
   yaz.push(...videoRenkStmts(db, user, body))
 
-  if (req.cam === 'pacman' && (await svKapali(env))) hata(503, SOKAK_BAKIM_MSG)
-
-  const svKm2 = req.cam === 'pacman' ? await svKmOlc(db, user, upl, frm, to) : null
-  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string,
-    req.cam as string, false, svKm2)
+  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string, false)
   if (!kap.ok) kapasiteHatasi(kap.why)
-  if (req.cam === 'pacman') req.sv_pano = SV_PANO_KREDI * (kap.svKredi ?? 1)
   yaz.push(...kap.stmts)
 
   const vid = `${day}_${frmInt}_${now}`                                // main.py:2707-2709
