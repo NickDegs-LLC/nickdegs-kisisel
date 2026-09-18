@@ -104,31 +104,6 @@ async function freeBildirimHakki(env: Env, user: string, log: (s: string) => voi
 }
 
 // ---------- 13 dilli metinler (satır 270-289, 631-643, 666-681 birebir) ----------
-const LT: Record<string, string> = { en: 'Ride check ⚠️', tr: 'Sürüş kontrolü ⚠️', es: 'Control de ruta ⚠️', fr: 'Contrôle de ride ⚠️', de: 'Fahrt-Check ⚠️', it: 'Controllo giro ⚠️', pt: 'Checagem do rolê ⚠️', ru: 'Проверка поездки ⚠️', ja: 'ライド確認⚠️', zh: '骑行检查 ⚠️', ko: '라이딩 확인 ⚠️', ar: 'فحص الرحلة ⚠️', hi: 'राइड चेक ⚠️' }
-const LB: Record<string, string> = {
-  en: '{n} has been stationary for {m} min mid-ride. Probably a break - maybe check in?',
-  tr: '{n} sürüş ortasında {m} dakikadır hareketsiz. Muhtemelen mola - istersen bir yokla?',
-  es: '{n} lleva {m} min sin moverse en plena ruta. Quizá un descanso - ¿le escribes?',
-  fr: "{n} est immobile depuis {m} min en pleine ride. Sûrement une pause - un petit message ?",
-  de: '{n} ist seit {m} Min. mitten in der Fahrt unbewegt. Wohl eine Pause - vielleicht kurz melden?',
-  it: '{n} è fermo da {m} min a metà giro. Forse una pausa - un messaggio?',
-  pt: '{n} está parado há {m} min no meio do rolê. Deve ser uma pausa - dá um alô?',
-  ru: '{n} неподвижен {m} мин посреди поездки. Наверное привал - может, напишешь?',
-  ja: '{n}さんがライド中に{m}分間動いていません。休憩かも - 一声かけてみては？',
-  zh: '{n} 在骑行途中已静止 {m} 分钟。可能在休息 - 要不要问候一下？',
-  ko: '{n}님이 라이딩 중 {m}분째 멈춰 있어요. 휴식일 수도 - 한번 연락해볼까요?',
-  ar: '{n} متوقف منذ {m} دقيقة أثناء الرحلة. ربما استراحة - اطمئن عليه؟',
-  hi: '{n} राइड के बीच {m} मिनट से रुके हैं। शायद ब्रेक है - एक बार पूछ लें?',
-}
-const AT: Record<string, string> = { en: 'Safe and sound 🏍️✅', tr: 'Sağ salim 🏍️✅', es: 'Sano y salvo 🏍️✅', fr: 'Sain et sauf 🏍️✅', de: 'Sicher angekommen 🏍️✅', it: 'Sano e salvo 🏍️✅', pt: 'São e salvo 🏍️✅', ru: 'Цел и невредим 🏍️✅', ja: '無事到着🏍️✅', zh: '平安抵达 🏍️✅', ko: '무사 도착 🏍️✅', ar: 'وصل بأمان 🏍️✅', hi: 'सुरक्षित पहुंचे 🏍️✅' }
-const AB: Record<string, string> = {
-  en: '{n} finished the ride safely ({km} km).', tr: '{n} sürüşünü sağ salim tamamladı ({km} km).',
-  es: '{n} terminó la ruta a salvo ({km} km).', fr: '{n} a terminé sa ride en toute sécurité ({km} km).',
-  de: '{n} hat die Fahrt sicher beendet ({km} km).', it: '{n} ha concluso il giro in sicurezza ({km} km).',
-  pt: '{n} terminou o rolê em segurança ({km} km).', ru: '{n} благополучно завершил поездку ({km} км).',
-  ja: '{n}さんがライドを無事終えました（{km} km）。', zh: '{n} 平安完成了骑行（{km} 公里）。',
-  ko: '{n}님이 라이딩을 무사히 마쳤어요 ({km} km).', ar: 'أنهى {n} رحلته بأمان ({km} كم).', hi: '{n} ने राइड सुरक्षित पूरी की ({km} km)।',
-}
 const UT: Record<string, string> = { en: 'Ride saved 🎉', tr: 'Sürüşün kaydedildi 🎉', ar: 'تم حفظ رحلتك 🎉', es: 'Ruta guardada 🎉', fr: 'Ride enregistrée 🎉', ru: 'Поездка сохранена 🎉', de: 'Fahrt gespeichert 🎉', it: 'Giro salvato 🎉', pt: 'Rolê salvo 🎉', ja: 'ライドを保存しました🎉', zh: '骑行已保存 🎉', ko: '라이딩 저장 완료 🎉', hi: 'राइड सेव हो गई 🎉' }
 const UB: Record<string, string> = {
   en: 'Remember your gift video? With Premium every ride becomes a cinematic video automatically.',
@@ -275,7 +250,9 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
     openTrip = true; segs.pop()
   }
 
-  // --- uyandırma bekçisi (satır 292-308) + güvenlik uzun-duraklama (satır 255-291) ---
+  // --- uyandırma bekçisi (satır 292-308) ---
+  // 18.09: güvenlik uzun-duraklama bloğu KALDIRILDI (güvenli sürüş özelliği çıktı);
+  // aşağıdaki wakepush bekçisi GÜVENLİK DEĞİL, sessiz uyandırma — kalıyor.
   if (uid && P.length >= 2) {
     const a = P[P.length - 2], b = P[P.length - 1]
     const age = now - b.t, gap = b.t - a.t, d = hav(a, b)
@@ -288,27 +265,6 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
       }
     }
   }
-  const buddy = prefs.safety_buddy as string | undefined
-  if (uid && (prefs.safety_stop ?? true) && buddy && P.length >= 5) {
-    const age = now - P[P.length - 1].t
-    if (age > 900 && age < 2700) {
-      const recent = P.filter((p) => p.t > P[P.length - 1].t - 600)
-      if (recent.length && Math.max(...recent.map((p) => p.spd)) >= 25) {
-        const mkKey = `longstop:${uid}:${Math.floor(P[P.length - 1].t / 1800)}`
-        if ((await env.KV.get(mkKey)) === null) {
-          await kvJsonYaz(env, mkKey, 1, 4 * 3600)
-          const bp = await env.DB.prepare('SELECT lang FROM users WHERE uid = ?1').bind(buddy).first<{ lang: string | null }>()
-          const bl = bp?.lang || 'en'
-          await pushBekleyen(env, {
-            user: buddy, title: LT[bl] || LT.en,
-            body: (LB[bl] || LB.en).replace('{n}', devName).replace('{m}', String(Math.floor(age / 60))),
-          })
-          log(`  → GÜVENLİK: uzun duraklama uyarısı ${buddy} (${Math.floor(age / 60)}dk)`)
-        }
-      }
-    }
-  }
-
   // --- aktiviteler ---
   const vehicle = (prefs.vehicle as string) || 'moto'
   const acts: Akt[] = []
@@ -394,16 +350,6 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
       `${em} ${lbl} ${hhmm(st0)}–${hhmm(en0)}: ~${(a.dist / 1000).toFixed(1)} km, ${Math.floor(a.dur / 60)} dk. (${devName})`,
       'aktivite')
     done.add(String(Math.trunc(st0)))
-    // güvenlik varış bildirimi
-    if ((a.type === 'moto' || a.type === 'car') && (prefs.safety_arrive ?? true) && buddy) {
-      const bp = await env.DB.prepare('SELECT lang FROM users WHERE uid = ?1').bind(buddy).first<{ lang: string | null }>()
-      const bl = bp?.lang || 'en'
-      await pushBekleyen(env, {
-        user: buddy, title: AT[bl] || AT.en,
-        body: (AB[bl] || AB.en).replace('{n}', devName).replace('{km}', (a.dist / 1000).toFixed(1)),
-      })
-      log(`  → GÜVENLİK: varış bildirimi ${buddy}`)
-    }
     const isAuto = a.type === 'moto' || a.type === 'car'
     const lng = prof?.lang || 'en'
     const minKm2 = await otoMinKm(env)

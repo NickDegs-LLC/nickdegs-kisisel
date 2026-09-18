@@ -1,5 +1,6 @@
 // grup6 — api/iap + api/integrity + api/attest + api/local-renders + api/groupvideo +
-//         api/safety + api/routes (main.py birebir) + App Store/Play sunucu-sunucu bildirimleri
+//         api/routes (main.py birebir) + App Store/Play sunucu-sunucu bildirimleri
+//         18.09: api/safety (güvenli sürüş / 'eve sağ salim vardım') KALDIRILDI
 //         (sözleşme: cf/contracts/grup6.json; bildirim uçları yeni)
 //
 // Kapsanan uçlar (TAM yol; mount kökü '/'):
@@ -16,8 +17,6 @@
 //   POST   /api/local-renders/done  — KV yerelq listesinden from kaydını sil
 //   GET    /api/groupvideo          — prefs_json.group_video (varsayılan 'both')
 //   PUT    /api/groupvideo          — whitelist both|group|solo
-//   GET    /api/safety              — prefs_json.safety_* + buddy_profile (_profile_of eşleniği)
-//   PUT    /api/safety              — KISMİ güncelleme ('anahtar body'de varsa yaz'); buddy friends kontrolü
 //   POST   /api/routes/share        — IDOR: sahiplik ihlali 404; kulüp > kişi; push → KV push:bekleyen
 //   GET    /api/routes/shared       — shared_route_targets indeksli gelen kutusu (en yeni 50)
 //
@@ -1649,44 +1648,6 @@ g.put('/api/groupvideo', authUser, async (c) => {
   await kullaniciGarantile(c.env.DB, user)
   await jsonSet(c.env.DB, user, 'prefs_json', 'group_video', pref)
   return c.json({ pref })
-})
-
-// ---------- GET /api/safety (main.py:3019-3027) ----------
-g.get('/api/safety', authUser, async (c) => {
-  const user = c.get('user')
-  const db = c.env.DB
-  const row = await db.prepare(
-    "SELECT json_extract(prefs_json, '$.safety_buddy') AS b, " +
-    "json_extract(prefs_json, '$.safety_arrive') AS a, " +
-    "json_extract(prefs_json, '$.safety_stop') AS s FROM users WHERE uid = ?1")
-    .bind(user).first<{ b: string | null; a: number | null; s: number | null }>()
-  const b = pyTruthy(row?.b) ? String(row!.b) : ''
-  const out: Record<string, unknown> = {
-    buddy: b,
-    arrive: row?.a === null || row?.a === undefined ? true : !!row.a,      // alan yoksa varsayılan TRUE
-    longstop: row?.s === null || row?.s === undefined ? true : !!row.s,    // yanıt 'longstop', saklanan 'safety_stop'
-  }
-  if (b) out.buddy_profile = await profileOf(c.env, db, b)
-  return c.json(out)
-})
-
-// ---------- PUT /api/safety (main.py:3030-3041) — KISMİ güncelleme ----------
-g.put('/api/safety', authUser, async (c) => {
-  const body = await bodyAl(c)
-  const user = c.get('user')
-  const db = c.env.DB
-  await kullaniciGarantile(db, user)
-  if ('buddy' in body) {
-    const b = pyTruthy(body.buddy) ? String(body.buddy) : ''   // '' göndermek buddy'yi TEMİZLER
-    if (b) {
-      const f = await db.prepare('SELECT 1 AS x FROM friends WHERE uid = ?1 AND friend_uid = ?2').bind(user, b).first()
-      if (!f) hata(400, 'güvenlik kişisi arkadaş listenden olmalı')
-    }
-    await jsonSet(db, user, 'prefs_json', 'safety_buddy', b)
-  }
-  if ('arrive' in body) await jsonSet(db, user, 'prefs_json', 'safety_arrive', pyTruthy(body.arrive))
-  if ('longstop' in body) await jsonSet(db, user, 'prefs_json', 'safety_stop', pyTruthy(body.longstop))
-  return c.json({ ok: true })
 })
 
 // ---------- POST /api/routes/share (main.py:3045-3084) ----------

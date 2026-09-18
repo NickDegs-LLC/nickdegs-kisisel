@@ -1,13 +1,10 @@
-// grup8 — hesap silme + handle + interkom + rozetler + wrapped + liderlik + kullanıcı arama (7 uç)
+// grup8 — hesap silme + handle + kullanıcı arama (3 uç).
+// 18.09: interkom + rozetler + wrapped + liderlik KALDIRILDI.
 // Sözleşme: cf/contracts/grup8.json · davranış kaynağı: /opt/movelog/backend/main.py
 //
 // Kapsanan uçlar:
 //   DELETE /api/account            (main.py:2748 delete_account)
 //   PUT    /api/handle             (main.py:3000 set_handle)
-//   GET    /api/intercom/:cid/token(main.py:3368 intercom_token)
-//   GET    /api/badges             (main.py:3678 get_badges)
-//   GET    /api/wrapped            (main.py:3708 wrapped)
-//   GET    /api/leaderboard        (main.py:3730 leaderboard)
 //   GET    /api/users/find         (main.py:3894 find_users)
 //
 // NOTLAR (grup8 kararları):
@@ -24,42 +21,27 @@
 //    taşındı. UNIQUE index migration'ı ayrı karar (db grubunun dosyası — dokunulmadı).
 //  · /api/users/find: Python'un "önce dict sırasıyla 15 topla SONRA sırala" davranışı ORDER BY rowid
 //    tam-tarama + JS filtre ile birebir taklit edildi (LIKE kullanılmadı — q'daki %/_ joker sayılmasın).
-//  · round1(): Python round(x,1) BİREBİR — toFixed(20) tam-ondalık açılım + yarıda-çifte
-//    (naif x*10 varyantı 0.35/0.45/1.05 gibi değerlerde sapıyordu; 8508 değer fuzz, 0 fark).
 //  · cmpPy(): Python str kıyası kod-noktası sırası — JS `<` UTF-16 kod-birimi (emoji'li adlarda fark).
 //  · sv-kapali bayrağı → lib/ortak svKapali (varlık kontrolü). İstek başına 1 okuma.
 //    ✅ ÇÖZÜLDÜ (bütünleştirme 08-30): tüm gruplar tek KV anahtarı 'sv_off' okur (lib/ortak.ts kararı).
 //  · Denetim düzeltmeleri (08-30): normHandle Python str.strip() kümesiyle (BOM strip EDİLMEZ);
 //    /api/users/find uzunluk kapıları kod-noktası sayısıyla (len(qq) eşleniği — emoji sorgu sapması);
 //    sv_off KV okuması try/catch (os.path.exists asla fırlatmaz).
-//  · LIVEKIT_KEY/SECRET/URL Env tipinde yok — yerel tip genişletmesiyle okunur (lib notuna bakın).
 
 import { Hono } from 'hono'
 import type { AppEnv } from '../lib/env'
-import { authUser, b64uEncode } from '../lib/auth'
+import { authUser } from '../lib/auth'
 import { simdi, BARIS_UID } from '../lib/db'
 import { hataYanit } from '../lib/hata'
 import { svKapali } from '../lib/ortak'
 
 const g = new Hono<AppEnv>()
-const enc = new TextEncoder()
 
 // ---------- sabitler ----------
-
-// main.py:3673-3675 — SADECE Türkçe, hard-coded (app tarafı çeviriyor; sözleşme aynen korur)
-const BADGE_DEFS = {
-  km1000: '1.000 km Kulübü', km5000: '5.000 km Kulübü', night: 'Gece Kartalı',
-  cities5: '5 Bölge Gezgini', streak7: '7 Gün Seri', longride: 'Uzun Yol Ustası',
-  first: 'İlk Sürüş', social: 'Yol Arkadaşı',
-} as const
 
 // main.py:2931-2932 (‘moveLog’ girdisi işlevsiz-fazlalık — giriş zaten lower; belge amaçlı korundu)
 const HANDLE_RE = /^[a-z0-9_.]{3,20}$/
 const HANDLE_REZERVE = new Set(['admin', 'moveLog', 'movelog', 'support', 'destek', 'apple', 'review', 'system'])
-
-// LiveKit sırları artık lib/env.ts Env tipinde (bütünleştirme 08-30) — yerel tip uyumluluk için kaldı.
-// wrangler secret put LIVEKIT_KEY / LIVEKIT_SECRET (+ [vars] LIVEKIT_URL) gerekiyor.
-type LiveKitVars = { LIVEKIT_KEY?: string; LIVEKIT_SECRET?: string; LIVEKIT_URL?: string }
 
 // ---------- yardımcılar ----------
 
@@ -87,40 +69,6 @@ function avatarOf(avatarJson: string | null | undefined): Record<string, unknown
   return { type: 'initials' }
 }
 
-/** users.badges_json → string[] (main.py `p.get("badges") or []`). */
-function badgesOf(badgesJson: string | null | undefined): unknown[] {
-  const b = parseJson<unknown>(badgesJson ?? null, null)
-  return Array.isArray(b) ? b : []
-}
-
-/**
- * Python round(x, 1) BİREBİR eşleniği. Python, double'ın GERÇEK ikili değerinin ondalık
- * açılımını yuvarlar (yarıda çifte). Naif `x*10` yaklaşımı FP çarpım hatasıyla kalanı yapay
- * 0.5'e taşır/kaçırır: 0.35→0.4 (Python 0.3), 0.45→0.4 (Python 0.5), 1.05→1 (Python 1.1)...
- * Burada toFixed(20) tam açılımı verir (double kesirleri sonlu ondalıktır; |x|≥~0.05 için
- * ulp ≥ ~1e-18 olduğundan 20 hane karar için yeterli — kanıt: 8508 değerlik fuzz, 0 fark).
- * Sonuç string'ten parse edilir (Number() korrekt yuvarlar = CPython dtoa).
- */
-function round1(x: number): number {
-  if (!Number.isFinite(x)) return x
-  const neg = x < 0
-  const ax = Math.abs(x)
-  if (ax >= 1e21) return x                        // toFixed üstel gösterime döner; bu büyüklükte kesir yok
-  const s = ax.toFixed(20)
-  const dot = s.indexOf('.')
-  const tam = s.slice(0, dot)
-  const kesir = s.slice(dot + 1)                  // 20 hane
-  const d1 = kesir.charCodeAt(0) - 48             // onda birler basamağı
-  const kuyruk = kesir.slice(1)                   // kalan 19 hane — .x5 sınırıyla kıyas
-  const SINIR = '5000000000000000000'
-  const yukari = kuyruk > SINIR ? true : kuyruk < SINIR ? false : d1 % 2 === 1  // tam yarı → çifte
-  let d = d1 + (yukari ? 1 : 0)
-  let t = tam
-  if (d === 10) { d = 0; t = String(BigInt(tam) + 1n) }
-  const r = Number(`${t}.${d}`)
-  return neg ? -r : r
-}
-
 /**
  * Python str karşılaştırması eşleniği — kod NOKTASI sırası. JS `<` UTF-16 kod BİRİMİ kıyaslar;
  * astral karakter (emoji'li isim) U+E000-U+FFFF aralığındaki karaktere karşı ters sonuç verir.
@@ -136,80 +84,6 @@ function cmpPy(a: string, b: string): number {
     const cx = (x.value as string).codePointAt(0)!, cy = (y.value as string).codePointAt(0)!
     if (cx !== cy) return cx - cy
   }
-}
-
-/** LiveKit erişim JWT'si (main.py:3380-3390 claims birebir; PyJWT → WebCrypto HMAC-SHA256). */
-async function livekitJwt(apiKey: string, secret: string, user: string, ad: string, room: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000)
-  const header = b64uEncode(enc.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
-  const payload = b64uEncode(enc.encode(JSON.stringify({
-    iss: apiKey, sub: user, nbf: now, exp: now + 6 * 3600, name: ad,
-    video: { room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true },
-  })))
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const sig = b64uEncode(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${header}.${payload}`))))
-  return `${header}.${payload}.${sig}`
-}
-
-// ── kulüp odası sınırı (LiveKit Cloud geçişi, 2026-09-02) ────────────────────
-// Self-host'ta sınır sunucu yapılandırmasındaydı: livekit.yaml `room.max_participants: 12` +
-// `empty_timeout: 300`. LiveKit Cloud'da yaml YOK; odalar join anında varsayılanlarla açılıyor →
-// 14 kişilik yük testinde 14'ü de girdi (ÖLÇÜLDÜ 02.09). Sınır hem eski davranış hem de ücretsiz
-// katman kotası (5.000 katılımcı-dk/ay) için anlamlı → odayı token vermeden ÖNCE açıkça yaratıyoruz.
-// CreateRoom idempotenttir: oda varsa LiveKit mevcut odayı döner, ayarları DEĞİŞTİRMEZ.
-const ODA_SINIR = 12
-const ODA_BOS_SN = 300
-
-/** Yönetim JWT'si — erişim token'ıyla aynı imza, farklı grant.
- *  ⚠️ ÖLÇÜLDÜ 02.09: `roomCreate` TEK BAŞINA yetmez — `ListParticipants` **roomAdmin + o odanın adı**
- *  ister, aksi hâlde 401 döner ve fail-open yüzünden sınır sessizce uygulanmaz (ilk denemede öyle oldu). */
-async function livekitYoneticiJwt(apiKey: string, secret: string, room: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000)
-  const header = b64uEncode(enc.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })))
-  const payload = b64uEncode(enc.encode(JSON.stringify({
-    iss: apiKey, sub: 'movelog-api', nbf: now, exp: now + 300,
-    video: { roomCreate: true, roomAdmin: true, room },
-  })))
-  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const sig = b64uEncode(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${header}.${payload}`))))
-  return `${header}.${payload}.${sig}`
-}
-
-/** Twirp yardımcı — hata/zaman aşımı `null` döner (çağıran fail-open davranır). 2 sn tavan
- *  (ÖLÇÜLDÜ: sağlıklı çağrı ~200 ms). */
-async function lkTwirp(lk: LiveKitVars, metot: string, oda: string, govde: unknown): Promise<Record<string, unknown> | null> {
-  const taban = (lk.LIVEKIT_URL || '').replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://').replace(/\/+$/, '')
-  if (!taban || !lk.LIVEKIT_KEY || !lk.LIVEKIT_SECRET) return null
-  try {
-    const jwt = await livekitYoneticiJwt(lk.LIVEKIT_KEY, lk.LIVEKIT_SECRET, oda)
-    const y = await fetch(`${taban}/twirp/livekit.RoomService/${metot}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
-      body: JSON.stringify(govde),
-      signal: AbortSignal.timeout(2000),
-    })
-    if (!y.ok) return null
-    return (await y.json()) as Record<string, unknown>
-  } catch { return null }
-}
-
-/** Odayı 12 kişi + 300 sn boş-zaman ayarıyla hazırlar (idempotent).
- *  ⚠️ ÖLÇÜLDÜ 02.09: LiveKit **Cloud `max_participants` alanını UYGULAMIYOR** — max=3 olan odaya
- *  5 katılımcı sorunsuz girdi (oda sid'i değişmeden). Alan yine de konuyor: (a) `empty_timeout`
- *  UYGULANIYOR, (b) self-host'a dönülürse sınır kendiliğinden işler, (c) niyet kayıtlı kalır.
- *  GERÇEK sınır aşağıdaki `odaDolu()` ile BİZDE. */
-async function odayiHazirla(lk: LiveKitVars, room: string): Promise<void> {
-  await lkTwirp(lk, 'CreateRoom', room, { name: room, max_participants: ODA_SINIR, empty_timeout: ODA_BOS_SN })
-}
-
-/** Sınırı BİZ uygularız: token vermeden önce odadaki katılımcı sayısına bakılır.
- *  fail-open: LiveKit'e ulaşılamazsa (null) kapı AÇIK kalır — geçici bir API arızası
- *  telsizi kilitlemesin. Kontrol-sonra-davran yarışı bilinçli kabul edildi (yumuşak tavan):
- *  aynı anda iki kişi girerse 13 olabilir, bir sonraki istek durur. */
-async function odaDolu(lk: LiveKitVars, room: string): Promise<boolean> {
-  const y = await lkTwirp(lk, 'ListParticipants', room, { room })
-  const p = y?.participants
-  return Array.isArray(p) && p.length >= ODA_SINIR
 }
 
 // _profile_of için gereken users kolon alt-kümesi (main.py:1388-1410)
@@ -415,124 +289,6 @@ g.put('/api/handle', authUser, async (c) => {
      ON CONFLICT(uid) DO UPDATE SET handle = excluded.handle, updated_at = excluded.updated_at`)
     .bind(user, h, t).run()
   return c.json({ ok: true, handle: h })
-})
-
-// ---------- GET /api/intercom/:cid/token (main.py:3368) ----------
-g.get('/api/intercom/:cid/token', authUser, async (c) => {
-  const lk = c.env as unknown as LiveKitVars
-  // 02.09: URL de zorunlu — silinen self-host adresine düşen varsayılan kaldırıldı (bkz. grup5.ts)
-  if (!lk.LIVEKIT_KEY || !lk.LIVEKIT_URL) return hataYanit(503, 'interkom kapalı')
-  const user = c.get('user')
-  const cid = c.req.param('cid')
-  const db = c.env.DB
-  const [uRes, mRes] = await db.batch([
-    db.prepare('SELECT ultra, name, handle FROM users WHERE uid = ?1').bind(user),
-    db.prepare('SELECT 1 AS x FROM club_members WHERE cid = ?1 AND uid = ?2').bind(cid, user),
-  ])
-  const prof = uRes.results[0] as { ultra: number | null; name: string | null; handle: string | null } | undefined
-  // TUZAK: _is_ultra admin bypass İÇERMEZ (yalnız p.ultra, main.py:3124-3126) — asimetri aynen korunur
-  if (!prof?.ultra) return hataYanit(402, 'Ultra gerekli')
-  // kulüp yok VEYA üye değil → aynı 404 (IDOR: kulüp varlığı sızmaz)
-  if (mRes.results.length === 0) return hataYanit(404, 'kulüp yok')
-  const room = `club_${cid}`
-  await odayiHazirla(lk, room)                    // empty_timeout 300 + niyet (hata yutulur)
-  if (await odaDolu(lk, room)) return hataYanit(503, `telsiz dolu (en fazla ${ODA_SINIR} kişi)`)
-  const token = await livekitJwt(lk.LIVEKIT_KEY, lk.LIVEKIT_SECRET ?? '', user,
-                                 prof.name || prof.handle || 'Rider', room)
-  return c.json({ url: lk.LIVEKIT_URL, token, room })
-})
-
-// ---------- GET /api/badges (main.py:3678) ----------
-g.get('/api/badges', authUser, async (c) => {
-  const row = await c.env.DB.prepare('SELECT badges_json FROM users WHERE uid = ?1')
-    .bind(c.get('user')).first<{ badges_json: string | null }>()
-  return c.json({ badges: badgesOf(row?.badges_json), defs: BADGE_DEFS })
-})
-
-// ---------- GET /api/wrapped (main.py:3708) ----------
-// Yıl sınırı TR (sabit UTC+3, DST YOK — main.py:28) ile hesaplanır. Filtre HAM uid = user:
-// _own() BARIS_UID fallback'i ve ORNEK_UID istisnası bu uçta YOK (sözleşme TUZAK-4).
-g.get('/api/wrapped', authUser, async (c) => {
-  const user = c.get('user')
-  const nowS = Date.now() / 1000
-  const yil = new Date((nowS + 10800) * 1000).getUTCFullYear()            // datetime.now(TR).year
-  const y0 = Date.UTC(yil, 0, 1) / 1000 - 10800                           // datetime(yr,1,1,tzinfo=TR).timestamp()
-  const db = c.env.DB
-  const [agg, prof] = await db.batch([
-    db.prepare(
-      `SELECT COUNT(*)                                    AS rides,
-              SUM(COALESCE(km, 0))                        AS km,
-              MAX(COALESCE(km, 0))                        AS longest,
-              SUM(MAX(0, to_ts - ts))                     AS secs,
-              SUM(CASE WHEN CAST(strftime('%H', ts + 10800, 'unixepoch') AS INTEGER) >= 22
-                         OR CAST(strftime('%H', ts + 10800, 'unixepoch') AS INTEGER) < 5
-                       THEN 1 ELSE 0 END)                 AS nights
-         FROM rides WHERE uid = ?1 AND ts >= ?2`).bind(user, y0),
-    db.prepare('SELECT badges_json FROM users WHERE uid = ?1').bind(user),
-  ])
-  const a = agg.results[0] as { rides: number; km: number | null; longest: number | null; secs: number | null; nights: number | null } | undefined
-  const p = prof.results[0] as { badges_json: string | null } | undefined
-  return c.json({
-    year: yil,
-    km: round1(a?.km ?? 0),
-    rides: a?.rides ?? 0,
-    hours: round1((a?.secs ?? 0) / 3600),
-    longest_km: round1(a?.longest ?? 0),
-    night_rides: a?.nights ?? 0,
-    badges: badgesOf(p?.badges_json),
-  })
-})
-
-// ---------- GET /api/leaderboard (main.py:3730) ----------
-// GİZLİLİK: kapsam SADECE self + arkadaşlar + kulüp arkadaşları; 0 km üyeler de listelenir.
-// Toplama HAM uid ile (etiketsiz/boş uid kimseye sayılmaz — sözleşme TUZAK-2); ORNEK_UID'e özel muamele yok.
-g.get('/api/leaderboard', authUser, async (c) => {
-  const user = c.get('user')
-  const db = c.env.DB
-  const [frRes, clRes] = await db.batch([
-    db.prepare('SELECT friend_uid FROM friends WHERE uid = ?1').bind(user),
-    db.prepare(
-      `SELECT DISTINCT cm2.uid AS uid FROM club_members cm
-         JOIN club_members cm2 ON cm2.cid = cm.cid WHERE cm.uid = ?1`).bind(user),
-  ])
-  const kapsam = new Set<string>([user])
-  for (const r of frRes.results as { friend_uid: string }[]) kapsam.add(r.friend_uid)
-  for (const r of clRes.results as { uid: string }[]) kapsam.add(r.uid)
-
-  const ids = [...kapsam]
-  const ph = ids.map((_, i) => `?${i + 2}`).join(',')                     // ?1 = hafta sınırı
-  const wk = Date.now() / 1000 - 7 * 86400                                // time.time() float, Python gibi
-  const ph1 = ids.map((_, i) => `?${i + 1}`).join(',')
-  const [statRes, profRes] = await db.batch([
-    db.prepare(
-      `SELECT uid, SUM(COALESCE(km, 0)) AS km, COUNT(*) AS rides, SUM(MAX(0, to_ts - ts)) AS secs
-         FROM rides WHERE ts >= ?1 AND uid IN (${ph}) GROUP BY uid`).bind(wk, ...ids),
-    db.prepare(`SELECT uid, name, handle, avatar_json FROM users WHERE uid IN (${ph1})`).bind(...ids),
-  ])
-  const stats = new Map<string, { km: number; rides: number; secs: number }>()
-  for (const r of statRes.results as { uid: string; km: number | null; rides: number; secs: number | null }[])
-    stats.set(r.uid, { km: r.km ?? 0, rides: r.rides, secs: r.secs ?? 0 })
-  const profs = new Map<string, { name: string | null; handle: string | null; avatar_json: string | null }>()
-  for (const r of profRes.results as { uid: string; name: string | null; handle: string | null; avatar_json: string | null }[])
-    profs.set(r.uid, r)
-
-  type Satir = { username: string; name: string; handle: string; avatar: Record<string, unknown>; km: number; rides: number; secs: number; rank: number }
-  const rows: Satir[] = ids.map((u) => {
-    const st = stats.get(u) ?? { km: 0, rides: 0, secs: 0 }
-    const p = profs.get(u)
-    return {
-      username: u, name: p?.name || u, handle: p?.handle || '', avatar: avatarOf(p?.avatar_json),
-      km: round1(st.km), rides: st.rides, secs: st.secs, rank: 0,
-    }
-  })
-  // sıralama YUVARLANMIŞ km üstünden (Python satır kurulduktan sonra sıralar); ad kod-NOKTASI kıyası (cmpPy)
-  rows.sort((a, b) => {
-    if (a.km !== b.km) return b.km - a.km
-    if (a.rides !== b.rides) return b.rides - a.rides
-    return cmpPy(a.name, b.name)
-  })
-  rows.forEach((r, i) => { r.rank = i + 1 })
-  return c.json({ week: rows, me: rows.find((r) => r.username === user)?.rank ?? 0 })
 })
 
 // ---------- GET /api/users/find (main.py:3894) ----------

@@ -107,19 +107,7 @@ export function videoPush(
   }
 }
 
-// main.py:3697 — rozet push başlığı
-const BT: Record<string, string> = {
-  en: 'New badge unlocked 🏅', tr: 'Yeni rozet kazandın 🏅', es: '¡Nueva insignia! 🏅',
-  fr: 'Nouveau badge 🏅', de: 'Neues Abzeichen 🏅', it: 'Nuovo badge 🏅',
-  pt: 'Nova insígnia 🏅', ru: 'Новый значок 🏅', ja: '新しいバッジ獲得🏅',
-  zh: '解锁新徽章 🏅', ko: '새 배지 획득 🏅', ar: 'شارة جديدة 🏅', hi: 'नया बैज मिला 🏅',
-}
-// main.py:3673 BADGE_DEFS
-export const BADGE_DEFS: Record<string, string> = {
-  km1000: '1.000 km Kulübü', km5000: '5.000 km Kulübü', night: 'Gece Kartalı',
-  cities5: '5 Bölge Gezgini', streak7: '7 Gün Seri', longride: 'Uzun Yol Ustası',
-  first: 'İlk Sürüş', social: 'Yol Arkadaşı',
-}
+// 18.09: rozet push başlığı (BT) + BADGE_DEFS KALDIRILDI — rozet kazanma özelliği çıktı.
 
 /** pushreq/<dosya>.json eşleniği (render-done/failed pushları; kimlikli anahtar). */
 async function pushreq(env: Env, dosyaAdi: string, kayit: Record<string, unknown>): Promise<void> {
@@ -294,26 +282,7 @@ export async function renderFailed(env: Env, rid: string, user: string | null, r
   }
 }
 
-/** main.py:3684 badges — idempotent; yeni rozette kendi dilinde push. Dönen: eklenenler. */
-export async function rozetEkle(env: Env, uid: string, badges: string[]): Promise<string[]> {
-  const yeni = badges.filter((b) => Object.prototype.hasOwnProperty.call(BADGE_DEFS, b))
-  const p = await env.DB.prepare('SELECT lang, badges_json FROM users WHERE uid = ?1').bind(uid)
-    .first<{ lang: string | null; badges_json: string | null }>()
-  if (!p) return []
-  const cur = jsonParse<string[]>(p.badges_json, [])
-  const curSet = new Set(cur)
-  const fresh = yeni.filter((b) => !curSet.has(b))
-  if (!fresh.length) return []
-  const tum = [...new Set([...cur, ...fresh])].sort()
-  await env.DB.prepare('UPDATE users SET badges_json = ?1, updated_at = ?2 WHERE uid = ?3')
-    .bind(JSON.stringify(tum), simdi(), uid).run()
-  const lng = p.lang || 'en'
-  const adlar = fresh.map((b) => BADGE_DEFS[b]).join(', ')
-  await pushBekleyen(env, {
-    user: uid, title: BT[lng] || BT.en,
-    body: adlar + ' — ' + (lng === 'tr' ? 'Profilinde parlıyor!' : 'Shining on your profile!'),
-  })
-  return fresh
-}
+// 18.09: rozetEkle() KALDIRILDI — tek çağıranı silinen gorevler/rozet.ts idi.
+// ⚠️ users.badges_json KOLONU DURUYOR (veri kaybı olmasın); artık yazılmıyor.
 
 export { hexRasgele }

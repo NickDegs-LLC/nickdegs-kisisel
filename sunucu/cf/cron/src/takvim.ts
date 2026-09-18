@@ -19,11 +19,10 @@ import * as grupsurus from './gorevler/grupsurus'
 import * as weeklyRecap from './gorevler/weekly-recap'
 import * as gunlukRapor from './gorevler/gunluk-rapor'
 import * as premiumSuresi from './gorevler/premium-suresi'
-import * as rozet from './gorevler/rozet'
+// 18.09: rozet / kulup-karne / wrapped görevleri KALDIRILDI (rozetler, kulüpler, yıl özeti çıktı).
+// ⚠️ grupsurus (satır 18) ve weekly-recap KALIYOR: ikili sürüş videosu ve haftalık özet duruyor.
 import * as hava from './gorevler/hava'
 import * as ilkvideoNudge from './gorevler/ilkvideo-nudge'
-import * as kulupKarne from './gorevler/kulup-karne'
-import * as wrapped from './gorevler/wrapped'
 import * as videoKontrol from './gorevler/video-kontrol'
 import * as yorumWatch from './gorevler/yorum-watch'
 import * as reviewState from './gorevler/review-state'
@@ -77,10 +76,7 @@ export const GOREVLER: Gorev[] = [
   { ad: 'premium-suresi',    grup: 'saatlik',   zaman: { tip: 'gunluk', saat: 7 },   acik: true,  kos: premiumSuresi.kos },
   { ad: 'hava',              grup: 'saatlik',   zaman: { tip: 'gunluk', saat: 16 },  acik: true,  kos: hava.kos },
   { ad: 'ilkvideo-nudge',    grup: 'saatlik',   zaman: { tip: 'gunluk', saat: 16 },  acik: true,  kos: ilkvideoNudge.kos },
-  { ad: 'rozet',             grup: 'saatlik',   zaman: { tip: 'gunluk', saat: 18 },  acik: true,  kos: rozet.kos },
-  { ad: 'kulup-karne',       grup: 'saatlik',   zaman: { tip: 'haftalik', gun: 0, saat: 16 }, acik: true, kos: kulupKarne.kos },
   { ad: 'weekly-recap',      grup: 'saatlik',   zaman: { tip: 'haftalik', gun: 0, saat: 16 }, acik: true, kos: weeklyRecap.kos },
-  { ad: 'wrapped',           grup: 'saatlik',   zaman: { tip: 'yillik', ay: 12, gun: 20, saat: 15 }, acik: true, kos: wrapped.kos },
 
   // ── BEKÇİ KATMANI (kendi kendini onarma; hepsi ORTAM=golge'de KURU koşar, canli'da onarır) ──
   // Tempolar: kullanıcıyı en çabuk etkileyen (kuyruk) en sık; RunPod yapılandırması 10 dk;

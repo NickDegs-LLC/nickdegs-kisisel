@@ -19,7 +19,6 @@
 //   POST   /api/internal/render-done       (main.py:1107)
 //   POST   /api/internal/render-failed     (main.py:1243)
 //   GET    /api/internal/music             (main.py:2138)
-//   POST   /api/internal/badges            (main.py:3684)
 //
 // cf_mapping kararları (sözleşme gereği):
 //   pushq/pushreq dosya kuyruğu → KV "push:bekleyen:<dosya-adı-eşleniği>" (Faz 3'te gerçek APNs/FCM)
@@ -442,19 +441,8 @@ export function videoPush(
 }
 
 // main.py:3697 — rozet push başlığı (13 dil)
-const BT: Record<string, string> = {
-  en: 'New badge unlocked 🏅', tr: 'Yeni rozet kazandın 🏅', es: '¡Nueva insignia! 🏅',
-  fr: 'Nouveau badge 🏅', de: 'Neues Abzeichen 🏅', it: 'Nuovo badge 🏅',
-  pt: 'Nova insígnia 🏅', ru: 'Новый значок 🏅', ja: '新しいバッジ獲得🏅',
-  zh: '解锁新徽章 🏅', ko: '새 배지 획득 🏅', ar: 'شارة جديدة 🏅', hi: 'नया बैज मिला 🏅',
-}
-
-// main.py:3673 BADGE_DEFS (8 tanım — dışındakiler sessizce elenir)
-const BADGE_DEFS: Record<string, string> = {
-  km1000: '1.000 km Kulübü', km5000: '5.000 km Kulübü', night: 'Gece Kartalı',
-  cities5: '5 Bölge Gezgini', streak7: '7 Gün Seri', longride: 'Uzun Yol Ustası',
-  first: 'İlk Sürüş', social: 'Yol Arkadaşı',
-}
+// 18.09: BT (rozet push başlığı) + BADGE_DEFS KALDIRILDI — rozet özelliği çıktı.
+// Tek tüketicileri POST /api/internal/badges ucuydu; o da bu commit'te silindi.
 
 // main.py:1076 _hv — haversine (km)
 function haversineKm(a1: number, o1: number, a2: number, o2: number): number {
@@ -975,36 +963,9 @@ g.get('/api/internal/music', async (c) => {
   return new Response(obj.body, { headers: { 'content-type': 'audio/mp4' } })
 })
 
-// POST /api/internal/badges (main.py:3684) — İDEMPOTENT; çağıran: günlük rozet tarayıcı
-g.post('/api/internal/badges', async (c) => {
-  const env = c.env
-  const body: any = await govdeAl(c)
-  if (!secretOk(env.RENDER_DONE_SECRET, body?.secret)) return hataYanit(403, 'yetkisiz')
-  const u = String(body?.user ?? '')
-  const yeni: string[] = (Array.isArray(body?.badges) ? body.badges : [])
-    .filter((b: unknown): b is string =>
-      typeof b === 'string' && Object.prototype.hasOwnProperty.call(BADGE_DEFS, b))  // tanımsızlar sessizce elenir
-  const p = await getUser(env.DB, u)
-  if (!p) return hataYanit(404, 'kullanıcı yok')
-  let cur: string[] = []
-  try { cur = (JSON.parse(p.badges_json || '[]') as string[]) || [] } catch { cur = [] }
-  const curSet = new Set(cur)
-  const fresh = yeni.filter((b) => !curSet.has(b))   // main.py:3693 — girişteki tekrarlar Python'daki gibi elenmez
-  if (fresh.length) {
-    const tum = [...new Set([...cur, ...fresh])].sort()
-    // badges_json'un tek yazarı bu uç (günlük tarayıcı) — kolonun tamamı yazılır
-    await env.DB.prepare('UPDATE users SET badges_json = ?1, updated_at = ?2 WHERE uid = ?3')
-      .bind(JSON.stringify(tum), simdi(), u).run()
-    const lng = p.lang || 'en'
-    const adlar = fresh.map((b) => BADGE_DEFS[b]).join(', ')
-    // başlık 13 dil, gövde yalnız tr/en (main.py:3703)
-    await pushq(env, {
-      user: u, title: BT[lng] || BT.en,
-      body: adlar + ' — ' + (lng === 'tr' ? 'Profilinde parlıyor!' : 'Shining on your profile!'),
-    })
-  }
-  return c.json({ ok: true, added: fresh })
-})
+// 18.09: POST /api/internal/badges KALDIRILDI — rozet kazanma özelliği çıktı.
+// Tek çağıranı silinen cron görevi gorevler/rozet.ts idi.
+// ⚠️ users.badges_json KOLONU DURUYOR (veri kaybı olmasın); artık hiç yazılmıyor.
 
 // ============================================================================
 // ARKADAŞLIK UÇLARI

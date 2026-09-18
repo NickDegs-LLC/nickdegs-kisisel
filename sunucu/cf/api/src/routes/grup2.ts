@@ -1,18 +1,13 @@
-// grup2 — api/live + api/clubs (16 uç) — main.py birebir portu (GÖLGE MOD).
+// grup2 — api/live (7 uç). 18.09: KULÜPLER + Ultra'ya bağlı canlı takip uçları KALDIRILDI.
 // Sözleşme: cf/contracts/grup2.json; davranış kaynağı: /opt/movelog/backend/main.py
-//   canlı takip: 3141-3360 (start/get/beacon/hr-*), wave 3623, live_club 3643
-//   kulüpler:    3758-3891 (_club_code/_club_out + 8 uç), _profile_of 1389-1407, _pushq 2986
 //
 // Kapsanan uçlar:
-//   POST   /api/live/start        POST /api/clubs
-//   GET    /api/live/hr-poll      GET  /api/clubs
-//   POST   /api/live/beacon       GET  /api/clubs/{cid}
-//   POST   /api/live/hr-request   POST /api/clubs/join
-//   POST   /api/live/hr-report    POST /api/clubs/leave
-//   POST   /api/live/hr-share     POST /api/clubs/kick
-//   POST   /api/live/wave         POST /api/clubs/rename
-//   GET    /api/live/club/{cid}
-//   GET    /api/live/{username}   (hr-poll'dan ÖNCE kayıtlı — üretim sırası birebir, aşağıya bak)
+//   GET    /api/live/hr-poll
+//   POST   /api/live/beacon
+//   POST   /api/live/hr-request
+//   POST   /api/live/hr-report
+//   POST   /api/live/hr-share
+//   POST   /api/live/wave
 //
 // cf_mapping çevirileri (sözleşme kuralı 3):
 //   Traccar 127.0.0.1:8084          → D1 positions (spd ZATEN km/h — şema kararı, ×1.852 YOK)
@@ -24,15 +19,12 @@
 //   /opt/movelog/data/sv-kapali dosya bayrağı → lib/ortak svKapali (tek KV anahtarı "sv_off")
 //   hr_share (kalıcı gizlilik)      → D1 users.prefs_json.$.hr_share (tek-deyim json_set sözleşmesi)
 //
-// ⚠️ ÜRETİM BUG'I BİLİNÇLİ KOPYALANDI — Barış kararıyla düzeltilebilir (diff #2, 2026-08-30):
-//   FastAPI'de GET /api/live/{username} (main.py:3168) rotası GET /api/live/hr-poll'dan (3354)
-//   ÖNCE kayıtlı — Starlette ilk eşleşmeyi aldığı için canlıda hr-poll isteği live_get("hr-poll")
-//   olarak işler: Ultra değilse 402 "Ultra gerekli", Ultra ise 403 "sadece arkadaşını izleyebilirsin"
-//   (üretim ölçümü 2026-08-30: apple_golge_diff→402, u69be3f7e960e→403, appreview→403).
-//   BİREBİR kuralı gereği burada da AYNI kayıt sırası uygulandı: /api/live/:username hr-poll'dan
-//   ÖNCE kaydedilir (Hono da ilk kayıtlı eşleşmeyi çalıştırır — yerel testle kanıtlandı), böylece
-//   hr-poll handler'ı üretimdeki gibi ÖLÜ ROTA kalır. DÜZELTME: hr-poll kaydını :username'in
-//   önüne almak yeter (Nabız Peek ancak o zaman bu uçtan çalışır; main.py'de de aynısı gerekir).
+// ✅ 18.09 — ÜRETİMDEKİ ROTA-GÖLGESİ BUG'I ARTIK YOK (kaldırmanın yan faydası):
+//   Eskiden GET /api/live/{username} kaydı GET /api/live/hr-poll'u gölgeliyordu (hem Starlette hem
+//   Hono ilk eşleşen kaydı çalıştırır) → hr-poll istekleri live_get("hr-poll") olarak işlenip
+//   402 "Ultra gerekli" / 403 "sadece arkadaşını izleyebilirsin" dönüyordu (üretim ölçümü 30.08).
+//   :username Ultra kapısına bağlı olduğu için Ultra ile birlikte KALDIRILDI; gölge de kalktı,
+//   Nabız Peek (hr-poll) artık gerçekten erişilebilir. Uç sözleşmesi değişmedi: {want, share}.
 
 import { Hono } from 'hono'
 import type { Context } from 'hono'
@@ -98,12 +90,6 @@ function hexUret(n: number): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
 }
 
-/** _is_ultra (main.py:3124-3126): SADECE users.ultra — admin SAYILMAZ (sözleşme tuzağı). */
-async function ultraSart(db: D1Database, user: string): Promise<void> {
-  const r = await db.prepare('SELECT ultra FROM users WHERE uid = ?1').bind(user)
-    .first<{ ultra: number | null }>()
-  if (!r?.ultra) hata(402, 'Ultra gerekli')
-}
 
 /** friends[user] üyelik şartı (yönlü kenar: uid → friend_uid). */
 async function arkadasSart(db: D1Database, user: string, hedef: string, mesaj: string): Promise<void> {
@@ -239,71 +225,8 @@ async function profilleri(env: Env, uids: string[]): Promise<Map<string, Profil>
   return out
 }
 
-// ---------------------------------------------------------------------------
-// Kulüp yardımcıları (_club_code / _club_out — main.py:3764-3780)
-// ---------------------------------------------------------------------------
-const CLUB_MAX_PER_USER = 10
-const CLUB_MAX_MEMBERS = 30
-const KOD_ALFABE = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'   // I,O,0,1 yok; 32 karakter
-
-function kodUret(): string {
-  const b = new Uint8Array(6)
-  crypto.getRandomValues(b)
-  return Array.from(b, (x) => KOD_ALFABE[x & 31]).join('')
-}
-
-type KulupSatir = {
-  cid: string; name: string | null; owner_uid: string | null
-  join_code: string | null; created_at: number | null
-}
-
-/** Üye uid'leri KATILIM SIRASIYLA (JSON dizi sırası = joined sırası; devir mantığı buna dayanır). */
-async function uyeListesi(db: D1Database, cid: string): Promise<string[]> {
-  const r = await db.prepare('SELECT uid FROM club_members WHERE cid = ?1 ORDER BY created_at, rowid')
-    .bind(cid).all<{ uid: string }>()
-  return (r.results ?? []).map((x) => x.uid)
-}
-
-/** _club_out (main.py:3774-3780): member=false → code/members YOK. */
-async function kulupCikti(env: Env, k: KulupSatir, uyeler: string[], uye: boolean): Promise<Record<string, unknown>> {
-  const o: Record<string, unknown> = {
-    id: k.cid, name: k.name ?? '', owner: k.owner_uid ?? '',
-    member_count: uyeler.length, created: k.created_at ?? 0,
-  }
-  if (uye) {
-    o.code = k.join_code ?? ''
-    const pm = await profilleri(env, uyeler)
-    o.members = uyeler.map((u) => pm.get(u))
-  }
-  return o
-}
-
-// ============================================================================
 // CANLI TAKİP UÇLARI
 // ============================================================================
-
-// POST /api/live/start (main.py:3141-3165)
-g.post('/api/live/start', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const target = b.user ? String(b.user) : ''
-  const db = c.env.DB
-  await ultraSart(db, user)
-  await arkadasSart(db, user, target, 'sadece arkadaşını izleyebilirsin')
-  const hedef = await db.prepare('SELECT tracker_id FROM users WHERE uid = ?1').bind(target)
-    .first<{ tracker_id: string | null }>()
-  let fresh = false
-  if (hedef?.tracker_id) {
-    const son = await db.prepare('SELECT MAX(ts) AS t FROM positions WHERE device = ?1')
-      .bind(hedef.tracker_id).first<{ t: number | null }>()
-    if (son?.t != null) fresh = simdi() - son.t < 120
-  }
-  if (!fresh) {
-    // sessiz canlı-uyandırma: pushq/live_<target>_<ts>.json eşleniği ('user' anahtarı HEDEFİ taşır)
-    await sessizPush(c.env, `live_${target}_${simdi()}`, target, 'live')
-  }
-  return c.json({ ok: true, fresh })
-})
 
 // POST /api/live/beacon (main.py:3276-3293) — Ultra/arkadaş şartı YOK, herkes kendi beacon'ını yazar
 g.post('/api/live/beacon', authUser, async (c) => {
@@ -380,15 +303,9 @@ g.post('/api/live/hr-share', authUser, async (c) => {
   return c.json({ ok: true, hr_share: acik })
 })
 
-// GET /api/live/{username} (main.py:3168-3271) — KAYIT SIRASI ÜRETİM BİREBİR: hr-poll'dan ÖNCE.
-// üretim bug'ı bilinçli kopyalandı — Barış kararıyla düzeltilebilir (bkz. dosya başı ⚠️ notu).
-// Bu kayıt /api/live/hr-poll'u gölgeler: hr-poll istekleri liveGetUsername("hr-poll") olarak
-// işler → 402 "Ultra gerekli" / 403 "sadece arkadaşını izleyebilirsin" (üretimle aynı).
-g.get('/api/live/:username', authUser, liveGetUsername)
-
-// GET /api/live/hr-poll (main.py:3354-3360) — üretimdeki gibi ÖLÜ ROTA (üstteki :username kaydı
-// gölgeliyor; üretim bug'ı bilinçli kopyalandı — Barış kararıyla düzeltilebilir). Handler, rota
-// düzeltilirse çalışacak DOĞRU davranışı (sözleşme: {want, share}) korumak için silinmedi.
+// GET /api/live/hr-poll (main.py:3354-3360) — 18.09'dan beri GERÇEKTEN ERİŞİLEBİLİR.
+// Eskiden üstteki `/api/live/:username` kaydı bunu gölgeliyordu (üretim bug'ı bilinçli kopyalanmıştı);
+// o kayıt Ultra'ya bağlı olduğu için kaldırılınca gölge de kalktı. Davranış sözleşmedeki gibi: {want, share}.
 g.get('/api/live/hr-poll', authUser, async (c) => {
   const user = c.get('user')
   const now = simdi()
@@ -424,322 +341,6 @@ g.post('/api/live/wave', authUser, async (c) => {
   const metin = (_WV[lng] || _WV.en).split('{n}').join(ad)
   await pushKuyruk(c.env, target, 'Move Log 👋', metin, 'profile')
   return c.json({ ok: true })
-})
-
-// GET /api/live/club/{cid} (main.py:3643-3669) — konvoy görünümü; beacon fallback YOK
-g.get('/api/live/club/:cid', authUser, async (c) => {
-  const user = c.get('user')
-  const cid = c.req.param('cid')
-  const db = c.env.DB
-  await ultraSart(db, user)
-  const k = await db.prepare('SELECT cid, name FROM clubs WHERE cid = ?1').bind(cid)
-    .first<{ cid: string; name: string | null }>()
-  if (!k) hata(404, 'kulüp yok')
-  type Uye = { uid: string; name: string | null; handle: string | null; tracker_id: string | null }
-  const uyeler = ((await db.prepare(
-    `SELECT m.uid, u.name, u.handle, u.tracker_id
-       FROM club_members m LEFT JOIN users u ON u.uid = m.uid
-      WHERE m.cid = ?1 ORDER BY m.created_at, m.rowid`).bind(cid).all<Uye>()).results ?? [])
-  if (!uyeler.some((m) => m.uid === user)) hata(404, 'kulüp yok')   // IDOR: üye olmayana varlık sızmaz
-  type Poz = { device: string; ts: number; lat: number; lon: number; spd: number | null; course: number | null }
-  const pozlar = new Map<string, Poz>()
-  const cihazlar = uyeler.map((m) => m.tracker_id).filter((t): t is string => !!t)
-  if (cihazlar.length) {
-    const ph = cihazlar.map((_, i) => `?${i + 1}`).join(', ')
-    const rows = ((await db.prepare(
-      `SELECT device, ts, lat, lon, spd, course FROM positions
-        WHERE device IN (${ph})
-          AND ts = (SELECT MAX(ts) FROM positions p2 WHERE p2.device = positions.device)`)
-      .bind(...cihazlar).all<Poz>()).results ?? [])
-    for (const p of rows) pozlar.set(p.device, p)
-  }
-  const now = simdi()
-  const riders: Record<string, unknown>[] = []
-  for (const m of uyeler) {
-    const q = m.tracker_id ? pozlar.get(m.tracker_id) : undefined
-    if (!q) continue                                  // konumu olmayan üye listeden atlanır
-    riders.push({
-      user: m.uid, name: m.name || m.handle || m.uid,
-      lat: q.lat, lon: q.lon, spd: yuvarla1(q.spd || 0),
-      age: Math.trunc(now - q.ts), course: Math.round(q.course || 0),
-    })
-  }
-  return c.json({ riders, club: k.name ?? '' })
-})
-
-// GET /api/live/{username} gövdesi (main.py:3168-3271) — kayıt yukarıda, hr-poll'dan ÖNCE
-// (üretim rota-sırası birebir; function declaration hoisted olduğu için erken kayıt güvenli).
-async function liveGetUsername(c: Context<AppEnv, '/api/live/:username'>) {
-  const user = c.get('user')
-  const username = c.req.param('username')
-  const db = c.env.DB
-  await ultraSart(db, user)
-  await arkadasSart(db, user, username, 'sadece arkadaşını izleyebilirsin')
-  const prof = await getUser(db, username)
-  const devid = prof?.tracker_id
-  if (!devid) hata(404, 'cihaz yok')
-  const now = simdi()
-  type Poz = {
-    device: string; ts: number; lat: number; lon: number; spd: number | null; alt: number | null
-    hr: number | null; batt: number | null; course: number | null; acc: number | null; charging: number | null
-  }
-  const son = await db.prepare('SELECT * FROM positions WHERE device = ?1 ORDER BY ts DESC LIMIT 1')
-    .bind(devid).first<Poz>()
-  const bcn = await beaconOku(c.env, username, prof?.state_json)
-  const hl = await c.env.KV.get<HrLive>(`hr_live:${username}`, 'json')
-  const t0 = gunBasi(now)
-  if (!son) {
-    // Traccar konumu yok — app-açılış beacon'ı varsa "son bilinen" yanıtı (main.py:3187-3199)
-    if (bcn && bcn.lat != null) {
-      // main.py:3196 `_bcn["lon"]`: lat var ama lon ANAHTARI yoksa Python KeyError → 500 (birebir;
-      // alanı sessizce düşürmek yanıt alan-kümesini bozar)
-      if (bcn.lon === undefined) throw new Error("KeyError: 'lon' (main.py:3196 birebir)")
-      const bage = Math.trunc(now - (bcn.ts || 0))
-      const tkm = await gunlukKm(db, username, t0)
-      return c.json({
-        lat: bcn.lat, lon: bcn.lon, spd: 0.0, hr: canliNabiz(hl, now, null), alt: 0,
-        age: bage, today_km: yuvarla1(tkm),
-        batt: bcn.batt ?? null, charging: !!bcn.charging,
-        course: 0, acc: 0, trail: [], ride_min: 0,
-        avg_kmh: 0.0, max_kmh: 0.0, temp: null, wcode: null,
-        name: prof?.name || prof?.handle || username,
-      })
-    }
-    hata(404, 'konum yok')
-  }
-  let age = Math.trunc(now - son.ts)
-  let hr: number | null = null
-  if (son.hr != null) {
-    const hv = Math.trunc(son.hr)
-    if (hv > 25 && hv < 250) hr = hv                  // 25<hr<250 filtresi (main.py:3204-3211)
-  }
-  const tkm = await gunlukKm(db, username, t0)
-  // son 15 dk iz + bugünün hız istatistikleri (main.py:3216-3242; hata olursa sıfır değerlerle sürer)
-  let trail: number[][] = []
-  let rideMin = 0
-  let mxKmh = 0
-  let spds: number[] = []
-  try {
-    const [r15, rGun] = await db.batch([
-      db.prepare('SELECT lat, lon FROM positions WHERE device = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts')
-        .bind(devid, now - 900, now),
-      db.prepare('SELECT ts, spd FROM positions WHERE device = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts')
-        .bind(devid, t0, now),
-    ])
-    const iz = (r15.results ?? []) as { lat: number; lon: number }[]
-    trail = iz.map((q) => [yuvarla5(q.lat), yuvarla5(q.lon)]).slice(-120)
-    const gunNoktalari = (rGun.results ?? []) as { ts: number; spd: number | null }[]
-    spds = gunNoktalari.map((q) => q.spd || 0)        // D1'de spd ZATEN km/h
-    for (const s of spds) if (s > mxKmh) mxKmh = s
-    // bu sürüşün dakikası: sondan geriye, 240 sn'den büyük boşlukta kes; >5 km/h başlangıcı
-    let lastT: number | null = null
-    let startT: number | null = null
-    for (let i = gunNoktalari.length - 1; i >= 0; i--) {
-      const qt = gunNoktalari[i].ts
-      if (lastT !== null && lastT - qt > 240) break
-      if ((gunNoktalari[i].spd || 0) > 5) startT = qt
-      lastT = qt
-    }
-    if (startT) rideMin = Math.trunc((now - startT) / 60)
-  } catch { /* main.py'deki try/except eşleniği */ }
-  const hareketli = spds.filter((x) => x > 5)
-  const avgKmh = hareketli.length ? yuvarla1(hareketli.reduce((a, x) => a + x, 0) / hareketli.length) : 0.0
-  const [wt, wc] = await havaDurumu(c.env, son.lat, son.lon)
-  let batt: number | null = null
-  if (son.batt != null) {
-    const bi = Math.trunc(son.batt)
-    if (bi >= 0 && bi <= 100) batt = bi
-  }
-  // BEACON ÜSTÜNLÜĞÜ (main.py:3253-3259): beacon son fix'ten yeniyse konum/batarya/yaş beacon'dan
-  let lat = son.lat, lon = son.lon
-  let spd = yuvarla1(son.spd || 0)
-  let crs = Math.round(son.course || 0)
-  let chg = !!son.charging
-  if (bcn && bcn.ts && bcn.ts > now - age && bcn.lat != null) {
-    // main.py:3256 `_bcn["lon"]`: lat var ama lon ANAHTARI yoksa Python KeyError → 500 (birebir;
-    // `bcn.lon!` undefined kalsaydı JSON'da 'lon' anahtarı sessizce DÜŞERDİ — alan kümesi bozulur)
-    if (bcn.lon === undefined) throw new Error("KeyError: 'lon' (main.py:3256 birebir)")
-    age = Math.trunc(now - bcn.ts)
-    lat = bcn.lat; lon = bcn.lon; spd = 0.0; crs = 0
-    if (bcn.batt != null) batt = bcn.batt
-    chg = !!bcn.charging
-  }
-  hr = canliNabiz(hl, now, hr)                        // taze nabız peek Traccar nabzının önüne geçer
-  return c.json({
-    lat, lon, spd,
-    hr, alt: Math.round(son.alt || 0),
-    age, today_km: yuvarla1(tkm),
-    batt, charging: chg,
-    course: crs,
-    acc: Math.round(son.acc || 0),
-    trail, ride_min: rideMin,
-    avg_kmh: avgKmh, max_kmh: yuvarla1(mxKmh),
-    temp: wt, wcode: wc,
-    name: prof?.name || prof?.handle || username,
-  })
-}
-
-// ============================================================================
-// KULÜP UÇLARI
-// ============================================================================
-
-// GET /api/clubs (main.py:3783-3789) — üye görünümü DEĞİL: code/members yok; yeniden eskiye
-g.get('/api/clubs', authUser, async (c) => {
-  const user = c.get('user')
-  const rows = ((await c.env.DB.prepare(
-    `SELECT c.cid, c.name, c.owner_uid, c.created_at,
-            (SELECT COUNT(*) FROM club_members cm WHERE cm.cid = c.cid) AS mc
-       FROM clubs c JOIN club_members m ON m.cid = c.cid
-      WHERE m.uid = ?1
-      ORDER BY c.created_at DESC, c.rowid`).bind(user)
-    .all<{ cid: string; name: string | null; owner_uid: string | null; created_at: number | null; mc: number }>())
-    .results ?? [])
-  return c.json({
-    clubs: rows.map((r) => ({
-      id: r.cid, name: r.name ?? '', owner: r.owner_uid ?? '',
-      member_count: r.mc, created: r.created_at ?? 0,
-    })),
-  })
-})
-
-// POST /api/clubs (main.py:3792-3805)
-g.post('/api/clubs', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const name = pyStr(b.name).trim().slice(0, 40)     // str(body.get("name","")) — null → 'None' (birebir)
-  if (name.length < 3) hata(400, 'grup adı en az 3 karakter')
-  const db = c.env.DB
-  // kota ÜYE OLUNAN grup sayısıdır, sahiplik değil (sözleşme notu)
-  const sayi = await db.prepare('SELECT COUNT(*) AS n FROM club_members WHERE uid = ?1').bind(user)
-    .first<{ n: number }>()
-  if ((sayi?.n ?? 0) >= CLUB_MAX_PER_USER) hata(400, 'grup sınırına ulaştın')
-  const now = simdi()
-  const cid = `c${now}${hexUret(3)}`
-  let code = ''
-  for (let i = 0; i < 50; i++) {
-    const aday = kodUret()
-    const varMi = await db.prepare('SELECT 1 AS x FROM clubs WHERE join_code = ?1').bind(aday).first()
-    if (!varMi) { code = aday; break }
-  }
-  if (!code) hata(500, 'kod üretilemedi')
-  await db.batch([
-    db.prepare('INSERT INTO clubs (cid, name, owner_uid, join_code, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)')
-      .bind(cid, name, user, code, now),
-    db.prepare('INSERT INTO club_members (cid, uid, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)')
-      .bind(cid, user, now),
-  ])
-  return c.json(await kulupCikti(c.env, { cid, name, owner_uid: user, join_code: code, created_at: now }, [user], true))
-})
-
-// POST /api/clubs/join (main.py:3827-3848) — İDEMPOTENT; Ultra/arkadaşlık ŞARTSIZ; 10-grup kotası YOK
-const _CLUB_JOIN_B: Record<string, string> = {
-  en: '{u} joined your group {g} 🏍️', tr: '{u}, {g} grubuna katıldı 🏍️',
-  ar: 'انضم {u} إلى مجموعتك {g} 🏍️', es: '{u} se unió a tu grupo {g} 🏍️',
-  fr: '{u} a rejoint ton groupe {g} 🏍️', ru: '{u} присоединился к твоей группе {g} 🏍️',
-  de: '{u} ist deiner Gruppe {g} beigetreten 🏍️', it: '{u} si è unito al tuo gruppo {g} 🏍️',
-  pt: '{u} entrou no seu grupo {g} 🏍️', ja: '{u}さんがグループ{g}に参加しました🏍️',
-  zh: '{u} 加入了你的车队 {g} 🏍️', ko: '{u}님이 {g} 그룹에 참여했어요 🏍️',
-  hi: '{u} आपके ग्रुप {g} में शामिल हुए 🏍️',
-}
-
-g.post('/api/clubs/join', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const code = pyStr(b.code).trim().toUpperCase()    // str(body.get("code","")) birebir
-  if (code.length !== 6) hata(400, 'geçersiz kod')
-  const db = c.env.DB
-  const k = await db.prepare('SELECT cid, name, owner_uid, join_code, created_at FROM clubs WHERE join_code = ?1')
-    .bind(code).first<KulupSatir>()
-  if (!k) hata(404, 'kod bulunamadı')
-  const uyeler = await uyeListesi(db, k.cid)
-  if (uyeler.includes(user))                          // zaten üye: aynı görünüm, push ATILMAZ
-    return c.json(await kulupCikti(c.env, k, uyeler, true))
-  if (uyeler.length >= CLUB_MAX_MEMBERS) hata(400, 'grup dolu')
-  const now = simdi()
-  await db.prepare('INSERT INTO club_members (cid, uid, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)')
-    .bind(k.cid, user, now).run()
-  const yeniUyeler = [...uyeler, user]
-  const cikti = await kulupCikti(c.env, k, yeniUyeler, true)
-  // kurucuya KENDİ dilinde push (main.py:3842-3846)
-  const ben = (cikti.members as Profil[]).find((p) => p.username === user)
-  const ow = k.owner_uid ?? ''
-  const owner = await db.prepare('SELECT lang FROM users WHERE uid = ?1').bind(ow)
-    .first<{ lang: string | null }>()
-  const lng = owner?.lang || 'en'
-  const metin = (_CLUB_JOIN_B[lng] || _CLUB_JOIN_B.en)
-    .split('{u}').join(ben?.name || '@' + (ben?.handle || 'rider'))
-    .split('{g}').join(k.name ?? '')
-  await pushKuyruk(c.env, ow, 'Move Log', metin)
-  return c.json(cikti)
-})
-
-// POST /api/clubs/leave (main.py:3851-3864)
-g.post('/api/clubs/leave', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const cid = pyStr(b.id)                            // str(body.get("id","")) birebir
-  const db = c.env.DB
-  const k = await db.prepare('SELECT cid, owner_uid FROM clubs WHERE cid = ?1').bind(cid)
-    .first<{ cid: string; owner_uid: string | null }>()
-  const uyeler = k ? await uyeListesi(db, cid) : []
-  if (!k || !uyeler.includes(user)) hata(404, 'grup bulunamadı')
-  // Python tek atomik _save yapar — üye silme + grup silme/devir birlikte batch'te (D1 batch atomik)
-  const sil = db.prepare('DELETE FROM club_members WHERE cid = ?1 AND uid = ?2').bind(cid, user)
-  const kalan = uyeler.filter((u) => u !== user)
-  if (kalan.length === 0) {
-    await db.batch([sil, db.prepare('DELETE FROM clubs WHERE cid = ?1').bind(cid)])   // son üye çıktı → grup silinir
-  } else if (k.owner_uid === user) {
-    // kuruculuk EN ESKİ üyeye devrolur (katılım sırası — uyeListesi created_at,rowid sıralı)
-    await db.batch([sil, db.prepare('UPDATE clubs SET owner_uid = ?1, updated_at = ?2 WHERE cid = ?3')
-      .bind(kalan[0], simdi(), cid)])
-  } else {
-    await sil.run()
-  }
-  return c.json({ ok: true })
-})
-
-// POST /api/clubs/kick (main.py:3867-3877) — kulüp YOKSA da 403 (404 değil); no-op'ta da {ok:true}
-g.post('/api/clubs/kick', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const cid = pyStr(b.id)                            // str(body.get("id","")) birebir
-  const target = pyStr(b.user)                       // str(body.get("user","")) birebir
-  const db = c.env.DB
-  const k = await db.prepare('SELECT owner_uid FROM clubs WHERE cid = ?1').bind(cid)
-    .first<{ owner_uid: string | null }>()
-  if (!k || k.owner_uid !== user) hata(403, 'sadece kurucu çıkarabilir')
-  if (target !== user)                                // kurucu kendini kick edemez; hedef üye değilse no-op
-    await db.prepare('DELETE FROM club_members WHERE cid = ?1 AND uid = ?2').bind(cid, target).run()
-  return c.json({ ok: true })
-})
-
-// POST /api/clubs/rename (main.py:3880-3891) — kontrol SIRASI: önce owner (403), SONRA ad (400)
-g.post('/api/clubs/rename', authUser, async (c) => {
-  const b = await govdeAl(c)
-  const user = c.get('user')
-  const cid = pyStr(b.id)                            // str(body.get("id","")) birebir
-  const name = pyStr(b.name).trim().slice(0, 40)     // null → 'None' (4 karakter, GEÇERLİ ad — birebir)
-  const db = c.env.DB
-  const k = await db.prepare('SELECT cid, name, owner_uid, join_code, created_at FROM clubs WHERE cid = ?1')
-    .bind(cid).first<KulupSatir>()
-  if (!k || k.owner_uid !== user) hata(403, 'sadece kurucu yeniden adlandırır')
-  if (name.length < 3) hata(400, 'grup adı en az 3 karakter')
-  await db.prepare('UPDATE clubs SET name = ?1, updated_at = ?2 WHERE cid = ?3')
-    .bind(name, simdi(), cid).run()
-  const uyeler = await uyeListesi(db, cid)
-  return c.json(await kulupCikti(c.env, { ...k, name }, uyeler, true))
-})
-
-// GET /api/clubs/{cid} (main.py:3808-3814) — üye olmayana 403 değil 404 (varlık da gizlenir)
-g.get('/api/clubs/:cid', authUser, async (c) => {
-  const user = c.get('user')
-  const cid = c.req.param('cid')
-  const k = await c.env.DB.prepare('SELECT cid, name, owner_uid, join_code, created_at FROM clubs WHERE cid = ?1')
-    .bind(cid).first<KulupSatir>()
-  if (!k) hata(404, 'grup bulunamadı')
-  const uyeler = await uyeListesi(c.env.DB, cid)
-  if (!uyeler.includes(user)) hata(404, 'grup bulunamadı')
-  return c.json(await kulupCikti(c.env, k, uyeler, true))
 })
 
 export default g

@@ -29,9 +29,9 @@ tüketim: `main.py` satır 26 `CONF_PATH`, Dockerfile satır 6). Script kanıtla
 | R2_ACCESS_KEY_ID | api, dispatch, cron | config.env (aynısı `/opt/matrix/secrets/movelog-r2.conf`) | string | Presigned URL üretimi main.py:86-112; dispatch atası movelog-cloud.py:146; cron: pending-reconcile/video-kontrol/svcache-rapor. Worker'da R2 **binding** varken yalnız presign için gerekli |
 | R2_SECRET_ACCESS_KEY | api, dispatch, cron | config.env | string | Üsttekiyle birlikte |
 | RENDER_DONE_SECRET | api, dispatch, cron | config.env (aynısı `/opt/matrix/secrets/movelog-backend.conf`) | string | Motor→`/internal/render-done` doğrulaması; dispatch job'a enjekte eder (movelog-cloud.py:39-40); cron: movelog-pending-reconcile.py |
-| LIVEKIT_KEY | api | config.env | string | İnterkom token imzası (main.py LIVEKIT_*) — ✅ yüklendi 2026-08-30 (Görev C) |
-| LIVEKIT_SECRET | api | config.env | string | Üsttekiyle birlikte — ✅ yüklendi 2026-08-30 |
-| LIVEKIT_URL | api | config.env | string | WSS adresi; gizli değil ama kaynak tekliği için bölüm 2'den buraya taşındı (Görev C) — ✅ yüklendi 2026-08-30 |
+| ~~LIVEKIT_KEY~~ | — | — | — | ❌ **18.09 KALDIRILDI** — canlı telsiz (grup5 voicecall) + kulüp interkomu (grup8) uçları silindi. ⚠️ Cloudflare'de sır **HÂLÂ YÜKLÜ**: `wrangler secret delete LIVEKIT_KEY --name movelog-api` ile ayrıca silinmeli (Barış onayı) |
+| ~~LIVEKIT_SECRET~~ | — | — | — | ❌ 18.09 KALDIRILDI — üsttekiyle aynı; sır ayrıca silinmeli |
+| ~~LIVEKIT_URL~~ | — | — | — | ❌ 18.09 KALDIRILDI — üsttekiyle aynı; sır ayrıca silinmeli |
 | RUNPOD_API_KEY | dispatch, cron | `/opt/matrix/secrets/runpod.conf` | string | RunPod REST (movelog-cloud.py:20-28,91,114; movelog-grupsurus.py da okuyor) |
 | APNS_AUTH_KEY | api, cron | `/opt/github-deploy/apple/AuthKey_CAAF5X8DD3.p8` | PEM | APNs ES256 anahtarı (push.py:13). Worker'da WebCrypto ile imza: `api/src/lib/push.ts` — ✅ movelog-api'ye yüklendi 2026-08-30 (push görevi); cron'a ilk deploy'unda secrets-push.sh yükler (worker henüz yok) |
 | FCM_SERVICE_ACCOUNT | api, cron | `/opt/github-deploy/google-play-admin.json` | JSON | FCM HTTP v1 servis hesabı (push.py:33) **+ Google Play IAP doğrulama** (main.py:1594-1601,1720 `_GOOGLE_SA`) — api ataması bu yüzden de şart. Kopyası `/opt/movelog/backend/google-play-admin.json` — ✅ movelog-api'ye yüklendi 2026-08-30 (push görevi); cron ilk deploy'da |
@@ -41,8 +41,8 @@ tüketim: `main.py` satır 26 `CONF_PATH`, Dockerfile satır 6). Script kanıtla
 `/opt/matrix/secrets/movelog-cf.conf` içindeki `MOVELOG_CF_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID` ←
 `MOVELOG_CF_ACCOUNT_ID`). `secrets-push.sh` bunu değeri yazmadan export eder; wrangler oturumu bununla açılır.
 
-Benzersiz worker sırrı: **21** (GCP_SERVICE_ACCOUNT opsiyonel dahil; LIVEKIT_URL dahil) · worker-başına
-atama toplamı **32** put (api 19 · dispatch 4+1 ops. · cron 8). ⚠️ Denetim düzeltmesi (2026-08-30): MAPBOX_SECRET_TOKEN sır
+Benzersiz worker sırrı: **18** (18.09'da LIVEKIT_KEY/SECRET/URL düştü; GCP_SERVICE_ACCOUNT opsiyonel dahil) · worker-başına
+atama toplamı **29** put (api 16 · dispatch 4+1 ops. · cron 8). ⚠️ Denetim düzeltmesi (2026-08-30): MAPBOX_SECRET_TOKEN sır
 listesinden ÇIKARILDI — worker kapsamındaki tüketiciler (movelog-cloud.py:167, activity-detect.py:29)
 gerçekte **MAPBOX_PUBLIC_TOKEN** okuyor (bölüm 2'ye taşındı); SECRET_TOKEN'ın tek tüketicisi
 harita-proxy.py:49 = İPTAL edilen harita ayağı (bölüm 3).
@@ -68,7 +68,7 @@ harita-proxy.py:49 = İPTAL edilen harita ayağı (bölüm 3).
 | APNS_TOPIC | api, cron | kod sabiti push.py:12 | `com.nickdegs.kisisel` — ✅ [vars] 2026-08-30 |
 | FCM_PROJECT_ID | api, cron | kod sabiti push.py:34 | `film-ozet` — ✅ [vars] 2026-08-30 |
 | TWILIO_SENDER | api | config.env | Alfanümerik gönderici adı — gizli değil |
-| ~~LIVEKIT_URL~~ | api | config.env | Bölüm 1'e taşındı (Görev C 2026-08-30): [vars] yerine sır olarak yüklendi — kaynak tekliği (config.env) + secrets-push.sh boru hattı |
+| ~~LIVEKIT_URL~~ | — | — | 18.09: TAMAMEN kaldırıldı (canlı telsiz + interkom çıktı) — bölüm 1'deki satıra bakın |
 | MAPBOX_PUBLIC_TOKEN | dispatch, cron | `/opt/matrix/secrets/mapbox.conf` | pk.* token tasarım gereği public → var yeterli. GERÇEK tüketiciler: movelog-cloud.py:167 (map-match), activity-detect.py:29 (geocoding). Faz H'de ortak katman kararıyla (A4) düşebilir |
 
 `movelog-gps` worker'ının **hiç sırrı yok** (OsmAnd ingest deviceid ile; yalnız D1 binding + TRACCAR_URL
@@ -83,7 +83,7 @@ paralel-yansıtma var'ı). `movelog-harita` İPTAL → sıfır atama.
 | ADMIN_NUMBERS_FILE | main.py:63 — sır değil, **dosya yolu** (varsayılan `DATA_DIR/admin-numbers.conf`; içeriği admin telefon listesi = veri). Workers'ta D1/KV'ye göçer, secret push'u yok |
 | ROUTES_DIR / CONF_PATH / DATA_DIR / OWNER_UID (env) | main.py:22-27 os.environ — dosya-sistemi yolları + sahip uid; Workers'ta yol kavramı yok (OWNER_UID zaten bölüm 2 vars'ta) |
 | GOOGLE_MAPS_KEY | Kaynak var (`/opt/matrix/secrets/gmaps.conf`) ama backend/scriptlerde **tüketici bulunamadı** (Street View anahtarı motor/RunPod template env'inde olmalı) — worker'lara atanmadı |
-| `/opt/matrix/secrets/livekit.conf` | Tek satır, `AD=DEĞER` formatında DEĞİL; tüketicisi bulunamadı. Backend LIVEKIT_* değerlerini config.env'den alıyor — worker kaynağı config.env |
+| `/opt/matrix/secrets/livekit.conf` | 18.09: artık **tamamen tüketicisiz** — canlı telsiz/interkom kaldırıldı, LIVEKIT_* kod tarafında da yok. Dosya silinebilir (Barış onayıyla; sunucuda duruyor, zararsız) |
 | movelog-yt-client.json / movelog-yt-token.json | Tüketiciler `/opt/matrix/kisisel-app/yt-auth.py` + `upload-play-videos.py` (Play ASO araçları) — worker kapsamı DIŞI, taşınmaz |
 | `/opt/matrix/secrets/tactical_force_aspect.conf` | Sır değil; 1 satırlık ayar bayrağı (movelog-cloud.py:485) — Faz T'de dispatch var'ına döner |
 | `/opt/matrix/secrets/r2.conf` | movelog-r2.conf ile aynı bucket (`movelog`); worker kaynağı olarak config.env/movelog-r2.conf esas alındı |

@@ -1,4 +1,4 @@
-// grup4 — api/profile + api/music + api/ptt (14 uç) — main.py birebir portu.
+// grup4 — api/profile + api/music (9 uç). 18.09: /api/ptt uçları KALDIRILDI (telsiz çıktı).
 // Sözleşme: cf/contracts/grup4.json · Orijinal: /opt/movelog/backend/main.py
 //
 // Kapsanan uçlar (kayıt sırası = bu dosyadaki sıra):
@@ -11,11 +11,6 @@
 //   POST   /api/music/library           (main.py:2087)
 //   DELETE /api/music/library/:mid      (main.py:2106)
 //   GET    /api/music/file              (main.py:2150 — _muzik_coz 2117-2135)
-//   POST   /api/ptt/send                (main.py:3396)
-//   POST   /api/ptt/send-user           (main.py:3433)
-//   POST   /api/ptt/busy                (main.py:3578)
-//   GET    /api/ptt/busy/:username      (main.py:3596)
-//   GET    /api/ptt/:pid                (main.py:3606)
 //
 // Eşleme kararları (sözleşme cf_mapping):
 //   · avatars/usermusic/stockmusic/ridephotos/ptt/voicemsg dizinleri → R2 aynı önekler.
@@ -244,14 +239,7 @@ const STOCK_MUSIC = [
 ]
 
 // sesli mesaj görünür bildirimi — 12 dil (main.py:3458-3463 birebir)
-const VM: Record<string, string> = {
-  tr: 'sana sesli mesaj gönderdi 🎙️', en: 'sent you a voice message 🎙️',
-  de: 'hat dir eine Sprachnachricht geschickt 🎙️', fr: "t'a envoyé un message vocal 🎙️",
-  es: 'te envió un mensaje de voz 🎙️', it: 'ti ha inviato un messaggio vocale 🎙️',
-  pt: 'te enviou uma mensagem de voz 🎙️', ru: 'отправил вам голосовое сообщение 🎙️',
-  ja: 'ボイスメッセージを送りました 🎙️', zh: '给你发了一条语音消息 🎙️',
-  ko: '음성 메시지를 보냈어요 🎙️', ar: 'أرسل لك رسالة صوتية 🎙️',
-}
+// 18.09: VM (sesli mesaj bildirim metni) KALDIRILDI — telsiz/sesli mesaj cikti.
 
 // ---------------------------------------------------------------- /api/profile
 
@@ -407,147 +395,6 @@ g.get('/api/music/file', authUser, async (c) => {
     if (obj) console.log(`müzik yok, stok kullanıldı: ${ad} (${user.slice(0, 10)})`)
   }
   if (!obj) hata(404, 'müzik yok')
-  return new Response(obj.body, { headers: { 'content-type': 'audio/mp4' } })
-})
-
-// ---------------------------------------------------------------- /api/ptt
-
-// POST /api/ptt/send (main.py:3396-3427) — kulüp telsizi. SIRA AYNEN: önce Ultra (⚠️ _is_ultra
-// SADECE users.ultra — ADMIN BYPASS YOK, main.py:3124-3126; profildeki ultra||admin formülünü
-// KULLANMA), sonra kulüp+üyelik, sonra ham gövde boyutu. 24h temizlik → R2 lifecycle (cf_mapping).
-g.post('/api/ptt/send', authUser, async (c) => {
-  const user = c.get('user')
-  const cid = c.req.query('club') ?? ''
-  const db = c.env.DB
-  const [meRes, klupRes, uyeRes] = await db.batch([
-    db.prepare('SELECT ultra, name FROM users WHERE uid = ?1').bind(user),
-    db.prepare('SELECT cid FROM clubs WHERE cid = ?1').bind(cid),
-    db.prepare('SELECT uid FROM club_members WHERE cid = ?1').bind(cid),
-  ])
-  const me = meRes.results[0] as { ultra: number | null; name: string | null } | undefined
-  if (!me?.ultra) hata(402, 'Ultra gerekli')
-  const uyeler = (uyeRes.results as { uid: string }[]).map((r) => r.uid)
-  if (klupRes.results.length === 0 || !uyeler.includes(user)) hata(404, 'kulüp yok')
-  const data = await c.req.arrayBuffer()                     // HAM m4a gövde (JSON değil)
-  if (data.byteLength < 500 || data.byteLength > 800_000) hata(400, 'geçersiz ses boyutu')
-  const ts = simdi()
-  const pid = `p${ts}${tokenHex(4)}`
-  await c.env.R2.put(`ptt/${pid}.m4a`, data)
-  await db.prepare(
-    `INSERT OR REPLACE INTO ptt_acl (pid, club_cid, users_json, created_at, updated_at)
-     VALUES (?1, ?2, NULL, ?3, ?3)`).bind(pid, cid, ts).run()
-  const ad = me.name || user                                 // _profile_of: name or uid
-  let n = 0
-  for (const m of uyeler) {
-    if (m === user) continue
-    await pushBekleyen(c.env, `ptt_${m}_${pid}`, { user: m, silent: `ptt:${pid}:${ad || 'Rider'}` })
-    n++                                                      // sent = KUYRUĞA yazım sayısı (teslim değil)
-  }
-  return c.json({ ok: true, id: pid, sent: n })
-})
-
-// POST /api/ptt/send-user (main.py:3433-3473) — arkadaşa sesli mesaj. Ultra ŞARTI YOK (bilinçli);
-// karşılıklı arkadaşlık şart. Tek istekte: R2 klip + sessiz push + görünür lokalize push +
-// DM ses baloncuğu + acl. 30 gün temizliği → R2 lifecycle (cf_mapping).
-g.post('/api/ptt/send-user', authUser, async (c) => {
-  const user = c.get('user')
-  const db = c.env.DB
-  const target = await resolveUser(db, c.req.query('user') ?? '')
-  if (!target || target === user) hata(404, 'kullanıcı bulunamadı')
-  const dost = await db.prepare('SELECT 1 AS x FROM friends WHERE uid = ?1 AND friend_uid = ?2')
-    .bind(user, target).first()
-  if (!dost) hata(403, 'sadece arkadaşına')
-  const data = await c.req.arrayBuffer()                     // HAM m4a gövde
-  if (data.byteLength < 500 || data.byteLength > 800_000) hata(400, 'geçersiz ses boyutu')
-  const ts = simdi()
-  const pid = `p${ts}${tokenHex(4)}`
-  await c.env.R2.put(`voicemsg/${pid}.m4a`, data)            // KALICI sesli mesaj (30 gün)
-  const [meRes, hedefRes] = await db.batch([
-    db.prepare('SELECT name FROM users WHERE uid = ?1').bind(user),
-    db.prepare('SELECT lang FROM users WHERE uid = ?1').bind(target),
-  ])
-  const ad = ((meRes.results[0] as { name: string | null } | undefined)?.name || user) || 'Rider'
-  const lng = ((hedefRes.results[0] as { lang: string | null } | undefined)?.lang) || 'en'
-  // TELSİZ: sessiz push — app diriyse arka planda indirip kulaklıkta çalar
-  await pushBekleyen(c.env, `ptt_${target}_${pid}`, { user: target, silent: `ptt:${pid}:${ad}` })
-  // GÖRÜNÜR bildirim (_pushq eşleniği — hatası sessiz yutulur, main.py:2996-2997)
-  try {
-    await pushBekleyen(c.env, `${Date.now()}_${tokenHex(4)}`, {
-      user: target, title: ad, body: VM[lng] ?? VM.en, route: `voice:${user}:${pid}:${ad}`,
-    })
-  } catch { /* push gitmezse istek yine de işler */ }
-  // SUNUCU KARARI (main.py:3467-3470): sohbete ses baloncuğu — app kapalıyken bile kalır
-  const [a, b] = user <= target ? [user, target] : [target, user]   // user_a <= user_b kanonik sıra
-  await db.batch([
-    db.prepare(
-      `INSERT INTO dm_messages (id, user_a, user_b, frm, msg_type, text, media, ts, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, 'voice', '', ?5, ?6, ?7, ?7)`)
-      .bind(tokenHex(6), a, b, user, pid, ts, ts),
-    db.prepare(
-      `INSERT OR REPLACE INTO ptt_acl (pid, club_cid, users_json, created_at, updated_at)
-       VALUES (?1, NULL, ?2, ?3, ?3)`).bind(pid, JSON.stringify([user, target]), ts),
-  ])
-  return c.json({ ok: true, id: pid, sent: 1 })
-})
-
-// POST /api/ptt/busy (main.py:3578-3593) — çakışma kilidi. KV `ptt_busy:{hedef}` (cf_mapping);
-// süre birebir 25 sn (`until` alanı; KV TTL 60 = alt sınır, yalnız çöp temizliği).
-// DİKKAT: arkadaşlık kontrolü YOK (mevcut davranış — Faz 2 notu).
-g.post('/api/ptt/busy', authUser, async (c) => {
-  const user = c.get('user')
-  const body = await govde(c)
-  const target = await resolveUser(c.env.DB, String(body.user || ''))
-  const on = pyTruthy(body.on)                             // bool(body.get('on')) — []/{}  de falsy
-  if (!target || target === user) hata(404, 'kullanıcı yok')
-  if (on) {
-    const me = await c.env.DB.prepare('SELECT name FROM users WHERE uid = ?1').bind(user)
-      .first<{ name: string | null }>()
-    const ad = (me?.name || user) || 'Rider'                 // _profile_of: name or uid; 'or Rider' aynen
-    await c.env.KV.put(`ptt_busy:${target}`,
-      JSON.stringify({ from: user, name: ad, until: simdi() + 25 }), { expirationTtl: 60 })
-  } else {
-    // SADECE kendi koyduğu kaydı temizler (main.py:3590-3591)
-    let mevcut: { from?: string } | null = null
-    try { mevcut = await c.env.KV.get<{ from?: string }>(`ptt_busy:${target}`, 'json') } catch { mevcut = null }
-    if (mevcut && mevcut.from === user) await c.env.KV.delete(`ptt_busy:${target}`)
-  }
-  return c.json({ ok: true })
-})
-
-// GET /api/ptt/busy/:username (main.py:3596-3603) — YÖN DİKKAT: sorgulanan, BENİM kaydım —
-// "{username} şu an BANA konuşuyor mu".
-g.get('/api/ptt/busy/:username', authUser, async (c) => {
-  const user = c.get('user')
-  const f = await resolveUser(c.env.DB, c.req.param('username'))
-  let b: { from?: string; name?: string; until?: number } | null = null
-  try { b = await c.env.KV.get<{ from?: string; name?: string; until?: number }>(`ptt_busy:${user}`, 'json') } catch { b = null }
-  const busy = !!(f && b && b.from === f && (b.until ?? 0) > Date.now() / 1000)
-  return c.json({ busy, name: busy ? (b?.name ?? null) : null })
-})
-
-// GET /api/ptt/:pid (main.py:3606-3620) — önce ptt/ (24 saat), yoksa voicemsg/ (30 gün).
-// Yetkisizlik de 404 döner (403 DEĞİL — klip varlığını sızdırmama tercihi, aynen korunur).
-// acl kaydı YOKSA herkese açık (eski klipler — mevcut davranış).
-g.get('/api/ptt/:pid', authUser, async (c) => {
-  const user = c.get('user')
-  const temiz = c.req.param('pid').replace(/[^a-z0-9]/g, '')   // re.sub(r'[^a-z0-9]') — büyük harf de süzülür
-  let obj = await c.env.R2.get(`ptt/${temiz}.m4a`)
-  if (!obj) obj = await c.env.R2.get(`voicemsg/${temiz}.m4a`)
-  if (!obj) hata(404, 'klip yok')
-  const acl = await c.env.DB.prepare('SELECT club_cid, users_json FROM ptt_acl WHERE pid = ?1')
-    .bind(temiz).first<{ club_cid: string | null; users_json: string | null }>()
-  if (acl) {
-    if (acl.users_json !== null) {
-      let liste: unknown = []
-      try { liste = JSON.parse(acl.users_json) } catch { liste = [] }
-      if (!Array.isArray(liste) || !liste.includes(user)) hata(404, 'klip yok')
-    }
-    if (acl.club_cid !== null) {
-      const uye = await c.env.DB.prepare('SELECT 1 AS x FROM club_members WHERE cid = ?1 AND uid = ?2')
-        .bind(acl.club_cid, user).first()
-      if (!uye) hata(404, 'klip yok')
-    }
-  }
   return new Response(obj.body, { headers: { 'content-type': 'audio/mp4' } })
 })
 

@@ -4,7 +4,9 @@
 export type Env = {
   DB: D1Database                 // movelog-db (26 tablo, cf/db/migrations/0001_init.sql)
   KV: KVNamespace                // mapconfig, smsfix:{tel}, integrity_nonce:{uid}, attest_challenge:{uid}, push:bekleyen:*, rl:* ...
-  R2: R2Bucket                   // movelog bucket: videos/, tracks/, usermusic/, stockmusic/, ridephotos/, avatars/, ptt/
+  R2: R2Bucket                   // movelog bucket: videos/, tracks/, usermusic/, stockmusic/, ridephotos/, avatars/
+                                 // (18.09: ptt/ ve voicemsg/ önekleri artık YAZILMIYOR; eski nesneler
+                                 //  R2 lifecycle ile kendiliğinden düşer, hesap silme de temizliyor)
   RENDER_Q: Queue                // movelog-render kuyruğu (producer) — tüketici: movelog-dispatch
   DISPATCH?: Fetcher             // movelog-dispatch service binding (opsiyonel; wrangler.toml'a Faz 3'te eklenir)
 
@@ -34,9 +36,8 @@ export type Env = {
   TWILIO_VERIFY_SID?: string
   REVIEW_PHONE?: string          // App Store inceleme bypass numarası (main.py:60)
   REVIEW_CODE?: string           // inceleme sabit OTP kodu (main.py:61)
-  LIVEKIT_KEY?: string           // interkom token imzası (grup8; main.py:3365)
-  LIVEKIT_SECRET?: string
-  LIVEKIT_URL?: string           // ZORUNLU (02.09): yoksa uçlar 503 — eski self-host varsayılanı kaldırıldı
+  // 18.09: LIVEKIT_KEY / LIVEKIT_SECRET / LIVEKIT_URL KALDIRILDI — canlı telsiz + interkom çıktı.
+  // ⚠️ Cloudflare'deki worker SIRLARI ayrıca silinmeli (`wrangler secret delete`), kod yeter değil.
   TRACCAR_URL?: string           // paralel dönem Traccar okuması (grup1; yoksa 503 "cihaz Traccar'da bulunamadı")
   TRACCAR_USER?: string
   TRACCAR_PASS?: string
