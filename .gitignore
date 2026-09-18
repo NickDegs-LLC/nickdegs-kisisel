@@ -16,3 +16,6 @@ ios/App/Podfile.lock
 *.log
 shot.js
 .DS_Store
+
+# FCM yapilandirmasi — API anahtari icerir, ASLA commit edilmez (18.09 sizinti dersi)
+android-native/app/google-services.json
