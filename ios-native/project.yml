@@ -6,13 +6,9 @@ options:
     iOS: "18.0"
     watchOS: "10.0"
   createIntermediateGroups: true
-packages:
-  LiveKit:
-    url: https://github.com/livekit/client-sdk-swift.git
-    from: "2.0.0"
 settings:
   base:
-    MARKETING_VERSION: "1.67"
+    MARKETING_VERSION: "1.68"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: SZF4T3P583
     SWIFT_VERSION: "5.0"
@@ -48,7 +44,6 @@ targets:
         NSMotionUsageDescription: "Sürüşlerini otomatik algılamak için hareket verisi kullanılır: takip yalnızca araçta/bisikletteyken açılır, dururken pil ve gizlilik için kapanır."
     dependencies:
       - target: MoveLogWatch   # watch app iOS paketine gömülür (Watch/ dizinine)
-      - package: LiveKit       # 1.9-C canlı interkom sesli oda
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nickdegs.kisisel
@@ -59,14 +54,13 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "Move Log"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Profil ve sohbet fotoğraflarını seçmek için."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Profil fotoğrafını ve rotana ekleyeceğin anı fotoğraflarını seçmek için."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Rota videolarını galerine kaydetmek için."
         INFOPLIST_KEY_NSCameraUsageDescription: "Fotoğraf çekip paylaşmak için."
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Telsiz modu ve interkomda kulübünle konuşmak için."
-        # 16.09: canlı konum HARİTASI kaldırıldı (kimse kimseyi haritada görmüyor). Konum hâlâ
-        # katıldığın kulüplerde SESLİ konvoy anonsu için paylaşılıyor — amaç metni buna göre düzeltildi.
-        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Move Log; yürüyüş, bisiklet, motosiklet ve koşu rotalarını haritada kaydetmek, mesafe ve hızını hesaplamak ve katıldığın kulüplerde sesli konvoy anonsları için konumunu kullanır. Örneğin bisiklet rotanı çizer; kulüpteyken kulaklığına 'Semra 300 metre geride' gibi anonslar gelir. Konumun başka kullanıcılara harita üzerinde gösterilmez."
-        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Move Log, yalnızca bir gezi kaydı açıkken konumunu arka planda kullanır; böylece ekran kapalıyken bile tüm rotan kaydedilir ve otomatik rota videona dönüştürülür. Örneğin motosiklet sürüşünde uygulama arka plandayken rotan kaydedilerek rota filmin oluşturulur. Arka plan konumu yalnızca aktif kayıt ve katıldığın kulüpteki sesli konvoy anonsları sırasında kullanılır."
+            # 16.09: canlı konum HARİTASI kaldırıldı (kimse kimseyi haritada görmüyor). Konum hâlâ
+        # 18.09: kulüp/sesli konvoy kalktı — konum YALNIZCA rota kaydı ve otonom video için kullanılıyor.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Move Log; yürüyüş, bisiklet, motosiklet ve koşu rotalarını haritada kaydetmek, mesafe ve hızını hesaplamak ve rotanı otomatik olarak videoya dönüştürmek için konumunu kullanır. Örneğin bisiklet rotanı çizer ve sürüş bitince rota videon hazırlanır. Konumun başka kullanıcılara harita üzerinde gösterilmez."
+        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Move Log, yalnızca bir gezi kaydı açıkken konumunu arka planda kullanır; böylece ekran kapalıyken bile tüm rotan kaydedilir ve otomatik rota videona dönüştürülür. Örneğin motosiklet sürüşünde uygulama arka plandayken rotan kaydedilerek rota filmin oluşturulur. Arka plan konumu YALNIZCA aktif kayıt sırasında kullanılır."
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

@@ -29,8 +29,6 @@ struct GenerateSheet: View {
     @State private var aspect: String
     @State private var speed: String            // "fast"=Kısa / "medium"=Orta / "slow"=Uzun
     @AppStorage("nd_reel") private var reel = false   // Faz 3c: ~15-20sn dikey paylaşım teaser'ı (9:16 zorlar)
-    @AppStorage("nd_tac_theme") private var tacTheme = "auto"   // taktik HUD teması: auto(varsayılan, saate göre)/default/thermal/night/day
-    @AppStorage("nd_tac_callsign") private var tacCallsign = ""    // kişisel operatör çağrı işareti (boş=ACTUAL)
     @State private var sending = false
     @State private var done = false
     @State private var renderPct: Double = 0
@@ -50,15 +48,7 @@ struct GenerateSheet: View {
     @State private var telefonAsama = ""   // "kareler çiziliyor" / "kapanış sahnesi" / "yükleniyor"…      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
     @State private var showPaywall = false
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
-    @AppStorage("nd_cammode") private var camMode = ""       // 3D kamera açısı: ""=yandan, chase=orta arkadan, pacman=agresif tam arkadan (premium, sadece 3D)
-    @AppStorage("nd_ultra") private var ultraStored = false  // sunucu/admin Ultra (syncPremium yazar) — StoreKit dışı da açılsın
-    private var isUltra: Bool { iap.ultra || ultraStored }   // Ultra = StoreKit ultra VEYA sunucu/admin ultra
-    @AppStorage("nd_free_tactical") private var freeTacStored = false   // yeni kullanıcı TEK-SEFERLİK bedava aksiyon (syncPremium ham JSON'dan yazar)
-    private var canTactical: Bool { isUltra || freeTacStored }          // Ultra VEYA bedava-aksiyon hakkı -> taktik açık
-    @AppStorage("nd_sokak_hak") private var sokakHak = 0        // satın alınmış Sokak hakkı
     @AppStorage("nd_video_hak") private var videoHak = 0        // satın alınmış bulut video hakkı (3'lü/5'li paket)
-    @AppStorage("nd_sokak_hediye") private var sokakHediye = false  // Ultra'nın bu ayki hediyesi duruyor mu
-    private func sokakYenile() { Task { await store.syncPremium() } }
     @State private var stock: [[String:String]] = []
     @State private var musicUploading = false
     @State private var note = ""
@@ -133,132 +123,10 @@ struct GenerateSheet: View {
                              "Camera distance is a Premium option."))
                         .font(.caption2).foregroundStyle(premium ? .secondary : Brand.accent)
 
-                    // KAMERA AÇISI (sadece 3D · Google, ULTRA): takip açısı — yandan / arkadan / Sokak(Street View)
-                    if mode == "3d" {
-                        field(L("Kamera açısı","Camera angle") + (isUltra ? "" : " · Ultra"))
-                        Picker("", selection: Binding(
-                            get: { isUltra ? camMode : "" },
-                            set: { v in if isUltra { camMode = v } else { showPaywall = true } })) {
-                            Text(L("Yandan","Side")).tag("")
-                            Text(L("Arkadan","Chase")).tag("chase")
-                            Text(L("Sokak","Street")).tag("pacman")
-                        }.pickerStyle(.segmented)
-                        Text(isUltra
-                             ? L("Yandan: klasik yan takip. Arkadan: tam arkadan hafif yukarıdan. Sokak: gerçek Google Street View (DENEYSEL — sokak fotoğrafları ~20m arayla olduğundan akış yer yer atlayabilir; kısa/dar sokaklarda veya çok detaylı rotalarda bozuk görünebilir).",
-                                 "Side: classic. Chase: from directly behind, slightly above. Street: real Google Street View (EXPERIMENTAL — street photos are ~20m apart so motion may skip; can look rough on short/narrow streets or very detailed routes).")
-                             : L("Kamera açıları (Arkadan, Sokak/Street View) Ultra pakete dahildir.",
-                                 "Camera angles (Chase, Street View) are included in Ultra."))
-                            .font(.caption2).foregroundStyle(isUltra ? .secondary : Brand.accent)
-
-                        // SOKAK HAKKI (2026-08-27, Barış: "Sokak videosu ayrı bir tek satın alım olsun"):
-                        // Sokak videosu gerçek sokak fotoğraflarından kare kare üretilir, maliyeti yüksek ->
-                        // aboneliğe dahil DEĞİL. Ultra'ya ayda 1 hediye; fazlası tek satın alım.
-                        if camMode == "pacman" {
-                            VStack(spacing: 8) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "ticket.fill").foregroundStyle(Brand.gradient)
-                                    Text(sokakHak > 0
-                                         ? L("Sokak hakkın: ","Street credits: ") + "\(sokakHak)"
-                                         : (sokakHediye ? L("Bu ayki hediye hakkın hazır 🎁","Your monthly gift credit is ready 🎁")
-                                                        : L("Sokak hakkın kalmadı","No street credits left")))
-                                        .font(.system(size: 14, weight: .medium))
-                                }
-                                if sokakHak == 0 && !sokakHediye {
-                                    HStack(spacing: 10) {
-                                        if let p1 = iap.sokakTek {
-                                            Button { Task { if await iap.buySokak(p1) { await store.syncPremium(); sokakYenile() } } }
-                                            label: { Text("1 × \(p1.displayPrice)") }.buttonStyle(.glassy)
-                                        }
-                                        if let p3 = iap.sokakUclu {
-                                            Button { Task { if await iap.buySokak(p3) { await store.syncPremium(); sokakYenile() } } }
-                                            label: { Text("3 × \(p3.displayPrice)") }.buttonStyle(.glassyProminent())
-                                        }
-                                    }
-                                    if iap.boostWorking { ProgressView() }
-                                }
-                                if let m = iap.boostMsg {
-                                    Text(m).font(.caption2).foregroundStyle(.secondary)
-                                }
-                            }.padding(12).glassPanel(14)
-                        }
-                    }
-
                     field(L("Görünüm","Style"))
                     modeRow("flat", L("Düz","Flat"), free: true)
                     modeRow("flyover", L("Kuş bakışı (Flyover)","Bird's-eye (Flyover)"), free: false)
                     modeRow("3d", L("3D · arazi kabartmalı","3D · terrain relief"), free: false)
-                    // TACTICAL (Ultra): CoD tarzı askeri uydu görevi videosu — uçtan uca ayrı render hattı
-                    HStack {
-                        Text("🎖️ " + L("Tactical · uydu görevi","Tactical · satellite op"))
-                        if !isUltra {
-                            if freeTacStored {   // TEK-SEFERLİK bedava aksiyon hakkı -> yeşil rozet
-                                Text(L("1 ÜCRETSİZ","1 FREE")).font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Capsule().fill(Color.green.opacity(0.3)))
-                            } else {
-                                Text("Ultra").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Capsule().fill(Brand.accent.opacity(0.25)))
-                            }
-                        }
-                        Spacer()
-                        if mode == "tactical" { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .glassPanel(14)
-                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .onTapGesture { if canTactical { mode = "tactical" } else { showPaywall = true } }
-                    if mode == "tactical" {
-                        Text(L("Askeri uydu operasyonu: telsiz brifingi, dünya çapında rastgele arama, hedef kilidi, canlı takip ve görev kapanışı. Her video %100 benzersiz üretilir (9:16).",
-                               "Military satellite op: radio briefing, global random search, target lock, live tracking and mission outro. Every video is 100% unique (9:16)."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                        Picker("", selection: Binding(
-                            get: { speed == "slow" ? "slow" : "fast" },
-                            set: { speed = $0 })) {
-                            Text(L("Kısa (≤1 dk)","Short (≤1 min)")).tag("fast")
-                            Text(L("Uzun (≤3 dk)","Long (≤3 min)")).tag("slow")
-                        }.pickerStyle(.segmented)
-                        // FIX (2026-07-23): carryover "16:9" (normal videodan) tactical picker'ını bozuyordu
-                        // -> clamp'li binding: geçersiz değer "9:16" gösterir, "Kare 4:5" dokunuşu gerçekten 4:5 yapar.
-                        Picker("", selection: Binding(
-                            get: { aspect == "4:5" ? "4:5" : "9:16" },
-                            set: { aspect = $0 })) {
-                            Text(L("Dikey 9:16","Vertical 9:16")).tag("9:16")
-                            Text(L("Kare 4:5","Square 4:5")).tag("4:5")
-                        }.pickerStyle(.segmented)
-                        Text(L("9:16 Reels/TikTok, 4:5 feed gönderisi. Her süre her formatta olur.",
-                               "9:16 for Reels/TikTok, 4:5 for feed posts. Any length, any format."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                        // Taktik HUD teması: uydu derecelendirme + HUD renk paleti
-                        field(L("Görüş modu","Vision mode"))
-                        Picker(L("Görüş modu","Vision mode"), selection: $tacTheme) {
-                            Text(L("Otomatik (saate göre)","Auto (by time)")).tag("auto")
-                            Text(L("Standart","Recon")).tag("default")
-                            Text(L("Termal","Thermal")).tag("thermal")
-                            Text(L("Gece","Night")).tag("night")
-                            Text(L("Gündüz","Day")).tag("day")
-                        }.pickerStyle(.menu).tint(Brand.accent).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(tacTheme == "auto"
-                             ? L("Otomatik: sürüş gece ise yeşil gece görüşü, gündüz ise standart uydu — sürüşün gerçek saatine göre seçilir.",
-                                 "Auto: green night vision if the ride was at night, standard satellite by day — based on the ride's real time.")
-                             : L("Termal=sıcaklık, Gece=karanlık uydu (yakınlaşınca gece görüşü), Gündüz=net uydu. HUD rengi de değişir.",
-                                 "Thermal=heat, Night=dark satellite (night vision on zoom-in), Day=clear satellite. HUD color changes too."))
-                            .font(.caption2).foregroundStyle(tacTheme == "auto" ? Brand.accent : .secondary)
-                        // Operatör çağrı işareti (intro/outro'da "WELCOME, <callsign>")
-                        field(L("Çağrı işareti","Call sign"))
-                        TextField("ACTUAL", text: $tacCallsign)
-                            .textInputAutocapitalization(.characters)
-                            .autocorrectionDisabled(true)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: tacCallsign) { _, v in
-                                let f = v.uppercased().filter { $0.isLetter || $0.isNumber || $0 == " " || $0 == "-" }
-                                if f != v { tacCallsign = String(f.prefix(16)) }
-                                else if v.count > 16 { tacCallsign = String(v.prefix(16)) }
-                            }
-                        Text(L("Brifingte adın: “WELCOME, <çağrı işareti>”. Boş=ACTUAL.",
-                               "Your name in the briefing: “WELCOME, <call sign>”. Empty=ACTUAL."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-
                     if mode != "tactical" {
                         field(L("En-boy","Aspect"))
                         Picker("", selection: $aspect) {
@@ -313,7 +181,7 @@ struct GenerateSheet: View {
 
                     }   // tactical: çizgi seçimi yok (crosshair rengi aşağıda)
 
-                    field(mode == "tactical" ? L("Crosshair rengi","Crosshair color") : L("Takip noktası","Tracking dot"))
+                    field(L("Takip noktası","Tracking dot"))
                     ScrollView(.horizontal, showsIndicators: false) {
                       HStack(spacing: 12) {
                         // Çizgiyle aynı renk
@@ -437,14 +305,15 @@ struct GenerateSheet: View {
                             // gösteren tam ekran ilerleme ve "çıkarsan iptal olur" uyarısı var.
                             // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
                             // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
-                            let tacTh = mode == "tactical" ? tacTheme : ""
-                            let tacCs = mode == "tactical" ? tacCallsign.trimmingCharacters(in: .whitespaces) : ""
-                            let useReel = mode != "tactical" && reel
+                            // 18.09: taktik mod + kamera açısı kaldırıldı -> bu alanlar artık hep boş.
+                            let tacTh = ""
+                            let tacCs = ""
+                            let useReel = reel
                             let ok = rideId == nil
                                 ? await store.generateRide(from: from, to: to, type: type, mode: mode,
-                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
+                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: "", theme: tacTh, callsign: tacCs, reel: useReel)
                                 : await store.regenerateRide(rideId!, type: type, mode: mode,
-                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: mode == "3d" ? camMode : "", theme: tacTh, callsign: tacCs, reel: useReel)
+                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: "", theme: tacTh, callsign: tacCs, reel: useReel)
                             sending = false; done = ok; localErr = !ok
                             // 05.09: sunucunun AÇIKLAMASINI göster ("Üretilemedi" tek başına
                             // hiçbir şey söylemiyordu — Barış: "niye üretilemedi ki?")

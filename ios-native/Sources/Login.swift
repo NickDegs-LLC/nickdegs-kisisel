@@ -31,7 +31,7 @@ struct LoginView: View {
                     .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true), value: float)
                     .padding(.bottom, 18)
                 Text("Move Log").font(.system(size: 40, weight: .heavy))
-                Text(L("Rotalar · Aktivite · Telsiz", "Routes · Activity · Walkie-talkie"))
+                Text(L("Rotalar · Aktivite · Otonom Video", "Routes · Activity · Autonomous Video"))
                     .font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
                 Spacer()
 

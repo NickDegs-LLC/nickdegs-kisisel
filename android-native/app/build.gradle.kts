@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.70"   // 17.09 gece: her Billing örneği aboneliği restore'da doğrular (Cursor e2e #5)
+        versionName = "1.71"   // 18.09: kapsam daraltma — Ultra + sesli/yazılı sohbet + kulüp/rozet kaldırıldı
     }
 
     signingConfigs {

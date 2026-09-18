@@ -29,7 +29,6 @@ struct ProfileView: View {
     @AppStorage("nd_font") var fontId = "default"
     @AppStorage("nd_scheme") var scheme = "dark"
     @AppStorage("nd_premium") var premium = false
-    @AppStorage("nd_ultra") var ultraMember = false   // Ultra rozeti (IAP.setUltra yazar) — altın kart
     @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
     @AppStorage("nd_hrshare") var hrShare = true   // "Nabzımı arkadaşlarım görebilsin" (anlık nabız peek gizliliği)
     @State private var prof: Profile?
@@ -51,11 +50,6 @@ struct ProfileView: View {
     @State private var showSumVid = false
     @State private var sumQueued = false
     @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
-    @State private var showClubs = false
-    @State private var showLeaders = false
-    @State private var showSafety = false
-    @State private var showBadges = false
-    @State private var showWrapped = false
     @State private var showSharedRoutes = false
     // 05.09 — arkadaşlıktan çıkarma + davet akışı (ikisi de sunucuda vardı, istemcide yoktu)
     @State private var silinecekArkadas: Friend? = nil
@@ -114,31 +108,28 @@ struct ProfileView: View {
                         // Premium/Ultra kartı (şık, gradyan; Ultra = altın)
                         Button { showPaywall = true } label: {
                             HStack(spacing: 14) {
-                                Image(systemName: (premium || ultraMember) ? "crown.fill" : "star.fill")
+                                Image(systemName: premium ? "crown.fill" : "star.fill")
                                     .font(.system(size: 23, weight: .semibold)).foregroundStyle(.white)
                                     .frame(width: 50, height: 50).background(.white.opacity(0.22), in: Circle())
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(ultraMember ? L("Ultra üyesin","You're Ultra")
-                                         : premium ? L("Premium üyesin","You're Premium")
-                                                   : L("Move Log Premium","Move Log Premium"))
+                                    Text(premium ? L("Premium üyesin","You're Premium")
+                                                 : L("Move Log Premium","Move Log Premium"))
                                         .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                                    Text(ultraMember ? L("Taktik görevler açık · faydalarını gör","Tactical missions unlocked · see your perks")
-                                         : premium ? L("Tüm özellikler açık · faydalarını gör","All features unlocked · see your perks")
-                                                   : L("3B videolar, filigransız, müzik ve dahası","3D videos, no watermark, music & more"))
+                                    Text(premium ? L("Otonom video açık · faydalarını gör","Autonomous video unlocked · see your perks")
+                                                 : L("Sürüşün kendiliğinden 3B videoya dönüşsün","Your ride becomes a 3D video, automatically"))
                                         .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
                                 }
                                 Spacer()
-                                if premium || ultraMember {
+                                if premium {
                                     Image(systemName: "checkmark.seal.fill").foregroundStyle(.white)
                                 } else {
                                     Image(systemName: "chevron.right").foregroundStyle(.white.opacity(0.8))
                                 }
                             }
                             .padding(16)
-                            .background(ultraMember ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient),
-                                        in: RoundedRectangle(cornerRadius: 22))
-                            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(ultraMember ? 0.45 : 0.25), lineWidth: 1))
-                            .shadow(color: (ultraMember ? Brand.gold : Brand.accent).opacity(0.38), radius: 14, y: 6)
+                            .background(AnyShapeStyle(Brand.gradient), in: RoundedRectangle(cornerRadius: 22))
+                            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                            .shadow(color: Brand.accent.opacity(0.38), radius: 14, y: 6)
                         }.buttonStyle(.plain).smoothAppear()
 
                         // Gelen arkadaşlık istekleri — onayla/reddet
@@ -420,59 +411,9 @@ struct ProfileView: View {
                         }.padding(14).glassPanel(18)
                         .onTapGesture { if !premium { showPaywall = true } }
 
-                        // MOTORCU GRUPLARI (1.8): kulüp kur/katıl — arkadaşlık şartsız otomatik grup videosu
-                        Button { showClubs = true } label: {
-                            HStack(spacing: 12) {
-                                Text("🏍️").font(.system(size: 26))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Motorcu grupların","Your rider groups")).font(.system(size: 16, weight: .semibold))
-                                    Text(L("Grup kur, davet koduyla topla — birlikte sürünce video hepinizde",
-                                           "Create a group, invite with a code — ride together, everyone gets the video"))
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }.padding(14).contentShape(Rectangle())
-                        }.buttonStyle(.plain).glassPanel(18)
-
-                        // LİDERLİK (1.7): haftalık km yarışı — arkadaşlar + kulüp arkadaşları
-                        Button { showLeaders = true } label: {
-                            HStack(spacing: 12) {
-                                Text("🏆").font(.system(size: 26))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Liderlik tablosu","Leaderboard")).font(.system(size: 16, weight: .semibold))
-                                    Text(L("Bu hafta kim daha çok sürdü? Arkadaşlar + gruplar arası km yarışı",
-                                           "Who rode the most this week? A km race among friends and groups"))
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }.padding(14).contentShape(Rectangle())
-                        }.buttonStyle(.plain).glassPanel(18)
-
-                        // 1.8: güvenlik + rozet + wrapped + gelen rotalar
+                        // 18.09: güvenlik + rozet + wrapped kaldırıldı; gelen rotalar KALDI.
                         section(L("Sürüş dünyan","Your riding world"))
                         VStack(spacing: 0) {
-                            Button { if ultraMember { showSafety = true } else { showPaywall = true } } label: {
-                                HStack(spacing: 12) {
-                                    Text("🛡️").font(.system(size: 22))
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(L("Güvenli sürüş","Ride safety")).font(.system(size: 15, weight: .semibold))
-                                        Text(L("'Sağ salim vardı' bildirimi sevdiğine gitsin","Auto 'safe and sound' note to your person"))
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                                }.padding(.vertical, 10).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                            Divider()
-                            Button { showBadges = true } label: {
-                                HStack(spacing: 12) {
-                                    Text("🏅").font(.system(size: 22))
-                                    Text(L("Rozetlerim","My badges")).font(.system(size: 15, weight: .semibold))
-                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                                }.padding(.vertical, 10).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                            Divider()
                             Button { showSharedRoutes = true } label: {
                                 HStack(spacing: 12) {
                                     Text("🗺️").font(.system(size: 22))
@@ -480,20 +421,6 @@ struct ProfileView: View {
                                     Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
                                 }.padding(.vertical, 10).contentShape(Rectangle())
                             }.buttonStyle(.plain)
-                            Divider()
-                            Divider()
-                            Toggle(isOn: Binding(
-                                get: { ConvoyVoice.shared.enabled },
-                                set: { v in if ultraMember { ConvoyVoice.shared.setEnabled(v) } else { showPaywall = true } })) {
-                                HStack(spacing: 12) {
-                                    Text("🔊").font(.system(size: 22))
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(L("Sesli konvoy anonsları","Voice convoy announcements")).font(.system(size: 15, weight: .semibold))
-                                        Text(L("Kulaklığına otomatik: 'Semra 400 metre geride'","Auto to your headset: 'Semra fell 400m behind'"))
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }.tint(Brand.accent).padding(.vertical, 8)
                             Divider()
                             Toggle(isOn: Binding(
                                 get: { hrShare },
@@ -508,14 +435,6 @@ struct ProfileView: View {
                                     }
                                 }
                             }.tint(Brand.accent).padding(.vertical, 8)
-                            Divider()
-                            Button { showWrapped = true } label: {
-                                HStack(spacing: 12) {
-                                    Text("🎁").font(.system(size: 22))
-                                    Text(L("Yıl özetim","My year wrapped")).font(.system(size: 15, weight: .semibold))
-                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                                }.padding(.vertical, 10).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
                         }.padding(.horizontal, 14).padding(.vertical, 4).glassPanel(18)
 
                         section(L("Görünüm","Appearance"))
@@ -576,11 +495,6 @@ struct ProfileView: View {
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
-        .sheet(isPresented: $showClubs) { ClubsSheet() }
-        .sheet(isPresented: $showLeaders) { LeaderboardSheet() }
-        .sheet(isPresented: $showSafety) { SafetySheet() }
-        .sheet(isPresented: $showBadges) { BadgesSheet() }
-        .sheet(isPresented: $showWrapped) { WrappedSheet() }
         .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
         .confirmationDialog(
             L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
@@ -961,16 +875,6 @@ struct PaywallSheet: View {
 
     struct Perk: Identifiable { let id = UUID(); let icon: String; let title: String; let sub: String }
     var perks: [Perk] {[
-        .init(icon: "dot.radiowaves.left.and.right", title: L("Canlı interkom & telsiz","Live intercom & radio"),
-              sub: L("Kulübünle canlı sesli konuş — cihazsız, ücretsiz","Talk live with your club — no device needed")),
-        .init(icon: "waveform", title: L("Sesli konvoy anonsları","Voice convoy announcements"),
-              sub: L("Kulaklığına: 'Semra 400m geride'","To your headset: 'Semra 400m behind'")),
-        // 16.09: "Canlı takip & konvoy haritası" perk'i KALDIRILDI — özellik uygulamadan çıktı,
-        // olmayan bir şeyi paywall'da satmayalım (App Store incelemesi + kullanıcı güveni).
-        .init(icon: "shield.lefthalf.filled", title: L("Güvenli sürüş","Ride safety"),
-              sub: L("Sevdiğine otomatik 'sağ salim vardım'","Auto 'safe and sound' to your person")),
-        .init(icon: "rosette", title: L("Rozetler, liderlik & meydan okuma","Badges, leaderboard & challenges"),
-              sub: L("Toplulukla yarış, rota gönder","Compete, share routes")),
         .init(icon: "video.fill", title: L("3B flyover videolar","3D flyover videos"),
               sub: L("Arazi yüksekliğiyle sinematik rota videoları","Cinematic 3D terrain route videos")),
         .init(icon: "drop.fill", title: L("Filigransız & 1080p","No watermark & 1080p"),
@@ -981,8 +885,8 @@ struct PaywallSheet: View {
               sub: L("Rota üzerine fotoğraf yerleştir","Pin photos along the route")),
         .init(icon: "bolt.fill", title: L("En hızlı an & özet sahneleri","Peak moment & recap"),
               sub: L("Zirve hız etiketi, giriş & kapanış","Top-speed label, intro & outro")),
-        .init(icon: "wand.and.stars", title: L("Otomatik video","Automatic video"),
-              sub: L("Gezi bitince otomatik üretilir","Auto-made after each trip")),
+        .init(icon: "wand.and.stars", title: L("Otonom video — ürünün kalbi","Autonomous video — the core"),
+              sub: L("Sürüşün bitince 3B videosu kendiliğinden hazır","Your ride becomes a 3D video by itself")),
         .init(icon: "doc.text.magnifyingglass", title: L("Günlük özet","Daily summary"),
               sub: L("Saat ayarı + anında özet","Custom time + on-demand")),
         // 16.09: "Uydu haritası" perk'i KALDIRILDI — uydu görünümü canlı konum haritasının
@@ -995,14 +899,9 @@ struct PaywallSheet: View {
             ScrollView {
                 VStack(spacing: 14) {
                     Image(systemName: premium ? "crown.fill" : "star.fill").font(.system(size: 34))
-                        .foregroundStyle(iap.ultra ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient))
+                        .foregroundStyle(AnyShapeStyle(Brand.gradient))
                         .frame(width: 72, height: 72).glassPanel(36)
-                    if iap.ultra {
-                        Text(L("Ultra üyesin 👑","You're Ultra 👑")).font(.title2.bold())
-                            .foregroundStyle(Brand.goldGradient)
-                        Text(L("Taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita ve tüm kamera açıları dahil her şey açık:","Tactical mission videos, highest-resolution map with 3D buildings and every camera angle — all unlocked:"))
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    } else if premium {
+                    if premium {
                         Text(L("Premium üyesin ✨","You're Premium ✨")).font(.title2.bold())
                         Text(L("Şu an tüm bu özelliklerin keyfini çıkarıyorsun:","You're currently enjoying all of these:"))
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -1015,10 +914,10 @@ struct PaywallSheet: View {
                     VStack(spacing: 9) { ForEach(perks) { perkRow($0) } }.padding(.vertical, 4)
 
                     if premium {
-                        Text(iap.ultra ? L("Ultra aktif","Ultra active") : L("Premium aktif","Premium active"))
-                            .font(.caption.bold()).foregroundStyle(iap.ultra ? .black : .white)
+                        Text(L("Premium aktif","Premium active"))
+                            .font(.caption.bold()).foregroundStyle(.white)
                             .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(iap.ultra ? AnyShapeStyle(Brand.goldGradient) : AnyShapeStyle(Brand.gradient), in: Capsule())
+                            .background(AnyShapeStyle(Brand.gradient), in: Capsule())
                             .padding(.top, 2)
 
                         // Günlük 2x Boost (consumable) — premium üyeye, rotasız erişilebilir satın alma
@@ -1042,8 +941,6 @@ struct PaywallSheet: View {
                             }
                         }
 
-                        ultraBlock()   // premium üye -> Ultra'ya yükselt
-
                         Link(L("Aboneliği yönet","Manage subscription"),
                              destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
                             .font(.footnote).tint(Brand.accent).padding(.top, 6)
@@ -1051,7 +948,6 @@ struct PaywallSheet: View {
                     } else {
                         if let y = iap.yearly { planButton(y, period: L("yıl","yr"), badge: L("EN AVANTAJLI","BEST VALUE")) }
                         if let m = iap.monthly { planButton(m, period: L("ay","mo"), badge: nil) }
-                        ultraBlock()
                         if iap.monthly == nil, iap.yearly == nil {
                             if AppEnv.demo {
                                 staticRow(L("Premium Yıllık","Premium Yearly"), "$29.99", L("yıl","yr"), L("EN AVANTAJLI","BEST VALUE"))
@@ -1189,27 +1085,6 @@ struct PaywallSheet: View {
         }
         .buttonStyle(.plain).padding(16).glassPanel(20).disabled(iap.working)
     }
-
-    // ULTRA yükseltme bloğu: Google 3D + kamera modları + Street View (ultra değilse göster)
-    @ViewBuilder func ultraBlock() -> some View {
-        if !iap.ultra, iap.ultraMonthly != nil || iap.ultraYearly != nil {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles").foregroundStyle(Brand.gradient)
-                    // 2026-08-10: Google Photorealistic 3D + Street View ARTIK YOK — GCP faturası askıya
-                    // alındı, 3D Tiles API 404 (ölçüldü). Kullanılamayan özellik SATILMAZ (Barış kuralı).
-                    // Metin Ultra'nın GERÇEK ayrıcalıklarına çevrildi: taktik görev videoları + 3B binalı
-                    // en yüksek çözünürlüklü harita + kamera açıları + 4 kat aylık kota.
-                    Text(L("Ultra — Taktik görev videoları","Ultra — Tactical mission videos")).font(.subheadline.bold())
-                }.padding(.top, 8)
-                Text(L("Askeri tarzda taktik görev videoları, 3B binalı en yüksek çözünürlüklü harita katmanı, sinematik kamera açıları (Arkadan) ve 4 kat aylık video hakkı.",
-                       "Military-style tactical mission videos, highest-resolution map layer with 3D buildings, cinematic camera angles (Chase) and 4x monthly video quota."))
-                    .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 8)
-                if let uy = iap.ultraYearly { planButton(uy, period: L("yıl","yr"), badge: "ULTRA") }
-                if let um = iap.ultraMonthly { planButton(um, period: L("ay","mo"), badge: nil) }
-            }
-        }
-    }
 }
 
 // Gün özeti videosu render ayarları (rotalardaki GenerateSheet'in karşılığı)
@@ -1223,12 +1098,6 @@ struct SummaryVideoSheet: View {
             Form {
                 Picker(L("Görünüm","Mode"), selection: $video.mode) {
                     Text(L("Düz","Flat")).tag("flat"); Text("Flyover").tag("flyover"); Text(L("3B","3D")).tag("3d")
-                    Text("🎖️ Tactical (Ultra)").tag("tactical")
-                }
-                if video.mode == "tactical" {
-                    Text(L("Askeri uydu görevi: günün tüm hareketi tek operasyonda. 9:16 sabit, süre 60sn altı (Reels uyumlu).",
-                           "Military satellite op: your whole day in one mission. Fixed 9:16, under 60s (Reels-ready)."))
-                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Picker(L("Süre","Duration"), selection: $video.speed) {
                     Text(L("Kısa","Short")).tag("fast"); Text(L("Orta","Medium")).tag("medium")

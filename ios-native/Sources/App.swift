@@ -36,9 +36,7 @@ struct MoveLogApp: App {
             }
             .task {
                 if store.gate == .checking { await store.validate() }
-                ConvoyVoice.shared.store = store          // 1.9: sesli konvoy anonsları
-                PttEngine.shared.store = store            // 1.9-B: telsiz
-                if ConvoyVoice.shared.enabled { ConvoyVoice.shared.start() }
+                // 18.09: ConvoyVoice / PttEngine kaldırıldı (sesli iletişim çıktı).
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
             }
             // 17.09 ASIL FIKS (olculdu): uygulama .checking'de askida kalinca ON PLANA DONUS
@@ -140,7 +138,8 @@ struct RootView: View {
     @State private var ann: Announcement?
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "chat","gps","map": return 3; case "profile","paywall","avatar": return 4; default: return 0 }
+        // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
+        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","paywall","avatar": return 3; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {
@@ -148,10 +147,8 @@ struct RootView: View {
             // not: aşağıda .onChange ile "Video oluştur" sonrası otomatik Videolarım'a geçilir
             VideosView().tabItem { Label(L("Videolarım","My Videos"), systemImage: "film.stack") }.tag(1)
             SummariesView().tabItem { Label(L("Özet","Summary"), systemImage: "doc.text.magnifyingglass") }.tag(2)
-            // Telsiz: bas-konuş + canlı telsiz + Sohbet tek sekmede (segment geçişli) -> tam 5 sekme, "More" menüsü yok.
-            // 16.09: canlı takip/harita sekmesi kaldırıldı (konum paylaşımı iOS/Android'de yerleşik).
-            TelsizTab().tabItem { Label(L("Telsiz","Radio"), systemImage: "dot.radiowaves.left.and.right") }.tag(3)
-            ProfileView().tabItem { Label(L("Profil","Profile"), systemImage: "person.crop.circle") }.tag(4)
+            // 18.09: Telsiz sekmesi kaldırıldı (sesli/yazılı sohbet çıktı) -> 4 sekme.
+            ProfileView().tabItem { Label(L("Profil","Profile"), systemImage: "person.crop.circle") }.tag(3)
         }
         .onChange(of: store.jumpToVideos) { _, v in
             if v { sel = 1; store.jumpToVideos = false }   // "Video oluştur" -> Videolarım'a geç ("Hazırlanıyor" görünür)
@@ -160,17 +157,12 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .ndDeepLink)) { note in
             guard let route = note.object as? String else { return }
             let p = route.split(separator: ":", maxSplits: 3).map(String.init)
+            // 18.09: telsiz/sohbet/interkom bildirimleri kalktı. Arkadaşlık bildirimleri
+            // Profil'e (artık tag 3) gider; bilinmeyen rota sessizce yok sayılır.
             switch p.first {
             case "videos": sel = 1
-            case "map", "chat": sel = 3
-            // 16.09: canlı telsiz davet/kabul + sesli mesaj -> TELSİZ sekmesi (poll alert orada yakalar)
-            case "voice", "vcall", "vcallok": sel = 3
-            case "friends", "profile", "wave": sel = 4
+            case "friends", "profile", "wave": sel = 3
             default: break
-            }
-            if p.first == "voice", p.count >= 2 {   // sesli mesaj bildirimine dokununca: klibi çal
-                PttEngine.shared.store = store
-                PttEngine.shared.playIncoming(id: p[1], from: p.count >= 4 ? p[3] : "Rider")
             }
         }
         // iOS 26'da TabView otomatik Liquid Glass tab bar kullanır.

@@ -680,18 +680,6 @@ enum DavetLink {
         let (code, _) = await reqCode("/api/friends/respond", method: "POST", body: ["username": u, "accept": accept])
         return code == 200
     }
-    func chatList() async -> [Convo] {
-        if AppEnv.demo { return DemoData.convos }
-        return (try? dec().decode([String:[Convo]].self, from: await req("/api/chat/list"))["conversations"]) ?? []
-    }
-    func chatWith(_ other: String) async -> [Message] {
-        if AppEnv.demo { return DemoData.thread }
-        struct R: Codable { var messages: [Message] }
-        return (try? dec().decode(R.self, from: await req("/api/chat/with/" + other)).messages) ?? []
-    }
-    func send(_ to: String, _ text: String) async {
-        _ = try? await req("/api/chat/send", method: "POST", body: ["to": to, "text": text])
-    }
     func uploadPhoto(_ jpeg: Data) async -> String? {
         let dataURL = "data:image/jpeg;base64," + jpeg.base64EncodedString()
         guard let d = try? await req("/api/profile/photo", method: "POST", body: ["data": dataURL]),
@@ -1053,43 +1041,6 @@ enum DavetLink {
               let _ = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return true
     }
-    // MOTORCU GRUPLARI (1.8)
-    func clubs() async -> [Club] {
-        (try? dec().decode([String:[Club]].self, from: await req("/api/clubs"))["clubs"]) ?? []
-    }
-    func createClub(_ name: String) async -> Club? {
-        guard let d = try? await req("/api/clubs", method: "POST", body: ["name": name]) else { return nil }
-        return try? dec().decode(Club.self, from: d)
-    }
-    func joinClub(_ code: String) async -> Club? {
-        guard let d = try? await req("/api/clubs/join", method: "POST", body: ["code": code]) else { return nil }
-        return try? dec().decode(Club.self, from: d)
-    }
-    func clubDetail(_ id: String) async -> Club? {
-        guard let d = try? await req("/api/clubs/\(id)") else { return nil }
-        return try? dec().decode(Club.self, from: d)
-    }
-    @discardableResult
-    func leaveClub(_ id: String) async -> Bool {
-        (try? await req("/api/clubs/leave", method: "POST", body: ["id": id])) != nil
-    }
-    @discardableResult
-    func kickClubMember(_ id: String, _ user: String) async -> Bool {
-        (try? await req("/api/clubs/kick", method: "POST", body: ["id": id, "user": user])) != nil
-    }
-    func renameClub(_ id: String, _ name: String) async -> Club? {
-        guard let d = try? await req("/api/clubs/rename", method: "POST", body: ["id": id, "name": name]) else { return nil }
-        return try? dec().decode(Club.self, from: d)
-    }
-    // LİDERLİK TABLOSU (1.7): haftalık km — arkadaşlar + kulüp arkadaşları
-    func leaderboard() async -> ([LeaderRow], Int) {
-        guard let d = try? await req("/api/leaderboard"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              let wk = o["week"],
-              let wd = try? JSONSerialization.data(withJSONObject: wk),
-              let rows = try? dec().decode([LeaderRow].self, from: wd) else { return ([], 0) }
-        return (rows, (o["me"] as? Int) ?? 0)
-    }
     // 1.8: GÜVENLİK PAKETİ
     func safety() async -> (buddy: String, arrive: Bool, longstop: Bool, buddyName: String) {
         guard let d = try? await req("/api/safety"),
@@ -1105,17 +1056,6 @@ enum DavetLink {
         if let x = arrive { b["arrive"] = x }
         if let x = longstop { b["longstop"] = x }
         return (try? await req("/api/safety", method: "PUT", body: b)) != nil
-    }
-    // 1.8: ROZETLER
-    func badges() async -> [String] {
-        guard let d = try? await req("/api/badges"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return [] }
-        return o["badges"] as? [String] ?? []
-    }
-    // 1.8: RIDE WRAPPED
-    func wrapped() async -> WrappedStats? {
-        guard let d = try? await req("/api/wrapped") else { return nil }
-        return try? dec().decode(WrappedStats.self, from: d)
     }
     // 1.8: CANLI TAKİP
     @discardableResult
@@ -1168,16 +1108,6 @@ enum DavetLink {
               let u = o["url"] as? String, let t = o["token"] as? String else { return nil }
         return (u, t, o["room"] as? String ?? "", o["peer_name"] as? String ?? peer)
     }
-    // PTT ÇAKIŞMA: basılı tutarken karşı tarafın butonu pasifleşsin
-    func pttBusySet(_ friend: String, on: Bool) async {
-        _ = try? await req("/api/ptt/busy", method: "POST", body: ["user": friend, "on": on])
-    }
-    func pttBusyOf(_ friend: String) async -> Bool {
-        guard let esc = friend.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let d = try? await req("/api/ptt/busy/\(esc)"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
-        return (o["busy"] as? Bool) ?? false
-    }
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     func beacon() async {
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -1189,51 +1119,6 @@ enum DavetLink {
             body["lat"] = loc.coordinate.latitude; body["lon"] = loc.coordinate.longitude
         }
         _ = try? await req("/api/live/beacon", method: "POST", body: body)
-    }
-    func liveClub(_ cid: String) async -> [ClubRider] {
-        guard let d = try? await req("/api/live/club/\(cid)"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              let rr = o["riders"],
-              let rd = try? JSONSerialization.data(withJSONObject: rr) else { return [] }
-        return (try? dec().decode([ClubRider].self, from: rd)) ?? []
-    }
-    // 1.9-C İNTERKOM
-    func intercomToken(_ cid: String) async -> (url: String, token: String, room: String)? {
-        guard let d = try? await req("/api/intercom/\(cid)/token"),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              let u = o["url"] as? String, let t = o["token"] as? String else { return nil }
-        return (u, t, o["room"] as? String ?? "")
-    }
-    // 1.9-B TELSİZ
-    func pttSend(club: String, data: Data) async -> Bool {
-        guard let url = URL(string: API + "/api/ptt/send?club=\(club)") else { return false }
-        var rq = URLRequest(url: url); rq.httpMethod = "POST"
-        rq.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
-        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        rq.httpBody = data
-        guard let (_, resp) = try? await URLSession.shared.data(for: rq),
-              let http = resp as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
-    }
-    // ÇİFTLER: bir ARKADAŞA sesli mesaj (kulüp gerekmez, ÜCRETSİZ). /api/ptt/send-user
-    func pttSendUser(user: String, data: Data) async -> Bool {
-        guard let esc = user.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: API + "/api/ptt/send-user?user=\(esc)") else { return false }
-        var rq = URLRequest(url: url); rq.httpMethod = "POST"
-        rq.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
-        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        rq.httpBody = data
-        guard let (_, resp) = try? await URLSession.shared.data(for: rq),
-              let http = resp as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
-    }
-    func pttGet(_ id: String) async -> Data? {
-        guard let url = URL(string: API + "/api/ptt/\(id)") else { return nil }
-        var rq = URLRequest(url: url)
-        if !token.isEmpty { rq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        guard let (d, resp) = try? await URLSession.shared.data(for: rq),
-              let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        return d
     }
     // 1.8: ROTA PAYLAŞIMI
     @discardableResult
