@@ -2,14 +2,13 @@
 //
 // NE ONARIR:
 //   1) wmax=0 SESSİZ ARIZASI (bilinen tuzak: endpoint 0'da kalınca /run 409 verir, videolar sessizce
-//      durur — reference_runpod_wmax_sifir). Her BİLİNEN endpoint için ayrı ayrı bakılır
-//      (movelog-render + movelog-tactical). En son görülen >0 değer KV'de saklanır; 0 görülünce
+//      durur — reference_runpod_wmax_sifir). Her BİLİNEN endpoint için ayrı ayrı bakılır.
+//      En son görülen >0 değer KV'de saklanır; 0 görülünce
 //      PATCH ile o değere geri açılır ve RE-GET ile DOĞRULANIR.
 //   2) Bakiye eşiği → bildirim; kritik eşik → KV 'bulut-kapali' bayrağı (activity-detect bu bayrağı
 //      okuyup Premium işi TELEFONA yönlendirir — bekçi 'kuyruğu telefona yönlendirme bayrağı').
 //   3) /health 402 (bakiye bitti) → aynı bayrak + bildirim.
-//   4) Taktik endpoint HİÇ YOKSA (RunPod worker kotası 20/20 — runpod-tactical.conf) → onarılamaz,
-//      Barış'a bildirim + olay. Kota açılınca id wrangler.toml RUNPOD_ENDPOINT_TAC'a yazılır.
+//   4) Endpoint HİÇ YOKSA (id boş) → onarılamaz, Barış'a bildirim + olay.
 //   5) MIG BEKÇİSİ (2026-09-01, Barış "kur"): movelog-render'ın gpuIds'inde MIG dışlaması duruyor mu +
 //      worker'lardan biri MIG dilimi mi? İkisi de TESPİT+BİLDİRİM (onarım YOK — aşağıda gerekçe).
 //
@@ -21,7 +20,7 @@
 // bildirim olmaz). Bu bekçi ölürse kira 1 saatte düşer ve render-bekci görevi OTOMATİK devralır.
 import type { GorevCtx } from '../takvim'
 import { kvJson, kvJsonYaz } from '../lib'
-import { dalMotoru } from '../../../ortak/src/maliyet'
+import { motorOku } from '../../../ortak/src/maliyet'
 import { atlandiOlay, bildir, endpointler, kuru, kuruOlay, olayYaz, onar, rpBakiye, rpGpuDurum, rpHealth, rpRest, saglamOlay } from './bekci-ortak'
 
 const BEKCI = 'runpod-saglik'
@@ -42,21 +41,14 @@ const MIG_DISLAMA = '-NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb'
 
 type EpDurum = { workersMax?: number; templateId?: string; name?: string }
 
-function epDal(ad: string): 'render' | 'taktik' {
-  return ad === 'movelog-tactical' ? 'taktik' : 'render'
-}
-
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, log } = c
   const { bilinen, eksik } = endpointler(env)
-  // NEDEN: geçiş dal başına — taktik modal iken render hâlâ RunPod olabilir.
-  const renderMotor = await dalMotoru(env.KV, 'render')
-  const taktikMotor = await dalMotoru(env.KV, 'taktik')
-  const motorOf = (ad: string) => epDal(ad) === 'taktik' ? taktikMotor : renderMotor
+  const renderMotor = await motorOku(env.KV)
 
-  // ── 0) hiç kurulmamış endpoint (taktik): onarılamaz, bildir ──
+  // ── 0) hiç kurulmamış endpoint: onarılamaz, bildir ──
   for (const e of eksik) {
-    if (motorOf(e.ad) === 'modal') {
+    if (renderMotor === 'modal') {
       // NEDEN: dal Modal'da — RunPod endpoint yokluğu o hatı durdurmaz.
       log(`${e.ad}: endpoint id YOK, dal modal — atlandı`)
       await atlandiOlay(env, BEKCI, `endpoint-yok-modal:${e.ad}`,
@@ -66,9 +58,8 @@ export async function kos(c: GorevCtx): Promise<void> {
     log(`${e.ad}: endpoint id YOK (kurulmamış)`)
     await bildir(c, {
       bekci: BEKCI, tespit: `endpoint-yok:${e.ad}`,
-      msg: `⚠️ RunPod '${e.ad}' endpoint'i KURULU DEĞİL — o hat işi RunPod'a gönderemiyor ` +
-        `(iş kaybolmuyor: dispatch KV 'dispatch:bekleyen:*'e alıyor). Kota açılınca ` +
-        `endpoint-kur.py + wrangler.toml RUNPOD_ENDPOINT_TAC.`,
+      msg: `⚠️ RunPod '${e.ad}' endpoint'i KURULU DEĞİL — iş RunPod'a gönderilemiyor ` +
+        `(iş kaybolmuyor: dispatch KV 'dispatch:bekleyen:*'e alıyor).`,
       konu: 'Move Log Bekçi', saat: 24, detay: { endpoint: e.ad, wmax_plani: e.wmaxVars },
     })
   }
@@ -78,7 +69,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     const neden = kuru(env) ? 'ORTAM=golge' : 'RUNPOD_API_KEY yok'
     const bayrak = (await env.KV.get('bulut-kapali')) !== null
     for (const e of bilinen) {
-      if (motorOf(e.ad) === 'modal') {
+      if (renderMotor === 'modal') {
         // NEDEN: dal Modal — kuru turda da wmax PATCH planı yazma.
         await atlandiOlay(env, BEKCI, `wmax-kontrol-modal:${e.ad}`,
           'dal modal: wmax PATCH planı yok', { endpoint: e.ad, id: e.id, neden })
@@ -89,15 +80,14 @@ export async function kos(c: GorevCtx): Promise<void> {
         `${(await kvJson<number>(env, `bekci:runpod:wmax:${e.id}`, e.wmaxVars))} + RE-GET doğrulama`,
         { endpoint: e.ad, id: e.id, neden })
     }
-    if (renderMotor === 'modal' && taktikMotor === 'modal') {
+    if (renderMotor === 'modal') {
       await atlandiOlay(env, BEKCI, 'bakiye-kontrol-modal',
-        'iki dal modal: RunPod bakiye planı yok', { neden })
+        'render modal: RunPod bakiye planı yok', { neden })
     } else {
       await kuruOlay(env, BEKCI, 'bakiye-kontrol',
         `GraphQL clientBalance (UA=movelog-bekci/1.0) → <$${BAKIYE_ESIK} uyarı, ` +
-        `<$${BULUT_KAPALI_ESIK} KV 'bulut-kapali' bayrağı (kuyruk telefona yönlenir)` +
-        (renderMotor === 'modal' ? ' [render modal: bayrak KONMAZ, yalnız bilgi]' : ''),
-        { neden, bulut_kapali_su_an: bayrak, endpoint_sayisi: bilinen.length, render: renderMotor, taktik: taktikMotor })
+        `<$${BULUT_KAPALI_ESIK} KV 'bulut-kapali' bayrağı (kuyruk telefona yönlenir)`,
+        { neden, bulut_kapali_su_an: bayrak, endpoint_sayisi: bilinen.length, render: renderMotor })
     }
     if (env.RUNPOD_ENDPOINT_ID && renderMotor === 'runpod') {
       await kuruOlay(env, BEKCI, 'mig-kontrol:movelog-render',
@@ -111,7 +101,7 @@ export async function kos(c: GorevCtx): Promise<void> {
 
   // ── 1) her endpoint: wmax + /health ──
   for (const e of bilinen) {
-    if (motorOf(e.ad) === 'modal') {
+    if (renderMotor === 'modal') {
       // NEDEN: dal Modal — wmax PATCH / health müdahalesi RunPod'a ait, yalnız log.
       log(`${e.ad}: dal modal — wmax/health müdahalesi yok`)
       await atlandiOlay(env, BEKCI, `modal-atla:${e.ad}`,
@@ -176,11 +166,11 @@ export async function kos(c: GorevCtx): Promise<void> {
   }
 
   // ── 2) bakiye ──
-  if (renderMotor === 'modal' && taktikMotor === 'modal') {
-    // NEDEN: iki dal da Modal — RunPod bakiyesi üretimi kesmez, uyarı gürültü.
-    log('iki dal da modal — RunPod bakiye uyarıları susturuldu')
+  if (renderMotor === 'modal') {
+    // NEDEN: render Modal — RunPod bakiyesi üretimi kesmez, uyarı gürültü.
+    log('render modal — RunPod bakiye uyarıları susturuldu')
     await atlandiOlay(env, BEKCI, 'bakiye-modal',
-      'iki dal modal: RunPod bakiye uyarısı yok', { render: renderMotor, taktik: taktikMotor })
+      'render modal: RunPod bakiye uyarısı yok', { render: renderMotor })
     const bayrakArtik = (await env.KV.get('bulut-kapali')) !== null
     if (bayrakArtik) {
       // NEDEN: 3B Modal'dayken kalıntı bayrak Premium'u telefona yollar.
@@ -198,26 +188,6 @@ export async function kos(c: GorevCtx): Promise<void> {
     const bayrak = (await env.KV.get('bulut-kapali')) !== null
     if (bak === null) {
       await olayYaz(env, { bekci: BEKCI, tespit: 'bakiye-bos-dondu', aksiyon: 'sonraki tur', sonuc: 'basarisiz' })
-    } else if (renderMotor === 'modal') {
-      // NEDEN: 3B Modal — bakiye düşük/402 telefona yönlendirmez; kalıntı bayrağı da kalkar.
-      if (bayrak) {
-        await onar(c, {
-          bekci: BEKCI, tespit: 'bulut-kapali-modal-sil',
-          aksiyon: `KV 'bulut-kapali' silindi (render dalı modal, bakiye $${bak.toFixed(2)})`,
-          detay: { bakiye: bak },
-          uygula: async () => { await env.KV.delete('bulut-kapali') },
-          dogrula: async () => (await env.KV.get('bulut-kapali')) === null,
-        })
-      }
-      if (bak < BAKIYE_ESIK) {
-        await bildir(c, { bekci: BEKCI, tespit: 'bakiye-dusuk-bilgi', saat: 12,
-          msg: `💳 RunPod bakiyesi düşük: $${bak.toFixed(2)} (eşik $${BAKIYE_ESIK}) — ` +
-            `3B dalı Modal, bulut-kapali KONMADI.` +
-            (taktikMotor === 'runpod' ? ' Taktik hâlâ RunPod.' : ''),
-          detay: { bakiye: bak, taktik: taktikMotor } })
-      } else {
-        await saglamOlay(env, BEKCI, 'bakiye', { bakiye: bak, render: renderMotor })
-      }
     } else if (bak < BULUT_KAPALI_ESIK) {
       if (!bayrak) await bulutKapat(c, `bakiye $${bak.toFixed(2)}`, { bakiye: bak })
     } else if (bayrak) {
@@ -239,7 +209,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     } else {
       await saglamOlay(env, BEKCI, 'bakiye', { bakiye: bak })
     }
-    log(`bakiye: ${bak === null ? '?' : '$' + bak.toFixed(2)} motor=${renderMotor}/${taktikMotor}`)
+    log(`bakiye: ${bak === null ? '?' : '$' + bak.toFixed(2)} motor=${renderMotor}`)
     } catch (err) {
     await olayYaz(env, {
       bekci: BEKCI, tespit: 'bakiye-okunamadi', aksiyon: 'sonraki tur (3 turda bildirilir)',
@@ -248,7 +218,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     }
   }
 
-  // ── 3) MIG bekçisi — yalnız movelog-render + dal RunPod (GPU endpoint; taktik CPU, MIG derdi yok) ──
+  // ── 3) MIG bekçisi — yalnız movelog-render + dal RunPod ──
   if (env.RUNPOD_ENDPOINT_ID && renderMotor === 'runpod') await migKontrol(c, env.RUNPOD_ENDPOINT_ID)
   else if (renderMotor === 'modal') {
     log('render dalı modal — MIG kontrolü atlandı')

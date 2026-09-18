@@ -5,7 +5,7 @@
 // (c) yetim süpürmesi: R2'de olup videos'ta kaydı olmayan mp4 → rides metadata'sıyla render-done
 import type { GorevCtx } from '../takvim'
 import { trGun } from '../lib'
-import { dalMotoru } from '../../../ortak/src/maliyet'
+import { motorOku } from '../../../ortak/src/maliyet'
 import { renderDone, renderFailed } from '../ic'
 
 const STALE = 5400 // 90dk (2026-07-26 false-fail engeli)
@@ -60,7 +60,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   } catch (e) { log('yetim süpürmesi hata: ' + String(e).slice(0, 120)) }
 
   // ===== pending taraması =====
-  const renderModal = (await dalMotoru(env.KV, 'render')) === 'modal'
+  const renderModal = (await motorOku(env.KV)) === 'modal'
   const ucBMod = (mode: string | null | undefined) => !mode || mode === '3d' || mode === 'auto'
   const staleOf = (mode: string | null | undefined) =>
     (renderModal && ucBMod(mode)) ? STALE_MODAL_3B : STALE

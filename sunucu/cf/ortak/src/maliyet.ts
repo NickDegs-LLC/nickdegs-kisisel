@@ -26,24 +26,14 @@ export function trGunu(ts: number): string {
   return new Date((ts + TR_OFS) * 1000).toISOString().slice(0, 10)
 }
 
-/** Dispatch `motorSec` ile BİREBİR aynı anlam (dispatch'e dokunulmaz; cron/maliyet buradan okur).
- *  Taktik dalında `dispatch:motor-tac` 'modal'|'runpod' ise o, değilse `dispatch:motor`;
- *  `=== 'modal'` değilse 'runpod'; hata → 'runpod'. */
-export async function dalMotoru(kv: KVNamespace, dal: 'render' | 'taktik'): Promise<MotorAd> {
+/** KV 'dispatch:motor' tırnaksız değeri === 'modal' ise 'modal', aksi/hata 'runpod'
+ *  (dispatch motorSec ile AYNI anlam; dispatch'e dokunulmaz, cron/maliyet buradan okur).
+ *  18.09: TEK HAT — `dalMotoru(kv, dal)` ve `dispatch:motor-tac` override'ı taktikle kalktı. */
+export async function motorOku(kv: KVNamespace): Promise<MotorAd> {
   try {
-    if (dal === 'taktik') {
-      const tac = String((await kv.get('dispatch:motor-tac')) ?? '').replace(/"/g, '')
-      if (tac === 'modal' || tac === 'runpod') return tac
-    }
     const v = await kv.get('dispatch:motor')
     return String(v ?? '').replace(/"/g, '') === 'modal' ? 'modal' : 'runpod'
   } catch { return 'runpod' }
-}
-
-/** KV 'dispatch:motor' tırnaksız değeri === 'modal' ise 'modal', aksi/hata 'runpod'
- *  (dispatch motorSec'in render dalıyla AYNI anlam). Taktik override'a KARIŞMA. */
-export async function motorOku(kv: KVNamespace): Promise<MotorAd> {
-  return dalMotoru(kv, 'render')
 }
 
 /** Motora göre tablodan bedel; tabloda yoksa `varsayilan` (çağıranların bugünkü fallback'ı:

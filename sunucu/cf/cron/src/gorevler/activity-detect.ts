@@ -160,13 +160,6 @@ async function queueCloudVideo(
     job.camdist = (prefs.summary_vid_cam as string) || 'orta'
     if (prefs.summary_vid_music) job.music = prefs.summary_vid_music
   }
-  // TAKTİK: tac_dispatch hattı Faz T'de RunPod motoruna geçiyor — şimdilik aynı kuyruk, mode korunur
-  if (job.mode === 'tactical') {
-    job.vid = rideId
-    const kid = await renderKuyruk(env, job, 'activity-detect:taktik')
-    log(`  → TAKTİK kuyruğa: ${kid} • ${track.length} nokta`)
-    return
-  }
   // CİHAZDA ÜRETİM (1.61 yerelq — satır 402-448): app /api/local-renders bu KV listesini okur
   const yerelOk = simdi() - Number(prof.yerel_son || 0) < 7 * 86400
   const yerelqYaz = async (neden: string): Promise<boolean> => {

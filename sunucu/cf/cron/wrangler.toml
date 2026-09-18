@@ -11,10 +11,9 @@ enabled = true
 [vars]
 ORTAM = "canli"
 RUNPOD_ENDPOINT_ID = "q9tw33kjmqx35a"
-# TAKTİK endpoint'i 2026-08-31 KURULDU (Barış kota onayı: movelog-render 15->12 → 3 worker buraya).
-# runpod-saglik + imaj-surum-bekcisi + kuyruk-bekcisi bu id'yi OTOMATİK devralır.
-# ⚠️ bekci-ortak.ts endpointler(): movelog-render wmaxVars=12 (kota devriyle birlikte düşürüldü).
-RUNPOD_ENDPOINT_TAC = "yvkajd6x7mp1lj"
+# ⚠️ bekci-ortak.ts endpointler(): movelog-render wmaxVars=12 (2026-08-31 kota devrinden kalma).
+# 18.09: taktik hattı kaldırıldı; RUNPOD_ENDPOINT_TAC çıkarıldı. RunPod'daki movelog-tactical
+# endpoint'i ve 3 worker kotası HÂLÂ DURUYOR — kapatma Barış'ın onayına bırakıldı.
 API_UC = "https://movelog-api.daclen10.workers.dev"
 DISPATCH_UC = "https://movelog-dispatch.daclen10.workers.dev"
 # sırlar (wrangler secret put, hepsi OPSİYONEL — yoksa ilgili görev kendini atlar):

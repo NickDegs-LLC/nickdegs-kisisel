@@ -22,8 +22,6 @@ export type Env = {
   // [vars]
   ORTAM: string                  // "golge" | "canli" — golge: push/RunPod/Telegram HİÇBİR gerçek dış yazım yok
   RUNPOD_ENDPOINT_ID?: string    // q9tw33kjmqx35a (render-bekci; golge modda kullanılmaz)
-  RUNPOD_ENDPOINT_TAC?: string   // movelog-tactical CPU endpoint'i — BOŞ = henüz kurulmadı (kota 20/20).
-                                 // bekçiler: runpod-saglik (wmax/health), imaj-surum-bekcisi, kuyruk-bekcisi
   API_UC?: string                // movelog-api public kökü (video-kontrol teslim testi + duman testi)
   DISPATCH_UC?: string           // movelog-dispatch public kökü (kendi-kendini-test /health ayağı)
 

@@ -6,11 +6,7 @@ export type Env = {
   RUNPOD_API_KEY: string; RUNPOD_ENDPOINT: string; DISPATCH_SECRET: string
   // MODAL DALI (2026-09-07): motor seçimi KV `dispatch:motor` bayrağında ('runpod' | 'modal').
   // Bayrak KV'de olduğu için GERİ DÖNÜŞ YENİDEN DAĞITIM İSTEMEZ.
-  // TAKTİK override (2026-09-14): `dispatch:motor-tac` doluysa yalnız taktik hattı onu izler.
   MODAL_SECRET?: string
-  // TAKTİK DALI (2026-08-30): ayrı CPU endpoint'i + presigned R2 PUT için S3 kimlikleri.
-  RUNPOD_ENDPOINT_TAC?: string
-  R2_ENDPOINT?: string; R2_ACCESS_KEY_ID?: string; R2_SECRET_ACCESS_KEY?: string; R2_BUCKET?: string
 }
 
 // movelog-dispatch — Queue tüketicisi → RunPod /run (movelog-cloud.py'nin CF karşılığı).
@@ -19,11 +15,8 @@ export type Env = {
 // GEÇİŞ KARARINA kadar motora bırakılır (matched göndermiyoruz -> motor kendi map-match'ini yapar;
 // plan v2 Faz 1 notu). Başarısızlıkta Queue retry (max 3) + KV'ye son hata.
 //
-// İKİ DAL (motor KV `dispatch:motor` / isteğe bağlı `dispatch:motor-tac`):
-//   mode != 'tactical'  -> movelog-render (GPU, RunPod veya Modal)
-//   mode == 'tactical'  -> movelog-tactical (CPU, RunPod veya Modal)
-// Taktik motorunda R2 kimliği YOKTUR: video presigned PUT ile yüklenir (job.put_url), render-done'u
-// lokal reconcile halleder (render_job.py:802 `TAC_PUT_URL` dalı).
+// TEK HAT (motor KV `dispatch:motor`): her iş -> movelog-render (GPU, RunPod veya Modal).
+// 18.09: taktik (CPU) hattı kaldırıldı.
 type Job = Record<string, unknown> & { ride_id?: string }
 
 const simdi = () => Math.floor(Date.now() / 1000)
@@ -143,10 +136,8 @@ async function runpodGonder(env: Env, job: Job): Promise<{ ok: boolean; status: 
 // ---------- MODAL DALI (2026-09-07, taktik 2026-09-14) ----------
 // Modal ucu RunPod'un /run sözleşmesini TAKLİT EDER ({"input": job} alır,
 // {"id":..., "status":"IN_QUEUE"} döner) → çağıran taraf aynı kalır. Geri çağrı
-// (/api/internal/render-done) 3B'de motorun KENDİSİ tarafından yapılır; taktikte
-// put_url + reconcile (RunPod'daki gibi, sır konteynere girmez).
+// (/api/internal/render-done) motorun KENDİSİ tarafından yapılır.
 const MODAL_RUN = 'https://daclen10--movelog-render-run.modal.run'
-const MODAL_TAC_RUN = 'https://daclen10--movelog-tactical-run.modal.run'
 
 async function modalGonder(env: Env, job: Job): Promise<{ ok: boolean; status: number; body: string }> {
   if (!env.MODAL_SECRET) return { ok: false, status: 0, body: 'MODAL_SECRET yok' }
@@ -158,180 +149,13 @@ async function modalGonder(env: Env, job: Job): Promise<{ ok: boolean; status: n
   return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
 }
 
-/** Hangi motor? KV bayrağı — okunamazsa RunPod (arıza ≠ sessiz motor değişimi).
- *  `dispatch:motor` ana bayrak (iki hat). `dispatch:motor-tac` doluysa yalnız
- *  taktik onu izler; boşsa taktik de ana bayrağı izler. */
-async function motorSec(env: Env, dal: 'taktik' | 'render' = 'render'): Promise<'runpod' | 'modal'> {
+/** Hangi motor? KV `dispatch:motor` bayrağı — okunamazsa RunPod (arıza ≠ sessiz motor değişimi).
+ *  18.09: TEK HAT — `dispatch:motor-tac` override'ı taktikle birlikte kalktı. */
+async function motorSec(env: Env): Promise<'runpod' | 'modal'> {
   try {
-    if (dal === 'taktik') {
-      const tac = String((await env.KV.get('dispatch:motor-tac')) ?? '').replace(/"/g, '')
-      if (tac === 'modal' || tac === 'runpod') return tac
-    }
     const v = await env.KV.get('dispatch:motor')
     return String(v ?? '').replace(/"/g, '') === 'modal' ? 'modal' : 'runpod'
   } catch { return 'runpod' }
-}
-
-// ---------- R2 SigV4 query presign (api/src/routes/grup1.ts:221 ile aynı desen, method parametrik) ----------
-const enc = new TextEncoder()
-const hex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('')
-async function sha256Hex(s: string): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s))))
-}
-async function hmacRaw(key: Uint8Array | ArrayBuffer, msg: string): Promise<Uint8Array> {
-  const k = await crypto.subtle.importKey('raw', key as ArrayBuffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  return new Uint8Array(await crypto.subtle.sign('HMAC', k, enc.encode(msg)))
-}
-const rfc3986 = (s: string) =>
-  encodeURIComponent(s).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
-
-/** SigV4 presign. SignedHeaders=host TEK — istemcinin gönderdiği Content-Type imzaya girmez
- *  (render_job.py:808 `Content-Type: video/mp4` yollar; imzasız başlık R2'de serbest). */
-async function r2Presign(env: Env, key: string, method: 'GET' | 'PUT', secs: number): Promise<string | null> {
-  const ep = env.R2_ENDPOINT, ak = env.R2_ACCESS_KEY_ID, sk = env.R2_SECRET_ACCESS_KEY
-  const bucket = env.R2_BUCKET || 'movelog'
-  if (!ep || !ak || !sk || !key) return null
-  try {
-    const u = new URL(ep)
-    const amzDate = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z'
-    const dateStamp = amzDate.slice(0, 8)
-    const scope = `${dateStamp}/auto/s3/aws4_request`
-    const path = `/${bucket}/` + key.split('/').map(rfc3986).join('/')
-    const q = [
-      ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
-      ['X-Amz-Credential', `${ak}/${scope}`],
-      ['X-Amz-Date', amzDate],
-      ['X-Amz-Expires', String(secs)],
-      ['X-Amz-SignedHeaders', 'host'],
-    ].map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`).sort().join('&')
-    const canonical = [method, path, q, `host:${u.host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n')
-    const sts = ['AWS4-HMAC-SHA256', amzDate, scope, await sha256Hex(canonical)].join('\n')
-    let k = await hmacRaw(enc.encode('AWS4' + sk), dateStamp)
-    for (const parca of ['auto', 's3', 'aws4_request']) k = await hmacRaw(k, parca)
-    const sig = hex(await hmacRaw(k, sts))
-    return `${u.origin}${path}?${q}&X-Amz-Signature=${sig}`
-  } catch {
-    return null
-  }
-}
-
-// ---------- TAKTİK DALI ----------
-/** movelog-cloud.py:489 kuralı: taktik ASLA 16:9 olmaz (dikey tasarım) -> geçersizse 9:16. */
-function taktikAspect(a: unknown): string {
-  return a === '4:5' || a === '9:16' ? (a as string) : '9:16'
-}
-
-/** tac_dispatch.py:90-93 kuralı: kullanıcı müziği ('lib:<id>' | 'active' | 'upload') bulut render'da
- *  ÇEKİLEMEZ (motor `/api/internal/music` + RENDER_DONE_SECRET ister; RunPod'da sır YOK) -> sessizce
- *  RASTGELE müziğe düşerdi (Barış'ın 2026-08-03 şikâyeti). Bu işler RunPod'a GÖNDERİLMEZ. */
-function ozelMuzik(m: unknown): boolean {
-  const s = String(m ?? '').trim()
-  return s.startsWith('lib:') || s === 'active' || s === 'upload'
-}
-
-type TaktikErteleme = { ok: false; status: number; body: string; erteleme: string }
-type TaktikGirdi = { ok: true; input: Job }
-
-/** grup3.ts:903-916 çözümlemesinin birebir aynısı (öncelik: active → lib → upload+session → stock).
- *  user sanitizasyonu path traversal koruması (grup3.ts:899). Anahtar yoksa null —
- *  music_url konmaz, mühürlü kod stok müziğe düşer. */
-function muzikAnahtari(job: Job): string | null {
-  const user = String(job.user ?? '').replace(/[^A-Za-z0-9_-]/g, '')
-  if (!user) return null
-  const ref = String(job.music ?? '').trim()
-  const session = Math.trunc(Number(job.from ?? 0))
-  if (ref === '' || ref === 'active') return `usermusic/${user}/active.m4a`
-  if (ref.startsWith('lib:')) {
-    const mid = ref.slice(4).replace(/[^A-Za-z0-9]/g, '')
-    return mid ? `usermusic/${user}/${mid}.m4a` : null
-  }
-  if (ref === 'upload' && session) return `ridephotos/${user}_${session}/music.m4a`
-  if (ref.startsWith('stock:')) {
-    const ad = ref.slice(6).replace(/[^A-Za-z0-9]/g, '')
-    return ad ? `stockmusic/${ad}.m4a` : null
-  }
-  return null
-}
-
-/** Müzik presign hatası ASLA işi düşürmez (avatar ile aynı). R2'de yoksa alan konmaz. */
-async function muzikPresign(env: Env, job: Job): Promise<string | undefined> {
-  try {
-    const key = muzikAnahtari(job)
-    if (!key) return undefined
-    if (!(await env.R2.head(key))) return undefined
-    return (await r2Presign(env, key, 'GET', 4 * 3600)) ?? undefined
-  } catch {
-    return undefined
-  }
-}
-
-async function taktikGirdiHazirla(
-  env: Env, job: Job, rid: string,
-): Promise<TaktikGirdi | TaktikErteleme> {
-  // ALAN ÖN-DENETİMİ — render_job.py:211 `job["vid"]`/`job["user"]` ile KeyError atar, :223 track
-  // yoksa `fetch_track` (Traccar + kimlik) dener; bulutta ikisi de YOK. Eksik işi göndermek
-  // = kesin başarısız render + boşa worker parası. Önce burada yakala.
-  if (!job.user) return { ok: false, status: 0, body: 'user alanı yok', erteleme: 'user-yok' }
-  if (!Array.isArray(job.track) || job.track.length === 0) {
-    return { ok: false, status: 0, body: 'track boş/yok (bulut Traccar\'a erişemez)', erteleme: 'track-yok' }
-  }
-
-  const vid = String(job.vid ?? job.ride_id ?? rid)
-  const put_url = await r2Presign(env, `videos/${vid}.mp4`, 'PUT', 4 * 3600)
-  if (!put_url) return { ok: false, status: 0, body: 'presign başarısız (R2 kimliği?)', erteleme: 'presign-yok' }
-
-  // Avatar: R2'de varsa presigned GET (rp_handler_tac indirip job['avatar']'a yerel yol yazar;
-  // render_job.py:339 job.get('avatar') ÖNCELİKLİ). Yoksa alan hiç konmaz -> bugünkü bulut
-  // davranışı (silüet) korunur. `_scp` zaten TAC_PUT_URL varken erken döner.
-  let avatar_url: string | undefined
-  const user = String(job.user ?? '')
-  if (user) {
-    try {
-      if (await env.R2.head(`avatars/${user}.jpg`)) {
-        avatar_url = (await r2Presign(env, `avatars/${user}.jpg`, 'GET', 4 * 3600)) ?? undefined
-      }
-    } catch { /* avatar opsiyonel — asla işi düşürmez */ }
-  }
-
-  const input: Job = { ...job, vid, aspect: taktikAspect(job.aspect), put_url }
-  if (avatar_url) input.avatar_url = avatar_url
-  return { ok: true, input }
-}
-
-async function taktikGonder(
-  env: Env, job: Job, rid: string,
-): Promise<{ ok: boolean; status: number; body: string; erteleme?: string }> {
-  if (!env.RUNPOD_ENDPOINT_TAC) return { ok: false, status: 0, body: 'RUNPOD_ENDPOINT_TAC yok', erteleme: 'endpoint-yok' }
-  if (ozelMuzik(job.music)) return { ok: false, status: 0, body: `özel müzik (${job.music})`, erteleme: 'ozel-muzik' }
-  const g = await taktikGirdiHazirla(env, job, rid)
-  if (!g.ok) return g
-
-  const r = await fetch(`https://api.runpod.ai/v2/${env.RUNPOD_ENDPOINT_TAC}/run`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${env.RUNPOD_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ input: g.input }),
-  })
-  return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
-}
-
-async function taktikModalGonder(
-  env: Env, job: Job, rid: string,
-): Promise<{ ok: boolean; status: number; body: string; erteleme?: string }> {
-  if (!env.MODAL_SECRET) return { ok: false, status: 0, body: 'MODAL_SECRET yok', erteleme: 'secret-yok' }
-  const g = await taktikGirdiHazirla(env, job, rid)
-  if (!g.ok) return g
-
-  const input: Job = { ...g.input }
-  // ozelMuzik burada İŞİ DÜŞÜRMEZ — presigned GET üret, yoksa alan konmaz (stok müziğe düşer).
-  const music_url = await muzikPresign(env, job)
-  if (music_url) input.music_url = music_url
-
-  const r = await fetch(MODAL_TAC_RUN, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ secret: env.MODAL_SECRET, input }),
-  })
-  return { ok: r.ok, status: r.status, body: (await r.text()).slice(0, 500) }
 }
 
 /** Kuyruktan gelen işi RunPod sözleşmesine çevirir (movelog-cloud.py:546-566 eşleniği).
@@ -449,7 +273,6 @@ export default {
       const son = await env.KV.get('dispatch:son').catch(() => null)
       return Response.json({
         ok: true, worker: 'movelog-dispatch', ortam: env.ORTAM,
-        taktik: { endpoint: env.RUNPOD_ENDPOINT_TAC ? 'var' : 'yok', presign: env.R2_ENDPOINT ? 'var' : 'yok' },
         son: son && JSON.parse(son),
       })
     }
@@ -503,40 +326,37 @@ export default {
         m.ack()
         continue
       }
-      const taktik = m.body?.mode === 'tactical' || m.body?.tur === 'taktik'
       // 🔴 FİKS 05.09 — GÜNLÜK GPU HARCAMA TAVANI (uçtan uca tarama, "harcama tavanı yok").
       // Öncesi: `grup1.ts` bütçe kapısı YALNIZ kullanıcı-tetikli istekte çalışıyordu ve orada da
       // DAILY_*_CAP=0, flat maliyeti 0.0, admin tamamen muaftı; cron/bekçi yollarında ise
       // `bumpDailyCap` HİÇ çağrılmıyordu. Yani otomatik üretim, retry döngüleri ve bekçiler
       // sınırsızdı. Burası tüm yolların ORTAK darboğazı: her GPU işi bu kapıdan geçer.
       // Tavan KV `gpu-gunluk-limit-usd` ile deploy'suz değiştirilebilir (0 = kapalı).
-      if (!taktik) {
-        const kapi = await butceKapisi(env, m.body, rid)
-        if (!kapi.ok) {
-          // İş KAYBOLMUYOR: gövde park edilir, tavan sıfırlanınca (ertesi gün / ay) yeniden gönderilebilir.
-          const parkSebep = kapi.tur === 'aylik' ? 'butce-aylik' : 'butce-gunluk'
-          await parkEt(env, rid, m.body, parkSebep, { harcanan: kapi.harcanan, limit: kapi.limit })
-          await env.KV.put(`dispatch:butce:${rid}`,
-            JSON.stringify({ t: simdi(), harcanan: kapi.harcanan, limit: kapi.limit, tur: kapi.tur }), { expirationTtl: PARK_TTL })
-          // 🔴 FİKS 05.09: burada `pending_videos` TEMİZLENMİYORDU → kullanıcı SONSUZ "Hazırlanıyor"
-          // görürdü (aynı tuzak 4 satır aşağıda `izsiz` yolu için zaten biliniyordu). Tavan ne
-          // kadar sıkılaşırsa bu yol o kadar sık tetiklenir; kilit açılmadan tavan düşürülemez.
-          // 🔴 FİKS 14.09: oto işte de bütçe mesajını push et — ama kullanıcı başına dönem başına
-          // EN FAZLA 1 KEZ (KV bildirim:butce:{uid}:aylik|gunluk:…). Manuel işte davranış aynı.
-          const jb = (m.body ?? {}) as Record<string, unknown>
-          const sebepTr = kapi.tur === 'aylik'
-            ? 'Bu ayki video payın doldu. Ayın 1\'inde sıfırlanır.'
-            : 'Günlük üretim kapasitesi doldu, yarın tekrar dene.'
-          const push = await butceKullaniciBildir(env, String(jb.user ?? ''), !!jb.oto, kapi.tur)
-          await isiBitir(env, jb as Job, rid, sebepTr, 'butce', push.bildir, push.govde, push.baslik)
-          await bildirimYaz(env,
-            (kapi.tur === 'aylik'
-              ? `💸 Kullanıcının AYLIK GPU bütçesi doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `
-              : `💸 GPU GÜNLÜK harcama tavanı doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `) +
-            `İş park edildi, RunPod'a GÖNDERİLMEDİ: ${rid.slice(0, 40)}`)
-          m.ack()
-          continue
-        }
+      const kapi = await butceKapisi(env, m.body, rid)
+      if (!kapi.ok) {
+        // İş KAYBOLMUYOR: gövde park edilir, tavan sıfırlanınca (ertesi gün / ay) yeniden gönderilebilir.
+        const parkSebep = kapi.tur === 'aylik' ? 'butce-aylik' : 'butce-gunluk'
+        await parkEt(env, rid, m.body, parkSebep, { harcanan: kapi.harcanan, limit: kapi.limit })
+        await env.KV.put(`dispatch:butce:${rid}`,
+          JSON.stringify({ t: simdi(), harcanan: kapi.harcanan, limit: kapi.limit, tur: kapi.tur }), { expirationTtl: PARK_TTL })
+        // 🔴 FİKS 05.09: burada `pending_videos` TEMİZLENMİYORDU → kullanıcı SONSUZ "Hazırlanıyor"
+        // görürdü (aynı tuzak 4 satır aşağıda `izsiz` yolu için zaten biliniyordu). Tavan ne
+        // kadar sıkılaşırsa bu yol o kadar sık tetiklenir; kilit açılmadan tavan düşürülemez.
+        // 🔴 FİKS 14.09: oto işte de bütçe mesajını push et — ama kullanıcı başına dönem başına
+        // EN FAZLA 1 KEZ (KV bildirim:butce:{uid}:aylik|gunluk:…). Manuel işte davranış aynı.
+        const jb = (m.body ?? {}) as Record<string, unknown>
+        const sebepTr = kapi.tur === 'aylik'
+          ? 'Bu ayki video payın doldu. Ayın 1\'inde sıfırlanır.'
+          : 'Günlük üretim kapasitesi doldu, yarın tekrar dene.'
+        const push = await butceKullaniciBildir(env, String(jb.user ?? ''), !!jb.oto, kapi.tur)
+        await isiBitir(env, jb as Job, rid, sebepTr, 'butce', push.bildir, push.govde, push.baslik)
+        await bildirimYaz(env,
+          (kapi.tur === 'aylik'
+            ? `💸 Kullanıcının AYLIK GPU bütçesi doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `
+            : `💸 GPU GÜNLÜK harcama tavanı doldu ($${kapi.harcanan.toFixed(2)}/$${kapi.limit.toFixed(2)}). `) +
+          `İş park edildi, RunPod'a GÖNDERİLMEDİ: ${rid.slice(0, 40)}`)
+        m.ack()
+        continue
       }
       try {
         const is = await isiHazirla(env, m.body)
@@ -547,14 +367,14 @@ export default {
           m.ack()
           continue
         }
-        const motor = await motorSec(env, taktik ? 'taktik' : 'render')
-        let r: { ok: boolean; status: number; body: string; erteleme?: string }
+        const motor = await motorSec(env)
+        let r: { ok: boolean; status: number; body: string }
         switch (motor) {
           case 'modal':
-            r = taktik ? await taktikModalGonder(env, is, rid) : await modalGonder(env, is)
+            r = await modalGonder(env, is)
             break
           case 'runpod':
-            r = taktik ? await taktikGonder(env, is, rid) : await runpodGonder(env, is)
+            r = await runpodGonder(env, is)
             break
           default: {
             const _eksik: never = motor
@@ -562,19 +382,8 @@ export default {
           }
         }
         await env.KV.put('dispatch:son',
-          JSON.stringify({ rid, status: r.status, dal: taktik ? 'taktik' : 'render', motor, t: simdi() }))
+          JSON.stringify({ rid, status: r.status, motor, t: simdi() }))
         if (r.ok) { m.ack(); continue }
-        // Taktik ertelemeleri (yapılandırma eksik / özel müzik / presign yok): retry İŞE YARAMAZ.
-        // İş KAYBOLMASIN -> gövdeyi KV'ye al + ack. Sebep ayrı anahtarda görünür.
-        if (taktik && (r as { erteleme?: string }).erteleme) {
-          const sebep = (r as { erteleme?: string }).erteleme || 'endpoint-yok'
-          await parkEt(env, rid, m.body, sebep, { not: r.body })
-          // UYUMLULUK: eski bekçi `dispatch:taktik:ertelendi` okuyor — yazılmaya devam.
-          await env.KV.put(`dispatch:taktik:ertelendi:${rid}`,
-            JSON.stringify({ t: simdi(), sebep, not: r.body }), { expirationTtl: PARK_TTL })
-          m.ack()
-          continue
-        }
         // 402 = bakiye yok -> retry İSRAF, bekçi/bakiye düzelince yeniden kuyruklanır; kalıcı kaydet
         if (r.status === 402) {
           await parkEt(env, rid, m.body, 'bakiye')

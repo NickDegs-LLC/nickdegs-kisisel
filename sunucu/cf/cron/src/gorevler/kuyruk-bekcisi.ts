@@ -6,11 +6,10 @@
 //   · tüketici (movelog-dispatch) → 'dispatch:golge:{rid}'          (gölge ack izi)
 //                                 → 'dispatch:bekleyen:{rid}'       (PARK: gövde saklandı, retry işe yaramaz)
 //                                 → 'dispatch:park-sebep:{rid}'     {t, sebep, ...}  (14.09 — asıl sebep)
-//                                 → 'dispatch:taktik:ertelendi:{rid}' {sebep}        (uyumluluk yedeği)
 // İKİ ŞERİT:
-//   A) PARK EDİLMİŞ İŞ — engel kalktıysa (taktik endpoint kuruldu / bulut geri açıldı / bütçe dönemi
-//      değişti) yeniden kuyrukla. 3 denemede geçmezse veya engel hiç kalkmayacaksa (özel müzik,
-//      track yok) → failed_videos + kullanıcıya "üretilemedi" push'u (render-failed eşleniği) →
+//   A) PARK EDİLMİŞ İŞ — engel kalktıysa (bulut geri açıldı / bütçe dönemi değişti) yeniden
+//      kuyrukla. 3 denemede geçmezse veya engel hiç kalkmayacaksa (track yok) →
+//      failed_videos + kullanıcıya "üretilemedi" push'u (render-failed eşleniği) →
 //      SONSUZ "Hazırlanıyor" ÖNLENİR.
 //      Bütçe parkı (butce-aylik/gunluk): engel sürerken yeniden kuyruk/pes/push YOK — dispatch
 //      zaten isiBitir ile doğru mesajı yazdı. PES_ET_SAAT bütçe sebeplerine uygulanmaz.
@@ -20,7 +19,7 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { kvJson, kvJsonYaz, kvListe, renderKuyruk, simdi } from '../lib'
-import { trGunu, dalMotoru } from '../../../ortak/src/maliyet'
+import { trGunu, motorOku } from '../../../ortak/src/maliyet'
 import { renderFailed } from '../ic'
 import { bildir, kuru, olayYaz, onar, saglamOlay } from './bekci-ortak'
 
@@ -32,14 +31,13 @@ const TAKILI_DK = 12          // bu yaştan sonra "takıldı" say (dispatch retr
 // 9 dakika ÖNCE gitti. Ağır modlarda eşik render süresinin üstüne çıkarıldı.
 const AGIR_MOD_DK = 45
 const takiliEsikDk = (mode?: string | null): number =>
-  (mode === '3d' || mode === 'tactical' ? AGIR_MOD_DK : TAKILI_DK)
+  (mode === '3d' ? AGIR_MOD_DK : TAKILI_DK)
 const MAX_DENEME = 3          // yeniden kuyruklama üst sınırı
 const PES_ET_SAAT = 6         // bu yaştan sonra kurtarılamayan iş kullanıcıya 'üretilemedi' olur
 const PARK_ONEK = 'dispatch:bekleyen:'
 const IZ_ONEK = 'render:kuyruk:'
 
 const PARK_SEBEP_ONEK = 'dispatch:park-sebep:'
-const ERTELEME_ONEK = 'dispatch:taktik:ertelendi:'
 
 function butceEngeli(sebep: string): boolean {
   return sebep === 'butce-aylik' || sebep === 'butce-gunluk'
@@ -53,13 +51,18 @@ function butceMesajTr(sebep: string): string {
 
 async function parkKayitSil(env: Env, rid: string, parkKey: string): Promise<void> {
   await env.KV.delete(parkKey)
-  await env.KV.delete(`${ERTELEME_ONEK}${rid}`)
+  // 18.09: taktik kalktı ama ESKİ 'dispatch:taktik:ertelendi:*' kayıtları KV'de kalmış olabilir;
+  // yoldaki park'lar temizlenirken onlar da silinsin (silme yoksa no-op, zararsız).
+  await env.KV.delete(`dispatch:taktik:ertelendi:${rid}`)
   await env.KV.delete(`${PARK_SEBEP_ONEK}${rid}`)
 }
 
 /** Engel kendiliğinden kalkabilir mi? (kalkmayacaksa boşuna 3 tur beklemeyiz)
  *  Mevcut sebepler: davranış değişmez. Bütçe sebepleri eklendi. */
 function kurtarilabilir(sebep: string): boolean {
+  // 18.09: 'endpoint-yok' / 'presign-yok' / 'ozel-muzik' taktik hattına aitti; YOLDA KALMIŞ eski
+  // park kayıtları için 'endpoint-yok' ve 'presign-yok' KURTARILABİLİR bırakıldı — aksi hâlde
+  // MAX_DENEME'siz doğrudan 'pes' edilir ve kullanıcıya gereksiz "üretilemedi" push'u gider.
   return sebep === 'endpoint-yok' || sebep === 'bakiye' || sebep === '' || sebep === 'presign-yok'
     || sebep === 'butce-aylik' || sebep === 'butce-gunluk'
     || sebep === 'secret-yok'  // NEDEN: MODAL_SECRET sonradan konabilir; MAX_DENEME zaten var
@@ -69,12 +72,11 @@ function kurtarilabilir(sebep: string): boolean {
 async function engelKalkti(env: Env, sebep: string, t0: number, now: number, mode?: string | null): Promise<boolean> {
   if (sebep === 'butce-gunluk') return t0 > 0 && trGunu(t0) !== trGunu(now)
   if (sebep === 'butce-aylik') return t0 > 0 && trGunu(t0).slice(0, 7) !== trGunu(now).slice(0, 7)
-  if (sebep === 'endpoint-yok') return !!env.RUNPOD_ENDPOINT_TAC
+  if (sebep === 'endpoint-yok') return true   // 18.09: taktik endpoint'i kalktı; 1 deneme hakkı
   if (sebep === 'secret-yok') return true  // NEDEN: sır gelince retry; MAX_DENEME pes eder
   if (sebep === 'bakiye') {
-    const dal: 'render' | 'taktik' = mode === 'tactical' ? 'taktik' : 'render'
-    // NEDEN: Modal 402 üretmez — o dal modal ise park bakiye yüzünden beklemesin.
-    if ((await dalMotoru(env.KV, dal)) === 'modal') return true
+    // NEDEN: Modal 402 üretmez — motor modal ise park bakiye yüzünden beklemesin.
+    if ((await motorOku(env.KV)) === 'modal') return true
     return (await env.KV.get('bulut-kapali')) === null
   }
   if (sebep === '') return (await env.KV.get('bulut-kapali')) === null
@@ -93,7 +95,9 @@ export async function kos(c: GorevCtx): Promise<void> {
     if (!rid) continue
     const govde = await kvJson<Record<string, unknown> | null>(env, k, null)
     const park = await kvJson<{ t?: number; sebep?: string }>(env, `${PARK_SEBEP_ONEK}${rid}`, {})
-    const ert = await kvJson<{ t?: number; sebep?: string }>(env, `${ERTELEME_ONEK}${rid}`, {})
+    // 18.09: taktik kalktı, bu anahtar artık YAZILMIYOR. Ama TTL 7 gün — bu deploy'dan ÖNCE
+    // park edilmiş işlerin sebep/t bilgisi hâlâ burada olabilir; drenaj penceresi boyunca okunur.
+    const ert = await kvJson<{ t?: number; sebep?: string }>(env, `dispatch:taktik:ertelendi:${rid}`, {})
     const sebep = String(park.sebep ?? ert.sebep ?? '')
     // yaş: park-sebep t > erteleme izi > üretici izi > ilk görülme
     const izT = (await kvJson<{ t?: number }>(env, `${IZ_ONEK}${rid}`, {})).t

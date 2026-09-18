@@ -23,7 +23,7 @@
 // 🔴 KURU MOD: RunPod'a hiçbir fetch yok; 'YAPARDIM' kaydı düşer.
 import type { GorevCtx } from '../takvim'
 import { kvJson, kvJsonYaz } from '../lib'
-import { dalMotoru } from '../../../ortak/src/maliyet'
+import { motorOku } from '../../../ortak/src/maliyet'
 import {
   atlandiOlay, bildir, endpointler, kuru, kuruOlay, olayYaz, onar, rpGpuDurum, rpHealth, rpPodBilgi, rpPodSonlandir, rpRest, saglamOlay,
 } from './bekci-ortak'
@@ -31,14 +31,10 @@ import {
 const uyku = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 const BEKCI = 'imaj-surum-bekcisi'
-// Beklenen imajların KURULUM VARSAYILANI (KV'de kayıt yoksa taban olarak GÖRÜLEN değer alınır;
-// bu tablo yalnız taktik hattının bilinen hedefini belgeler — runpod-tactical.conf ile aynı).
-// v6 (2026-09-02, Barış "HALLET ABI"): template egptl6t4pr 31.08'den beri v6 (v2 KARO FİKSİ → v4/v5 statik
-// mozaik sidecar → v6 sidecar passthrough). Taban v2'de kalınca bekçi 3 tur boyunca yanlış
-// `imaj-uyusmuyor` bildirdi; KV `bekci:imaj:beklenen:yvkajd6x7mp1lj` de v6'ya çekildi.
-const BILINEN_HEDEF: Record<string, string> = {
-  'movelog-tactical': 'ghcr.io/nickdegs/movelog-tactical:v6',
-}
+// Beklenen imajların KURULUM VARSAYILANI (KV'de kayıt yoksa taban olarak GÖRÜLEN değer alınır).
+// 18.09: taktik hattı kaldırıldı; tabloda belgelenecek hedef kalmadı. Boş tablo = her endpoint
+// için taban KV'den ya da ilk görülen imajdan alınır (bekçi çalışmaya devam eder).
+const BILINEN_HEDEF: Record<string, string> = {}
 
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, log } = c
@@ -48,8 +44,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   if (kuru(env) || !env.RUNPOD_API_KEY) {
     const neden = kuru(env) ? 'ORTAM=golge' : 'RUNPOD_API_KEY yok'
     for (const e of bilinen) {
-      const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
-      if ((await dalMotoru(env.KV, dal)) === 'modal') {
+      if ((await motorOku(env.KV)) === 'modal') {
         // NEDEN: dal Modal — RunPod imaj/flush planı yok.
         await atlandiOlay(env, BEKCI, `imaj-modal:${e.ad}`,
           'dal modal: imaj kontrolü/flush planı yok', { endpoint: e.ad, id: e.id, neden })
@@ -67,8 +62,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   }
 
   for (const e of bilinen) {
-    const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
-    if ((await dalMotoru(env.KV, dal)) === 'modal') {
+    if ((await motorOku(env.KV)) === 'modal') {
       // NEDEN: dal Modal — podTerminate/flush RunPod slotlarına ait değil.
       log(`${e.ad}: dal modal — podTerminate/flush atlandı`)
       await atlandiOlay(env, BEKCI, `flush-modal:${e.ad}`,

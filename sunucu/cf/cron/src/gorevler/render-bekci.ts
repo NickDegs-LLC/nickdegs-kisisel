@@ -12,7 +12,7 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { bildirimBekleyen, kvJson, kvJsonYaz, simdi } from '../lib'
-import { dalMotoru } from '../../../ortak/src/maliyet'
+import { motorOku } from '../../../ortak/src/maliyet'
 import { atlandiOlay, kuruOlay, olayYaz, saglamOlay } from './bekci-ortak'
 import { SAHIP_ANAHTAR } from './runpod-saglik'
 
@@ -58,7 +58,7 @@ export async function kos(c: GorevCtx): Promise<void> {
   const devredildi = (await env.KV.get(SAHIP_ANAHTAR)) !== null
   const canliRp = !golge && !!env.RUNPOD_API_KEY
   // NEDEN: render dalı Modal iken wmax/bakiye/bulut-kapali/RunPod /health kuyruğu anlamsız.
-  const renderModal = (await dalMotoru(env.KV, 'render')) === 'modal'
+  const renderModal = (await motorOku(env.KV)) === 'modal'
 
   if (renderModal) {
     log('render dalı modal — RunPod wmax/bakiye/bulut-kapali/health kuyruğu atlandı')

@@ -25,8 +25,8 @@ export async function kos(c: GorevCtx): Promise<void> {
     if (!obj) continue
     let req: Record<string, unknown>
     try { req = (await obj.json()) as Record<string, unknown> } catch { log(`bozuk json atlandı: ${o.key}`); continue }
-    // ⚠️ TAKTİK/3D İŞE DOKUNMA (2026-08-05 yarış dersi) — dosya SİLİNMEDEN atlanır
-    if (req.mode === 'tactical' || req.mode === '3d') { log(`atla (${req.mode}): ${o.key}`); continue }
+    // ⚠️ 3D İŞE DOKUNMA (2026-08-05 yarış dersi) — dosya SİLİNMEDEN atlanır
+    if (req.mode === '3d') { log(`atla (${req.mode}): ${o.key}`); continue }
     const rid = String(req.ride_id ?? `${String(req.user ?? 'x')}_${Math.trunc(Number(req.from ?? 0))}`)
     await env.RENDER_Q.send({
       genreq_r2: o.key, user: req.user, ts: req.from,

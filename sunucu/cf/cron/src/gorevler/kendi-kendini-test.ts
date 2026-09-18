@@ -17,7 +17,7 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import { hexRasgele, kvJson, kvJsonYaz } from '../lib'
-import { dalMotoru } from '../../../ortak/src/maliyet'
+import { motorOku } from '../../../ortak/src/maliyet'
 import { bildir, endpointler, kuru, olayYaz, onar, rpHealth, saglamOlay } from './bekci-ortak'
 
 const BEKCI = 'kendi-kendini-test'
@@ -25,7 +25,6 @@ const DURDU_SN = 7200
 const DUMAN_SQL = 'CREATE TABLE IF NOT EXISTS bekci_duman (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)'
 const MODAL_RUN: Record<string, string> = {
   'movelog-render': 'https://daclen10--movelog-render-run.modal.run',
-  'movelog-tactical': 'https://daclen10--movelog-tactical-run.modal.run',
 }
 
 type Ayak = { ad: string; ok: boolean; not: string; ms: number }
@@ -95,12 +94,11 @@ export async function kos(c: GorevCtx): Promise<void> {
   const { bilinen, eksik } = endpointler(env)
   const hepsi = [...bilinen, ...eksik]
   for (const e of hepsi) {
-    const dal: 'render' | 'taktik' = e.ad === 'movelog-tactical' ? 'taktik' : 'render'
-    const motor = await dalMotoru(env.KV, dal)
+    const motor = await motorOku(env.KV)
     if (motor === 'modal') {
-      // NEDEN: dal Modal — RunPod health kırık sayılmaz, runpod-saglik tetiklenmez.
+      // NEDEN: motor Modal — RunPod health kırık sayılmaz, runpod-saglik tetiklenmez.
       ayaklar.push({ ad: `runpod-health:${e.ad}`, ok: true, ms: 0,
-        not: 'atlandı (dal modal)' })
+        not: 'atlandı (motor modal)' })
       const uc = MODAL_RUN[e.ad]
       if (!uc) continue
       if (kuru(env)) {
@@ -144,8 +142,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     const j = (await r.json()) as Record<string, unknown>
     if (j.ok !== true) throw new Error('ok!=true')
-    const tak = (j.taktik ?? {}) as Record<string, unknown>
-    return `ok (taktik endpoint=${tak.endpoint ?? '?'} presign=${tak.presign ?? '?'})`
+    return `ok (worker=${j.worker ?? '?'} ortam=${j.ortam ?? '?'})`
   }))
 
   // ── 7) görev canlılığı ──

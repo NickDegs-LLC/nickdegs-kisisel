@@ -157,17 +157,15 @@ export async function atlandiOlay(
 
 export type Endpoint = { ad: string; id: string; wmaxVars: number }
 
-/** Bu kurulumun bildiği RunPod endpoint'leri. Taktik id'si boşsa (kota 20/20) 'yok' olarak raporlanır.
+/** Bu kurulumun bildiği RunPod endpoint'leri.
  *
  * ⚠️ wmaxVars = wmax=0 SESSİZ ARIZASINDA geri açılacak DEĞER (KV'de kayıt yoksa taban).
- *    KOTA DEVRİ 2026-08-31 (Barış onayı): movelog-render 15 -> 12, boşalan 3 worker taktiğe geçti.
- *    Buradaki 15 kalsaydı bekçi ilk wmax=0 arızasında render'ı 15'e geri açar, toplam 23/20 olur ve
- *    kota devri SESSİZCE geri alınırdı. Toplam her zaman 12 + 3 + (flux 2 · upscale 1 · sp-llm 1 ·
- *    whisper 1) = 20 olmalı. */
+ *    12 değeri 2026-08-31 kota devrinden kalma (movelog-render 15 -> 12; boşalan 3 worker
+ *    taktiğe geçmişti). 18.09: taktik hattı kaldırıldı — o 3 worker kotası RunPod tarafında
+ *    HÂLÂ movelog-tactical'da duruyor, endpoint kapatılırsa buradaki 12 tekrar gözden geçirilmeli. */
 export function endpointler(env: Env): { bilinen: Endpoint[]; eksik: Endpoint[] } {
   const hepsi: Endpoint[] = [
     { ad: 'movelog-render', id: env.RUNPOD_ENDPOINT_ID ?? '', wmaxVars: 12 },
-    { ad: 'movelog-tactical', id: env.RUNPOD_ENDPOINT_TAC ?? '', wmaxVars: 3 },
   ]
   return { bilinen: hepsi.filter((e) => !!e.id), eksik: hepsi.filter((e) => !e.id) }
 }
