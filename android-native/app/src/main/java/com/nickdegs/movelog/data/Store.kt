@@ -659,13 +659,6 @@ class Store(app: Application) : AndroidViewModel(app) {
                 r.optDouble("lon", 0.0), r.optDouble("spd", 0.0), r.optInt("age", 0), r.optInt("course", 0))
         }
     }
-    suspend fun shareRoute(rideId: String, toUser: String? = null, toClub: String? = null): Boolean {
-        val b = JSONObject().put("ride_id", rideId)
-        if (toUser != null) b.put("to_user", toUser)
-        if (toClub != null) b.put("to_club", toClub)
-        val d = req("/api/routes/share", "POST", b) ?: return false
-        return JSONObject(d).optBoolean("ok", false)
-    }
 
 
     // ---- parse yardımcıları ----

@@ -1131,19 +1131,6 @@ enum DavetLink {
         }
         _ = try? await req("/api/live/beacon", method: "POST", body: body)
     }
-    // 1.8: ROTA PAYLAŞIMI
-    @discardableResult
-    func shareRoute(_ rideId: String, toUser: String? = nil, toClub: String? = nil) async -> Bool {
-        var b: [String:Any] = ["ride_id": rideId]
-        if let u = toUser { b["to_user"] = u }
-        if let c = toClub { b["to_club"] = c }
-        guard let d = try? await req("/api/routes/share", method: "POST", body: b),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
-        return (o["ok"] as? Bool) ?? false
-    }
-    func sharedRoutes() async -> [SharedRoute] {
-        (try? dec().decode([String:[SharedRoute]].self, from: await req("/api/routes/shared"))["routes"]) ?? []
-    }
     // Şimdiye kadarki günü hemen özetle (on-demand)
     @discardableResult
     func summaryNow(premium: Bool) async -> Bool {
