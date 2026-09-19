@@ -42,7 +42,6 @@ private val gold = Color(0xFFFFD60A)
 private sealed class Route {
     object Hub : Route()
     object Friends : Route()
-    object Shared : Route()
     object Username : Route()
     object IdeaBox : Route()
     object GroupVideo : Route()
@@ -54,7 +53,6 @@ fun CommunityScreen(store: Store) {
     when (val r = route) {
         is Route.Hub -> HubView(store) { route = it }
         is Route.Friends -> FriendsView(store) { route = Route.Hub }
-        is Route.Shared -> SharedView(store) { route = Route.Hub }
         is Route.Username -> UsernameView(store) { route = Route.Hub }
         is Route.IdeaBox -> IdeaBoxView(store) { route = Route.Hub }
         is Route.GroupVideo -> GroupVideoView(store) { route = Route.Hub }
@@ -84,7 +82,6 @@ private data class HubItem(val icon: ImageVector, val title: String, val desc: S
 private fun HubView(store: Store, nav: (Route) -> Unit) {
     val hubItems = listOf(
         HubItem(Icons.Filled.Group, L("Arkadaşlar", "Friends"), L("Bul, ekle, istekleri yönet", "Find, add, manage requests"), Route.Friends),
-        HubItem(Icons.Filled.Route, L("Paylaşılan Rotalar", "Shared Routes"), L("Sana gönderilen rotalar", "Routes shared with you"), Route.Shared),
         HubItem(Icons.Filled.AlternateEmail, L("Kullanıcı Adı", "Username"), L("@adını belirle, seni bulsunlar", "Set your @handle so friends find you"), Route.Username),
         HubItem(Icons.Filled.Movie, L("Grup Videosu", "Group Video"), L("Ortak sürüş videosu tercihi", "Shared ride video preference"), Route.GroupVideo),
         HubItem(Icons.Filled.Lightbulb, L("Fikir Kutusu", "Idea Box"), L("Fikrin doğrudan geliştiriciye", "Your idea straight to the developer"), Route.IdeaBox),
@@ -198,32 +195,6 @@ private fun FriendsView(store: Store, onBack: () -> Unit) {
 private fun AvatarDot(emoji: String, name: String) {
     Box(Modifier.size(38.dp).background(Brand.accent.copy(alpha = 0.25f), CircleShape), contentAlignment = Alignment.Center) {
         Text(if (emoji.isNotEmpty()) emoji else name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
-    }
-}
-
-// ---------------- PAYLAŞILAN ROTALAR ----------------
-@Composable
-private fun SharedView(store: Store, onBack: () -> Unit) {
-    var routes by remember { mutableStateOf<List<SharedRoute>>(emptyList()) }
-    LaunchedEffect(Unit) { routes = store.sharedRoutes() }
-    Column(Modifier.fillMaxSize().background(Brand.bg)) {
-        Bar(L("Paylaşılan Rotalar", "Shared Routes"), onBack)
-        if (routes.isEmpty()) Text(L("Gelen rota yok.", "No shared routes."), color = sub, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
-        LazyColumn(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(routes) { r ->
-                Card {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Route, null, tint = Brand.accent)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(L("${r.fromName}'den rota", "Route from ${r.fromName}"), color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text((r.km?.let { "%.1f km".format(it) } ?: "") + (r.date?.let { " · $it" } ?: ""), color = sub, fontSize = 12.sp)
-                        }
-                        if (r.ridden) Icon(Icons.Filled.CheckCircle, null, tint = Color(0xFF34C759))
-                    }
-                }
-            }
-        }
     }
 }
 

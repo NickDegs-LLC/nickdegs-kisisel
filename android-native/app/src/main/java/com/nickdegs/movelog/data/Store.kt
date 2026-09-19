@@ -85,7 +85,6 @@ class Store(app: Application) : AndroidViewModel(app) {
     // Paket hakları (1.61). Yalnız GÖSTERİM içindir; gerçek kapı sunucuda (/api/rides/generate 402 döner).
     var videoHak by mutableStateOf(0)
     val canGenerate: Boolean get() = premium || videoHak > 0
-    var hrShareLocal by mutableStateOf(prefs.getBoolean("nd_hrshare", true))   // "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK)
     var loginError by mutableStateOf(false)
 
     // Açılış kapısı: token yoksa giriş; varsa SUNUCUDA doğrulanana kadar CHECKING.
@@ -617,11 +616,6 @@ class Store(app: Application) : AndroidViewModel(app) {
         val o = JSONObject(d)
         return if (o.isNull("hr")) null else o.optInt("hr")
     }
-    // GİZLİLİK: "Nabzımı arkadaşlarım görebilsin" (varsayılan AÇIK).
-    suspend fun hrShare(on: Boolean): Boolean {
-        hrShareLocal = on; prefs.edit().putBoolean("nd_hrshare", on).apply()
-        return req("/api/live/hr-share", "POST", JSONObject().put("on", on)) != null
-    }
     /** dönen: (url, token, peerName) */
     // CANLI TAKİP BEACON: app açılınca batarya+konum bildir -> arkadaş kayıt yapmasa bile son durum taze
     suspend fun sendBeacon() {
@@ -671,17 +665,6 @@ class Store(app: Application) : AndroidViewModel(app) {
         if (toClub != null) b.put("to_club", toClub)
         val d = req("/api/routes/share", "POST", b) ?: return false
         return JSONObject(d).optBoolean("ok", false)
-    }
-    suspend fun sharedRoutes(): List<SharedRoute> {
-        val d = req("/api/routes/shared") ?: return emptyList()
-        val arr = JSONObject(d).optJSONArray("routes") ?: JSONArray()
-        return (0 until arr.length()).map {
-            val o = arr.getJSONObject(it)
-            SharedRoute(o.optString("id", ""), o.optString("from_name", ""), o.optString("from", ""),
-                if (o.has("km") && !o.isNull("km")) o.optDouble("km") else null,
-                if (o.isNull("date")) null else o.optString("date", null),
-                o.optInt("ts", 0), o.optString("ride_id", ""), o.optBoolean("ridden", false))
-        }
     }
 
 

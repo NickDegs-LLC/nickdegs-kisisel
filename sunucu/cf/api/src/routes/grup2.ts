@@ -162,7 +162,7 @@ async function gunlukKm(db: D1Database, uid: string, t0: number): Promise<number
 // ---------------------------------------------------------------------------
 type Profil = {
   username: string; name: string; handle: string; avatar: unknown
-  premium: boolean; sv_off: boolean
+  premium: boolean; ultra: boolean; sv_off: boolean
   video_hak: number; sokak_hediye: false
   admin: boolean
 }
@@ -198,6 +198,10 @@ async function profilleri(env: Env, uids: string[]): Promise<Map<string, Profil>
       premium: !!r?.premium,
       sv_off: svOff,
       video_hak: Math.trunc(Number(r?.video_hak ?? 0)) || 0,
+      // ⚠️ SABİT false — 19.09'da GERİ KONDU. iOS `Profile` struct'ında `ultra` ZORUNLU alan;
+      // Swift'in sentezlediği Codable çözücüsü VARSAYILAN DEĞERİ KULLANMAZ, eksik anahtarda
+      // fırlatır -> profilin TAMAMI çözülemez (kullanıcı adı + avatar kaybolur, 1.67 dahil).
+      ultra: false,
       sokak_hediye: false,                            // kalıcı kural (main.py:1405)
       admin: !!r?.admin,
     })

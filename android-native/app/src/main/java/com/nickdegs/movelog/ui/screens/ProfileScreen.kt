@@ -44,7 +44,6 @@ fun ProfileScreen(store: Store) {
     var friends by remember { mutableStateOf<List<Convo>>(emptyList()) }
     var boostMsg by remember { mutableStateOf<String?>(null) }
     var sens by remember { mutableStateOf(store.sensitivity) }
-    var hrShare by remember { mutableStateOf(store.hrShareLocal) }
     var sumOn by remember { mutableStateOf(true) }
     var sumHour by remember { mutableStateOf(21) }
     var sumVid by remember { mutableStateOf(com.nickdegs.movelog.data.SummaryVid()) }
@@ -262,23 +261,6 @@ fun ProfileScreen(store: Store) {
                             Icon(Icons.Filled.ChevronRight, null, tint = Color(0xFF9AA4B2))
                         }
                     }
-                }
-            }
-        }
-
-        // Nabız paylaşımı (anlık nabız peek gizliliği)
-        item {
-            Surface(color = Brand.card, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(L("Nabzımı arkadaşlarım görebilsin", "Let friends see my heart rate"),
-                            color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text(L("Canlı takipte arkadaşın anlık nabzını görebilir (saat gerekir). Kapatırsan gizlenir.",
-                               "Friends can see your live heart rate on live-track (watch required). Turn off to hide."),
-                            color = Color(0xFF9AA4B2), fontSize = 12.sp)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Switch(checked = hrShare, onCheckedChange = { hrShare = it; scope.launch { store.hrShare(it) } })
                 }
             }
         }

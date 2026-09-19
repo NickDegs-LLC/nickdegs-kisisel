@@ -30,7 +30,6 @@ struct ProfileView: View {
     @AppStorage("nd_scheme") var scheme = "dark"
     @AppStorage("nd_premium") var premium = false
     @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
-    @AppStorage("nd_hrshare") var hrShare = true   // "Nabzımı arkadaşlarım görebilsin" (anlık nabız peek gizliliği)
     @State private var prof: Profile?
     @State private var friends: [Friend] = []
     @State private var incoming: [Friend] = []
@@ -50,7 +49,6 @@ struct ProfileView: View {
     @State private var showSumVid = false
     @State private var sumQueued = false
     @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
-    @State private var showSharedRoutes = false
     // 05.09 — arkadaşlıktan çıkarma + davet akışı (ikisi de sunucuda vardı, istemcide yoktu)
     @State private var silinecekArkadas: Friend? = nil
     @State private var davetKod = ""
@@ -411,32 +409,6 @@ struct ProfileView: View {
                         }.padding(14).glassPanel(18)
                         .onTapGesture { if !premium { showPaywall = true } }
 
-                        // 18.09: güvenlik + rozet + wrapped kaldırıldı; gelen rotalar KALDI.
-                        section(L("Sürüş dünyan","Your riding world"))
-                        VStack(spacing: 0) {
-                            Button { showSharedRoutes = true } label: {
-                                HStack(spacing: 12) {
-                                    Text("🗺️").font(.system(size: 22))
-                                    Text(L("Sana gelen rotalar","Routes shared with you")).font(.system(size: 15, weight: .semibold))
-                                    Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                                }.padding(.vertical, 10).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                            Divider()
-                            Toggle(isOn: Binding(
-                                get: { hrShare },
-                                set: { v in hrShare = v; Task { await store.hrShare(v) } })) {
-                                HStack(spacing: 12) {
-                                    Text("❤️").font(.system(size: 22))
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(L("Nabzımı arkadaşlarım görebilsin","Let friends see my heart rate")).font(.system(size: 15, weight: .semibold))
-                                        Text(L("Canlı takipte arkadaşın anlık nabzını görebilir (saat gerekir). Kapatırsan gizlenir.",
-                                               "Friends can see your live heart rate on live-track (watch required). Turn off to hide."))
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }.tint(Brand.accent).padding(.vertical, 8)
-                        }.padding(.horizontal, 14).padding(.vertical, 4).glassPanel(18)
-
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
                             Text(L("Açık","Light")).tag("light")
@@ -495,7 +467,6 @@ struct ProfileView: View {
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
-        .sheet(isPresented: $showSharedRoutes) { SharedRoutesSheet() }
         .confirmationDialog(
             L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
             isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),

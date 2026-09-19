@@ -165,6 +165,10 @@ async function profilYukle(env: Env, uid: string): Promise<{ satir: ProfilSatir 
     premium: !!satir?.premium,
     sv_off: svOff,
     video_hak: Math.trunc(Number(satir?.video_hak ?? 0)) || 0,
+    // ⚠️ SABİT false — 19.09'da GERİ KONDU. iOS `Profile` struct'ında `ultra` ZORUNLU alan;
+    // Swift'in sentezlediği Codable çözücüsü VARSAYILAN DEĞERİ KULLANMAZ, eksik anahtarda
+    // fırlatır -> profilin TAMAMI çözülemez (kullanıcı adı + avatar kaybolur, 1.67 dahil).
+    ultra: false,
     sokak_hediye: false,   // SABİT false — eski sürüm uyumluluğu, alan KALDIRILAMAZ (main.py:1400-1405)
     admin: !!satir?.admin,
   }

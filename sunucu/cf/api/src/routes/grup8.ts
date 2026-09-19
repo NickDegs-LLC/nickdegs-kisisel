@@ -95,7 +95,7 @@ type ProfilKaynak = {
 
 type ProfilOut = {
   username: string; name: string; handle: string; avatar: Record<string, unknown>
-  premium: boolean; sv_off: boolean; video_hak: number
+  premium: boolean; ultra: boolean; sv_off: boolean; video_hak: number
   sokak_hediye: false; admin: boolean
   status?: 'friend' | 'outgoing' | 'incoming' | 'none'
 }
@@ -114,6 +114,10 @@ function profileOf(uid: string, r: ProfilKaynak | undefined, svOff: boolean): Pr
     premium: !!r?.premium,
     sv_off: svOff,
     video_hak: Math.trunc(Number(r?.video_hak ?? 0) || 0),
+    // ⚠️ SABİT false — 19.09'da GERİ KONDU. iOS `Profile` struct'ında `ultra` ZORUNLU alan;
+    // Swift'in sentezlediği Codable çözücüsü VARSAYILAN DEĞERİ KULLANMAZ, eksik anahtarda
+    // fırlatır -> profilin TAMAMI çözülemez (kullanıcı adı + avatar kaybolur, 1.67 dahil).
+    ultra: false,
     sokak_hediye: false,                              // 2026-08-28: her zaman False (main.py:1404)
     admin,
   }

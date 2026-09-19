@@ -255,6 +255,10 @@ function profilOf(b: ProfilBaglam, u: string) {
     premium: !!p?.premium,
     sv_off: b.svOff,
     video_hak: int0(p?.video_hak ?? 0),
+    // ⚠️ SABİT false — 19.09'da GERİ KONDU. iOS `Profile` struct'ında `ultra` ZORUNLU alan;
+    // Swift'in sentezlediği Codable çözücüsü VARSAYILAN DEĞERİ KULLANMAZ, eksik anahtarda
+    // fırlatır -> profilin TAMAMI çözülemez (kullanıcı adı + avatar kaybolur, 1.67 dahil).
+    ultra: false,
     sokak_hediye: false,                             // TUZAK: HER ZAMAN false (eski sürüm uyumu, main.py:1405)
     admin: !!p?.admin,
   }
