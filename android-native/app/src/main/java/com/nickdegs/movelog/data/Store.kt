@@ -13,6 +13,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nickdegs.movelog.KonumKuyrugu
 import com.nickdegs.movelog.util.saveVideoToGallery
 
 const val API = "https://kisisel-api.nickdegs.com"
@@ -151,7 +152,21 @@ class Store(app: Application) : AndroidViewModel(app) {
     fun persistPremium(v: Boolean) {
         premium = v; prefs.edit().putBoolean("nd_premium", v).apply()
     }
-    fun signOut() { persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN }
+    // ÇIKIŞTA KUYRUĞU DA TEMİZLE. Gerekçe: bekleyen noktalar ÇIKAN hesabın gezisine aittir.
+    // Farklı hesapla girilirse KonumKuyrugu'ndaki K_SAHIP kapısı nasılsa siliyordu, ama SİLME ANI
+    // "bir sonraki boşaltma turu" idi; çıkışta ANINDA silmek doğrusu (kullanıcı çıktım dediyse
+    // verisi cihazda beklemesin). Aynı hesap tekrar girerse zaten akacaktı — o davranışı kaybetmek
+    // kabul edilen takas: çıkış = bu cihazdaki oturumu bitirme niyeti.
+    // 🔴 temizleArkaPlan: dosya silme G/Ç'si UI iş parçacığında YAPILMAZ (bu çağrı bir düğmeden gelir).
+    fun signOut() {
+        persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN
+        // 🔴 KUYRUK BURADA SİLİNMEZ (22.09'da eklenip aynı gün geri alındı). Sebebi:
+        // "çıkış yap / tekrar gir" kullanıcının bir şey ters gidince ilk denediği şeydir ve tam da
+        // şebekesizken denenir. Silseydik 8 saatlik yolculuğun 20.000 noktası UYARISIZ, ONAYSIZ
+        // giderdi — yani veri kaybını önlemek için yazılmış koda YENİ bir kayıp yolu eklemiş olurduk.
+        // Hesap DEĞİŞİMİ zaten K_SAHIP kapısında yakalanıyor (başka cihaz kimliği = kuyruk silinir),
+        // aynı hesap tekrar girerse noktalar akar. Silme YALNIZ deleteAccount()'ta kalır.
+    }
 
     var davetSonuc by mutableStateOf<String?>(null)
     var davetYenile by mutableStateOf(0)
@@ -319,7 +334,12 @@ class Store(app: Application) : AndroidViewModel(app) {
     // Hesabı kalıcı sil (App Store/Play uyumu) -> token temizle, girişe dön
     suspend fun deleteAccount(): Boolean {
         val ok = req("/api/account", "DELETE") != null
-        if (ok) { persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN }
+        if (ok) {
+            persistToken(""); prefs.edit().remove("nd_token").apply(); auth = AuthState.NEED_LOGIN
+            // Hesap SİLİNDİ: bekleyen noktaların gideceği yer kalmadı, cihazda tutmak anlamsız
+            // (üstelik hesap silme taahhüdüyle çelişir). Kuyruğu da sil.
+            KonumKuyrugu.temizleArkaPlan(getApplication<Application>())
+        }
         return ok
     }
 

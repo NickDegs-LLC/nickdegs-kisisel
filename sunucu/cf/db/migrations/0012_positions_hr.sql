@@ -1,0 +1,35 @@
+-- 0012: positions.hr — Apple Watch nabzi (22.09 "otobus vakasi" turunun son eksigi).
+--
+-- NEDEN: Saat (Watch/Sources/WorkoutManager.swift) her konum noktasina olculen nabzi `&hr=` olarak
+-- ekleyip ingest'e gonderiyor. gps worker'i bu parametreyi HIC OKUMUYORDU ve positions'ta karsiligi
+-- YOKTU -> nabiz sessizce dusuyordu. Kullanici bilekten surus kaydediyor, saat nabzi dogru olcuyor,
+-- rota videosunda ve gunluk ozette nabiz HIC gorunmuyordu.
+--
+-- BU BIR UNUTKANLIK DEGIL, ERTELEMEYDI: cron/src/gorevler/activity-detect.ts:6 aynen soyle diyor:
+--   "Nabiz: positions tablosunda hr kolonu YOK (SEMA-NOTLARI karari) -> hr her yerde null
+--    (kaynakta da telefon noktalarinda null'du; WATCH HATTI FAZ SONRASI)."
+-- Yani telefon noktalarinda nabiz zaten yoktu ve saat hatti sonraya birakilmisti. Bu migration
+-- o ertelemeyi kapatir.
+--
+-- 🔴 UYGULAMA SIRASI — BOZULURSA CANLI KIRILIR:
+--   1) ONCE bu migration (kolon eklenir; ESKI gps worker'i hr'ye hic dokunmadigi icin etkilenmez)
+--   2) SONRA gps worker dagitimi (hr yazmaya baslar)
+-- Ters sirada: worker olmayan kolona INSERT eder -> her nokta 500 doner -> istemci kuyrugu
+-- bosaltamaz -> TUM kullanicilarda konum akisi DURUR. (Yeni istemci 500'de noktayi kuyrukta
+-- tutuyor, yani veri kaybolmaz ama akis tikanir.)
+--
+-- MALIYET: SQLite/D1'de nullable kolon eklemek O(1) METADATA islemidir — tablo yeniden yazilmaz.
+-- 134.102 satirlik tabloda bile anlik. Varsayilan deger VERILMEZ (eski satirlar NULL kalir:
+-- "o noktada nabiz olculmedi" dogru anlami tasir; 0 yaziimak "nabiz sifir" gibi okunurdu).
+--
+-- 🟢 DURUM: 22.09'da CANLI movelog-db'ye ELLE UYGULANDI (kolon var, 134.102 satir korundu).
+--    Bu dosya artik SEMA KAYDIDIR — yeniden calistirilmasi GEREKMEZ ve HATA VERIR (asagi bak).
+--    `main`'e merge [skip ci] ile yapildi, yani cf-deploy bunu otomatik uygulamayi DENEMEDI.
+--    Elle tetikleyecek olan (workflow_dispatch -f d1_dosya=...) ONCE kolonun yoklugunu dogrulamali.
+--
+-- ⚠️ IDEMPOTENS: SQLite `ADD COLUMN IF NOT EXISTS` DESTEKLEMEZ. Ikinci kosumda
+-- "duplicate column name: hr" hatasi verir. Uygulayan taraf ONCE pragma ile kontrol etmeli:
+--   SELECT COUNT(*) FROM pragma_table_info('positions') WHERE name='hr';
+-- Sonuc 1 ise bu dosya ATLANMALI. (Elle uygulamada bu kontrol yapildi.)
+
+ALTER TABLE positions ADD COLUMN hr INTEGER;

@@ -459,6 +459,9 @@ enum DavetLink {
     /// karışıyordu. Ayrıca hak/abonelik anahtarları kalıyordu. Cihaz TERCİHLERİ (font/tema) kalır.
     func logout() {
         Tracker.shared.stop()
+        // 🔴 ZORUNLU: tampon kalırsa yukarıdaki 05.09 fiksinin kapattığı hata sınıfı GERİ GELİR —
+        // eski hesabın birikmiş noktaları yeni oturumda eski tracker'a akar, rotalar karışır.
+        GpsKuyruk.shared.temizle()
         let d = UserDefaults.standard
         for k in ["nd_token", "nd_dev", "nd_ingest", "nd_tracking", "nd_premium", "nd_ultra",
                   "nd_gift", "nd_video_hak", "nd_sokak_hak", "nd_free_tactical", "nd_apns"] {

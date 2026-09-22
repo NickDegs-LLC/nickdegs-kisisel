@@ -16,6 +16,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var preciseOff = false       // TEŞHİS: "Tam Konum" kapalı (reducedAccuracy) — nokta ~km hatalı gelir
     @Published var authAlways = true        // TEŞHİS: konum izni "Her Zaman" mı
     @Published var lastError: String?       // TEŞHİS: son gönderim/konum hatası
+    @Published var bekleyenNokta = 0        // TEŞHİS: çevrimdışı kuyrukta gönderilmeyi bekleyen nokta
     private var lastAcc: Double = -1        // son fix doğruluğu (telemetri)
     private var lastDebug: Date = .distantPast
     // BEKLEME MODU (pil + durum çubuğu oku): hareketsizlikte tam GPS kapatılır -> mavi ok KAYBOLUR;
@@ -87,11 +88,11 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
     // Sunucu bekçisinin sessiz push'u: "cihaz yer değiştirmiş görünüyor, araçtaysan uyan".
-    func pokeWake() { tryMotionWake() }
+    func pokeWake() { GpsKuyruk.shared.bosalt(); tryMotionWake() }
     // 1.8 CANLI TAKİP: arkadaş izlemeye başlayınca sunucu live:1 sessiz push atar ->
     // hareket şartı ARANMADAN konum akışı başlar (izleyen taze veri görsün). 8 dk sonra
     // v6'nın normal boşta-kapanma mantığı devralır (hareket yoksa kendiliğinden söner).
-    func liveWake() { beginUpdates() }
+    func liveWake() { GpsKuyruk.shared.bosalt(); beginUpdates() }
     private var deviceId: String?
     private var ingestURL: String?
     private var lastSent: CLLocation?       // ışınlanma filtresi için son gönderilen konum
@@ -148,7 +149,17 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Takip daha önce açıksa (relaunch / arka plandan konumla uyandırma) hemen sürdür.
         // Bug fix: eskiden start() yalnızca toggle'a elle dokununca çağrılırdı; app yeniden
         // açılınca 'active' true görünür ama GPS basmazdı -> otomatik algılama hiç tetiklenmezdi.
+        // 22.09 OFFLINE TAMPONU: kuyruk -> Tracker geri bildirimi. Profil'deki MEVCUT teşhis
+        // alanları (son konum / gönderilen sayısı / hata) hiç değişmeden çalışmaya devam etsin.
+        // 🔴 Bağ TEK YÖNLÜ: GpsKuyruk'un Tracker'a referansı YOK -> static-let init kilidi kilitlenmez.
+        GpsKuyruk.shared.durumBildirKur { [weak self] bekleyen, teslim, hata in
+            guard let self else { return }
+            self.bekleyenNokta = bekleyen
+            if teslim > 0 { self.lastSentAt = Date(); self.sentCount += teslim; self.lastError = nil }
+            else if let hata { self.lastError = hata }
+        }
         if active, deviceId != nil { beginUpdates() }
+        GpsKuyruk.shared.bosalt()   // relaunch: takip kapalı olsa da birikmiş kuyruk boşalsın
     }
 
     // CLLocationManager'ı fiilen başlatan tek nokta (hem canlı hem significant-change).
@@ -173,6 +184,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         idleAnchor = nil; progAnchor = nil; lastMovementAt = Date()
         startMotionLive()   // v6: araçta olduğumuz sürece bekleme sayacını hareket işlemcisi tazeler
         startHeartbeat()
+        GpsKuyruk.shared.bosalt()
     }
 
     // BEKLEME: tam GPS + diri-oturum kapat (mavi ok kaybolur); significant-change açık kalır (hareketle uyanır).
@@ -212,6 +224,9 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
                 guard let self else { return }
                 self.maybeDebugReport()   // telemetri konumdan BAĞIMSIZ aksın (konum hiç gelmiyorsa da görelim)
                 self.syncDiag(self.mgr)
+                // 🔴 guard'ın ÜSTÜNDE olmak ZORUNDA: bekleme modunda da kuyruk boşalsın.
+                // Uzun yolculukta duraklarda tam bu olur (idle -> aşağıdaki guard erken döner).
+                GpsKuyruk.shared.bosalt()
                 self.maybeEnterIdle()     // hareketsizlikte beklemeye geç (mavi ok kaybolsun)
                 guard !self.idleMode else { return }
                 guard let loc = self.lastLoc, loc.timestamp.timeIntervalSinceNow > -(iv*2) else { return }
@@ -224,6 +239,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         self.deviceId = deviceId; self.ingestURL = url
         UserDefaults.standard.set(deviceId, forKey: "nd_dev")
         UserDefaults.standard.set(url, forKey: "nd_ingest")
+        GpsKuyruk.shared.bosalt()   // kimlik YENİ geldi: kimliksizken birikenler hemen gitsin
     }
 
     func start(deviceId: String, url: String) {
@@ -235,6 +251,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     // BGTask/arka plan uyanışında takibi dirilt: açıksa CLLocationManager'ı yeniden kur (idempotent).
     // v6: BEKLEMEDEYSEK tam uyandırma YOK (ikon boşuna yanmasın) — yalnız araçtaysak uyan.
     func revive() {
+        GpsKuyruk.shared.bosalt()   // 🔴 guard'ın ÜSTÜNDE: takip kapalıyken de kuyruk boşalsın
         guard active, deviceId != nil else { return }
         if idleMode { tryMotionWake() } else { beginUpdates() }
     }
@@ -248,6 +265,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         // sistemde ok yakacak hiçbir kayıt kalmasın. beginUpdates() sürüşte yeniden true yapar; SLC/motion/sessiz-push
         // uyanması bu bayrağa bağlı DEĞİL.
         mgr.allowsBackgroundLocationUpdates = false
+        GpsKuyruk.shared.bosalt()   // 🔴 tamponu SİLMEZ: elde kalanı göndermeyi dener (silme YALNIZ logout)
         set(false)
     }
 
@@ -378,49 +396,46 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         URLSession.shared.dataTask(with: req).resume()
     }
 
-    // Konumu Traccar'a gönder. force=false: ışınlanma filtresi uygula (mesafe-tabanlı normal akış).
-    // force=true: 15 sn heartbeat (duruyor olsa bile düzenli nokta -> boşluk yok).
+    // Konumu ingest'e gönder. force=false: ışınlanma filtresi uygula (mesafe-tabanlı normal akış).
+    // force=true: heartbeat (duruyor olsa bile düzenli nokta -> boşluk yok).
+    //
+    // 🔴 22.09 OFFLINE TAMPONU: burası eskiden ateşle-unut POST'tu; istek patlayınca nokta
+    // HİÇBİR YERE yazılmıyordu (yalnız lastError). 20.09 otobüs vakasında şebeke olmadığı için
+    // TEK BİR NOKTA bile ulaşmadı, rota kalıcı kayboldu. Artık WRITE-AHEAD: nokta ÖNCE diske
+    // (GpsKuyruk), SONRA gönderilir; kuyruktan düşürme YALNIZ 2xx alınınca. Çevrimiçiyken
+    // kuyrukta tek kayıt olur -> tek POST, davranış bugünküyle birebir aynı.
     private func sendLoc(_ loc: CLLocation, force: Bool) {
-        guard let id = deviceId, let base = ingestURL, var comps = URLComponents(string: base) else { return }
+        // IŞINLANMA FİLTRESİ — kuyruktan ÖNCE: çöp nokta diske de yazılmasın (sözleşme değişmedi).
         if !force, let prev = lastSent {
             let d = loc.distance(from: prev)
             let dt = loc.timestamp.timeIntervalSince(prev.timestamp)
             if dt > 0, d / dt > 70 { return }        // >252 km/h imkânsız = ışınlanma, at
         }
+        // Artık "son KABUL EDİLEN nokta" (kuyruğa girdi). Filtrenin referansı eskisi gibi ilerler;
+        // kuyruktan oynatırken filtre TEKRAR uygulanmaz (noktalar zaten süzülmüş halde).
         lastSent = loc
-        comps.queryItems = [
-            .init(name: "id", value: id),
-            .init(name: "lat", value: String(loc.coordinate.latitude)),
-            .init(name: "lon", value: String(loc.coordinate.longitude)),
-            .init(name: "timestamp", value: String(Int(loc.timestamp.timeIntervalSince1970))),
-            .init(name: "speed", value: String(max(0, loc.speed) * 1.94384)),  // m/s -> knot
-            .init(name: "altitude", value: String(loc.altitude)),
-            .init(name: "accuracy", value: String(loc.horizontalAccuracy)),
-            .init(name: "bearing", value: String(max(0, loc.course))),
-        ]
-        // 1.8 CANLI TAKİP: batarya + şarj durumu (arkadaş panelinde 🔋 gösterilir)
+
+        // Batarya ANA İŞ PARÇACIĞINDA okunur (UIDevice sözleşmesi) — sendLoc zaten main'de çalışır
+        // (mgr Tracker.init'te main'de kuruldu; heartbeat Timer'ı da main run loop'unda).
         UIDevice.current.isBatteryMonitoringEnabled = true
         let bl = UIDevice.current.batteryLevel
-        if bl >= 0 { comps.queryItems?.append(.init(name: "batt", value: String(Int(bl * 100)))) }
-        if UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full {
-            comps.queryItems?.append(.init(name: "charge", value: "true"))
-        }
-        guard let url = comps.url else { return }
-        var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 20
-        // Arka plana geçerken gönderim yarıda kalmasın: kısa bir background-task koruması.
-        var bgTask = UIBackgroundTaskIdentifier.invalid
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "nd-gps-send") {
-            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
-        }
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
-            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-                DispatchQueue.main.async { self?.lastSentAt = Date(); self?.sentCount += 1; self?.lastError = nil }
-            } else if let err {
-                DispatchQueue.main.async { self?.lastError = "gönderim: " + err.localizedDescription }
-            } else if let http = resp as? HTTPURLResponse {
-                DispatchQueue.main.async { self?.lastError = "gönderim: HTTP \(http.statusCode)" }
-            }
-            if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid }
-        }.resume()
+        let sarj = UIDevice.current.batteryState == .charging
+                || UIDevice.current.batteryState == .full
+
+        let n = NdNokta(ts: loc.timestamp.timeIntervalSince1970,
+                        lat: loc.coordinate.latitude,
+                        lon: loc.coordinate.longitude,
+                        spd: Float(max(0, loc.speed) * 1.94384),   // m/s -> knot (sözleşme aynı)
+                        alt: Float(loc.altitude),
+                        acc: Float(loc.horizontalAccuracy),
+                        brg: Float(max(0, loc.course)),
+                        batt: bl >= 0 ? Int8(max(0, min(100, Int(bl * 100)))) : -1,
+                        sarj: sarj)
+
+        // 🔴 `guard let id = deviceId, let base = ingestURL ...` KALDIRILDI: kimlik yoksa nokta iz
+        // bırakmadan düşüyordu, lastError bile yazılmıyordu. Kimlik artık BOŞALTMA anında okunuyor
+        // -> "ilk kurulumdan beri ağ yok" senaryosunda da noktalar birikir.
+        GpsKuyruk.shared.ekle(n)      // önce diske
+        GpsKuyruk.shared.bosalt()     // sonra gönder (ağ yoksa şebeke gelince otomatik)
     }
 }

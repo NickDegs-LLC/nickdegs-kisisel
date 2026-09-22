@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         PhoneWatchLink.shared.activate()   // Apple Watch'a kimlik/cihaz bilgisi köprüsü
         // BG refresh: iOS periyodik uyanışında takibi dirilt + bir sonrakini planla ("asla durmasın" emniyeti).
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.refreshId, using: nil) { task in
+            GpsKuyruk.shared.bosalt()   // 🔴 revive()'dan ÖNCE: revive() `guard active` ile erken dönüyor
             Tracker.shared.revive()
             Self.scheduleRefresh()
             task.setTaskCompleted(success: true)
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Arka plana her geçişte yeniden planla (talep tazelenir) + takip diri kalsın.
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                                                object: nil, queue: .main) { _ in
+            GpsKuyruk.shared.bosalt()
             Tracker.shared.revive()
             Self.scheduleRefresh()
         }
@@ -55,6 +57,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     // app arka planda dürtülür, hareket işlemcisine bakar, araçtaysak takip uyanır (kullanıcı hiçbir şey görmez).
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // 22.09: sessiz push çevrimdışıyken APNs'te SAKLANIR, ağ dönünce teslim edilir -> sunucunun
+        // uyandırma bekçisi bedava "bağlantı geldi" tetiğine dönüşür: birikmiş kuyruk hemen boşalsın.
+        GpsKuyruk.shared.bosalt()
         // 18.09: "ptt" sessiz push dalı kaldırıldı (telsiz çıktı). Eski sunucudan gelirse yok sayılır.
         if (userInfo["live"] as? Int) == 1 { Tracker.shared.liveWake() }   // 1.8: canlı izleme
         else if (userInfo["hrpeek"] as? Int) == 1 { PhoneWatchLink.shared.startHRPeek() }  // anlık nabız: saati kısa ölçüme uyandır

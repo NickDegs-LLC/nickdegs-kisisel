@@ -292,6 +292,23 @@ struct ProfileView: View {
                             }
                         }
 
+                        // ÇEVRİMDIŞI KUYRUK (22.09 otobüs vakası): şebeke yokken noktalar telefonda
+                        // birikir, bağlantı gelince otomatik gönderilir. 🔴 BİLEREK `if tracker.active`
+                        // bloğunun DIŞINDA: takip kapatılsa bile tamponda bekleyen veri var olabilir
+                        // (stop() tamponu silmez) ve kullanıcı onu görebilmeli.
+                        if tracker.bekleyenNokta > 0 {
+                            HStack(spacing: 10) {
+                                Image(systemName: "arrow.up.circle.dotted").foregroundStyle(.orange)
+                                // 🔴 Sayı L()'in DIŞINDA: L() çeviriyi İNGİLİZCE metne göre arar,
+                                // interpolasyonlu dize sözlükte ASLA eşleşmez (10 dil İngilizce'ye düşerdi).
+                                Text("\(tracker.bekleyenNokta) "
+                                     + L("nokta çevrimdışı bekliyor — bağlantı gelince otomatik gönderilir",
+                                         "points waiting offline — they'll upload automatically when you reconnect"))
+                                    .font(.caption2).foregroundStyle(.orange)
+                                Spacer()
+                            }.padding(.horizontal, 14).padding(.vertical, 10).glassPanel(14)
+                        }
+
                         // ALGILAMA HASSASİYETİ: Traccar sinyal aralığını kullanıcı dostu gizler.
                         // Free=basit (kilitli); premium Hassas/Dengeli/Basit seçer.
                         section(L("Algılama hassasiyeti","Detection sensitivity"))

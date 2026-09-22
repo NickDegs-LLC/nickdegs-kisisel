@@ -1,15 +1,27 @@
 # 2026-09-14: android-native.yml'nin YAYINSIZ kopyası. main'e android-native push'u Play PRODUCTION'a
 # (status: completed) yüklediği için dal değişiklikleri onaysız burada DERLENEREK doğrulanır.
 # upload-artifact ve Play yükleme adımları kasıtlı olarak YOK. main'de koşmaz.
+#
+# 🔴 22.09 — PUSH TETİĞİ GEÇİCİ OLARAK KAPATILDI (iş akışı SUSTURULDU, SİLİNMEDİ).
+# NEDEN: 17.09'dan beri GitHub Actions kotası dolu. Bu iş akışı HER dal push'unda ~4 saniyede,
+# tek satır GÜNLÜK BİLE OLUŞMADAN düşüyor: derleme doğrulaması SAĞLAMIYOR, yalnız her push'ta
+# Barış'a "başarısız koşu" bildirimi gönderiyordu — sinyal değil gürültü.
+# DOĞRULAMA ŞU AN NEREDE: Android sunucuda elle derleniyor.
+#   ⚠️ `--rerun-tasks` olmadan alınan "yeşil" SAHTEDİR (gradle önbelleği eski çıktıyı döndürür).
+# GERİ AÇMA (kota dönünce): aşağıdaki `push:` bloğunun yorum işaretlerini kaldır + bu notu sil.
+#   Başka değişiklik GEREKMEZ — adımların hiçbirine dokunulmadı.
+# ŞİMDİ NASIL KOŞTURULUR: Actions sekmesinden elle (`workflow_dispatch` açık) ya da
+#   `gh workflow run android-derle.yml --ref <dal>`.
+# ⚠️ android-native.yml (asıl Play PRODUCTION yayını) ve ios-native.yml'ye DOKUNULMADI.
 name: Android Native — yalnız derleme (yayın YOK)
 
 on:
   workflow_dispatch:
-  push:
-    branches-ignore: [main]
-    paths:
-      - 'android-native/**'
-      - '.github/workflows/android-derle.yml'
+  # push:
+  #   branches-ignore: [main]
+  #   paths:
+  #     - 'android-native/**'
+  #     - '.github/workflows/android-derle.yml'
 
 permissions:
   contents: read

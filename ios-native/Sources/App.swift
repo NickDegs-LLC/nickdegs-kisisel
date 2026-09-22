@@ -180,6 +180,7 @@ struct RootView: View {
             }
         }
         .task {
+            GpsKuyruk.shared.bosalt()   // açılış: çevrimdışı birikmiş konumlar varsa hemen gitsin
             if store.me.isEmpty { let p = await store.profile(); store.me = p?.username ?? "" }
             await store.syncPremium()                 // premium'u açılışta cihaza yansıt (kilitler kalksın)
             await store.registerPush()
@@ -213,7 +214,10 @@ struct RootView: View {
             #endif
         }
         .onChange(of: scenePhase) { _, ph in
-            if ph == .active { Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() } }   // her öne gelişte: 1 günlük pencereye yetiş
+            if ph == .active {
+                GpsKuyruk.shared.bosalt()   // 🔴 bu satır Tracker'a HİÇ dokunmuyordu: öne gelince kuyruk boşalsın
+                Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() }   // her öne gelişte: 1 günlük pencereye yetiş
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in
             Task { await store.registerPush() }

@@ -171,7 +171,32 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          node <<'NODE'
+          # 🔴 22.09: bu adim `node: command not found` (exit 127) ile dustu. Runner adiminin
+          # kabugu /opt/homebrew/bin'i GORMUYOR (Xcode'un kendi alt sureci goruyor, o yaniltmasin).
+          # `continue-on-error: true` oldugu icin kosu YESIL gorundu ama TestFlight ic dagitimi
+          # HIC yapilmadi — yani "success" etiketi bu adim icin kanit DEGIL.
+          # Ayni tuzak Mac'e SSH ile baglanirken de var (non-interactive kabuk).
+          # 22.09 ikinci tur: /opt/homebrew/bin EKLEMEK YETMEDI — node orada da YOK. Tahminle bir
+          # yol daha yazmak ayni hatayi tekrarlamak olurdu; adim artik KENDISI ARAR ve BULDUGUNU
+          # LOGLAR, bulamazsa NEREYE BAKTIGINI yazar (bir sonraki kosu gercek yolu soyler).
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          NODE_BIN="$(command -v node || true)"
+          if [ -z "$NODE_BIN" ]; then
+            for c in "$RUNNER_TOOL_CACHE"/node/*/*/bin/node \
+                     "$HOME"/actions-runner/externals/node*/bin/node \
+                     /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do
+              [ -x "$c" ] && { NODE_BIN="$c"; break; }
+            done
+          fi
+          if [ -z "$NODE_BIN" ]; then
+            echo "🔴 node BULUNAMADI — ic dagitim atlandi (derleme/yukleme ETKILENMEDI)."
+            echo "   Bakilan yerler: PATH, \$RUNNER_TOOL_CACHE/node/*/*/bin, ~/actions-runner/externals/node*/bin,"
+            echo "   /opt/homebrew/bin, /usr/local/bin, /usr/bin"
+            echo "   Mac'te gercek yeri: 'which -a node' / 'ls ~/actions-runner/externals'"
+            exit 0
+          fi
+          echo "✅ node bulundu: $NODE_BIN"
+          "$NODE_BIN" <<'NODE'
           const crypto = require("crypto");
           const fs = require("fs");
           const https = require("https");

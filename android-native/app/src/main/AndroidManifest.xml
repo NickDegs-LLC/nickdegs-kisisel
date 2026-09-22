@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Ağ durumu: TrackingService ağ geri geldiği an kuyruğu boşaltmak için
+         registerDefaultNetworkCallback kullanıyor. İzin UYGULAMANIN KENDİ manifest'inde
+         AÇIKÇA olmalı — eskiden yalnız firebase-messaging'in manifest'inden birleşiyordu,
+         yani bağımlılık değişirse çevrimdışı tampon sessizce körleşirdi. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Kuyruk boşaltma işinin YENİDEN BAŞLATMAYI da aşması için: JobInfo.setPersisted(true)
+         bu izin OLMADAN IllegalArgumentException atar. Şebekesiz yolculukta biriken noktalar
+         telefon kapanıp açılsa bile diskte duruyor; iş de onlarla birlikte hayatta kalsın. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- ACCESS_BACKGROUND_LOCATION KALDIRILDI: rota kaydı foreground service ile çalışıyor,
@@ -50,6 +59,14 @@
             android:name=".TrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- Çevrimdışı konum kuyruğunun SİSTEM TETİĞİ (JobScheduler; WorkManager DEĞİL, yeni
+             bağımlılık yok). Uygulama kapalı + takip kapalı + ağ yokken bile noktalar diskte
+             bekler; ağ geri gelince sistem bu servisi uyandırır ve kuyruk akar.
+             android:permission=BIND_JOB_SERVICE ZORUNLU: yoksa sistem işi hiç çalıştırmaz. -->
+        <service
+            android:name=".KuyrukIsi"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- FCM push bildirimleri (iOS APNs karşılığı) -->
         <service
             android:name=".MoveLogMessaging"

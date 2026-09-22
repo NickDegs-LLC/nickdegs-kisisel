@@ -1,0 +1,57 @@
+-- 🔴🔴 UYGULAMA. BU DOSYA BİLEREK migrations/ DIZINININ DISINDA TUTULUYOR.
+--
+-- NEDEN DIZIN DISI: .github/workflows/cf-deploy.yml (satir 5) "bu push'ta EKLENEN
+-- db/migrations/*.sql dosyalari dagitimdan ONCE movelog-db'ye uygulanir" diyor. Dosya
+-- migrations/ icinde kalsaydi bu dal main'e girdigi an sema OTOMATIK degisirdi.
+--
+-- NEDEN ONERILMIYOR (22.09 olcumu, canli D1):
+--   positions toplam satir      : 134.102
+--   benzersiz (device, ts)      : 134.102  -> MUKERRER HIC OLUSMAMIS
+-- Yani benzersiz indeksin cozecegi bir sorun YOK. Buna karsilik GERCEK bir risk var:
+-- sunucu ts'i TAM SANIYEYE yuvarliyor (gps/src/index.ts parseInt) ve "hassas" modda
+-- (distanceFilter 5 m) otoyolda ayni saniyeye IKI GERCEK fix dusebilir -> benzersiz
+-- indeks ikincisini SESSIZCE yutar. Mukerrerin zararsiz oldugu ayrica olculdu:
+-- segStats mesafeyi haversine ile topluyor, ayni koordinatin katkisi 0; hiz filtresi
+-- (v > 1) ikizi eliyor. Ilac hastaliktan agir.
+--
+-- ILERIDE GEREKIRSE: once istemci tarafinda ts'i saniyeye yuvarlamayi birak (ms hassasiyet
+-- tasi), SONRA bu indeksi dusun. `insert or ignore` worker'da zaten duruyor ve kisit
+-- yokken duz insert gibi davraniyor, yani kod hazir.
+-- Karar: Baris, 22.09 — "onerini yapabilirsin" -> UYGULANMADI.
+
+-- 0012: positions (device, ts) BENZERSIZ + ingest tarafinda INSERT OR IGNORE (22.09 "otobus vakasi").
+--
+-- NEDEN: 22.09'da gps worker'inin 200 sozlesmesi degisti. Eskiden D1 yazimi ctx.waitUntil ile
+-- BEKLENMIYOR, hatasi YUTULUYORDU; artik yazim beklenir ve patlarsa 500 doner. Istemci kuyrugu
+-- (ios-native/Sources/GpsKuyruk.swift) "yalniz 2xx'te kuyruktan dus" sozlesmesiyle calistigi icin
+-- RETRY ARTIK NORMAL YOL. Yanitini kaybeden her nokta (satir D1'e YAZILDI ama 500/timeout donuldu)
+-- ikinci kez gonderilir ve tabloda PK/UNIQUE olmadigi icin IKINCI KEZ insert edilirdi.
+-- Hicbir katmanda dedup yoktu: ne istemcide, ne worker'da, ne semada.
+-- SONUC: mukerrer nokta -> segStats mesafeyi cift sayar -> rides.km sisik, hiz/ivme istatistikleri
+-- bozuk, 3B render'a cift nokta gider.
+--
+-- AYNI SANIYEDE IKI GERCEK FIX OLUR MU (0001'deki "PK YOK" notunun gerekcesi)? Olcum: HAYIR.
+-- Istemci GpsKuyruk.ekle() `if n.ts == sonKuyruklananTs { return }` ile ayni saniyeyi zaten
+-- kuyruga almiyor (1 Hz ornekleme). Yani benzersiz indeks istemci sozlesmesinin BIREBIR
+-- karsiligidir; kaybedilen "veri" yalnizca retry kopyasidir.
+--
+-- ⚠️ SIRA ONEMLI: benzersiz indeks MEVCUT cift satir varsa OLUSMAZ. Once dedup DELETE, sonra
+-- indeks. Ikisi de idempotent (ikinci kosum: DELETE 0 satir, indeks IF NOT EXISTS).
+-- ⚠️ Bu DELETE en yuksek satir sayili tabloyu tarar; tek seferlik, bakim penceresinde uygulanmali.
+
+-- 1) Mukerrerleri temizle: her (device, ts) icin EN ESKI satir (MIN(rowid)) kalir.
+--    Kalan satir ILK yazilandir; retry kopyasi ayni degerleri tasir, dolayisiyla veri kaybi yok.
+DELETE FROM positions
+ WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY device, ts);
+
+-- 2) Bundan sonrasini sema garanti eder (worker tarafi: INSERT OR IGNORE -> retry sessizce yutulur,
+--    istemci 200 alir ve noktayi kuyrugundan duserir).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_positions_dev_ts ON positions(device, ts);
+
+-- 3) idx_positions_dev_ts ARTIK BIREBIR KOPYA: ayni kolonlar, ayni sira. Iki indeks = en yuksek
+--    yazma hacimli tabloda her INSERT'te cift indeks guncellemesi (0002_positions.sql bu tuzagi
+--    zaten yaziyor). Sorgu planlari degismez: (device, ts) erisimini uq_ indeksi aynen karsilar.
+--    DROP en sonda: (1) veya (2) patlarsa buraya hic gelinmez, tablo indekssiz kalmaz.
+--    NOT: db/SEMA-NOTLARI.md hala idx_positions_dev_ts diyor — o dosya bu turun kapsami disindaydi,
+--    dagitimdan sonra guncellenmeli.
+DROP INDEX IF EXISTS idx_positions_dev_ts;
