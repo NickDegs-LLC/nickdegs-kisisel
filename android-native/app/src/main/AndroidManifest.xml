@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Ağ durumu: TrackingService ağ geri geldiği an kuyruğu boşaltmak için
+         registerDefaultNetworkCallback kullanıyor. İzin UYGULAMANIN KENDİ manifest'inde
+         AÇIKÇA olmalı — eskiden yalnız firebase-messaging'in manifest'inden birleşiyordu,
+         yani bağımlılık değişirse çevrimdışı tampon sessizce körleşirdi. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- ACCESS_BACKGROUND_LOCATION KALDIRILDI: rota kaydı foreground service ile çalışıyor,

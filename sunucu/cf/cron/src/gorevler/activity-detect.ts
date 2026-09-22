@@ -8,11 +8,20 @@
 import type { GorevCtx } from '../takvim'
 import type { Env } from '../env'
 import {
-  hav, hhmm, jsonParse, kvJson, kvJsonYaz, pushBekleyen, bildirimBekleyen, renderKuyruk,
-  simdi, trGun, trGunAralik, trSaat, kvListe, ProfilRow, PROFIL_KOLON,
+  hav, jsonParse, kvJson, kvJsonYaz, pushBekleyen, bildirimBekleyen, renderKuyruk,
+  simdi, kvListe, ProfilRow, PROFIL_KOLON,
 } from '../lib'
 import { registerRide, renderDone } from '../ic'
 import { izSuz } from '../../../ortak/src/izsuzgec'
+// 🔴 TR günü ORTAK kaynaktan (22.09): geç gün hattının İKİ ucu (gps worker'ı + bu görev) artık
+// aynı tanımı okuyor. cron/src/lib.ts'te birebir aynı kopyalar DURUYOR (öteki görevler kullanıyor,
+// bu tur onların kapsamı dışıydı). Bu dosya tamamını ortak modülden alır: yalnız trGun'u ortaktan,
+// trGunAralik'ı lib'den almak TR_OFSET bir gün değişirse dosyayı kendi içinde çelişkiye düşürürdü.
+import { hhmm, trGun, trGunAralik, trSaat } from '../../../ortak/src/zaman'
+import {
+  GERIGUN_ONEK, GERIGUN_TTL_SN, gerigunIslendiAnahtar, gerigunCoz,
+} from '../../../ortak/src/gecgun'
+import type { GeriGunIsaret, GeriGunIslendi } from '../../../ortak/src/gecgun'
 
 // moto-config.json (2026-08-30 ölçümü) — değerler koda sabitlendi; KV 'moto-config' varsa üzerine yazar
 const CFG = {
@@ -30,6 +39,48 @@ const CFG = {
 const OTO_MIN_KM_VARSAYILAN = 2.0
 const FREN_HER = 4        // free kullanıcı bildirim freni (Barış 2026-08-12)
 const FREN_MIN_GUN = 3
+
+// ---------- GEÇ GELEN GÜN (22.09 "otobüs vakası") ----------
+// VAKA: 20.09'da şebekesiz uzun otobüs yolculuğunda oto-takip AÇIKTI, tek nokta ulaşmadı.
+// İstemci tarafı artık noktayı diske yazıp ağ dönünce gönderiyor (GpsKuyruk). Sunucu tarafındaki
+// EŞ HATA: bu görev YALNIZ bugünün TR gününü tarıyor (kos: trGun(c.now) → trGunAralik → positions).
+// Tampon TR gece yarısından SONRA boşalırsa noktalar positions'a YAZILIR ama hiçbir cron turu o
+// günü segmentlemez → gezi de otonom video da OLUŞMAZ. gps worker'ı geç gelen her (cihaz, gün)
+// için KV'ye SU SEVİYESİ işareti bırakıyor (ortak/src/gecgun.ts), burası o günleri kuyruğa alır.
+//
+// 🔴 İŞARET ARTIK SİLİNMİYOR — `gerigun-islendi:` SEVİYESİ İLERLİYOR. Eski model (işareti iş
+// bitince sil) otobüs vakasını ÇÖZMÜYORDU: cron dakikada bir koşuyor, ilk tur ~400 noktayı işleyip
+// anahtarı siliyor, sonraki noktalar için gps bir daha işaret yazmıyordu → 1440 noktanın çoğu
+// positions'a yazılıp gezi ÜRETİLMİYORDU. Şimdi cron yalnız `işaret.t > işlendi.sv` çiftlerini
+// işler; her yeni nokta seviyeyi ileri taşıdığı için gün, boşalma bitene kadar yeniden işlenir.
+const GERIGUN_MAX_YAS = 7 * 86400   // bundan eski geç gün işlenmez (iki anahtar da düşer)
+const GERIGUN_MAX_DENEME = 5        // üst üste bu kadar tur patlarsa seviye işlenmiş sayılır + bildirim
+//
+// 🔴 YERLEŞME (settle) PENCERESİ — KIRPIK GEZİ ÖNLEYİCİ.
+// Aşağıdaki `openTrip` kıyası `now - sonNoktaTs < STOP_SEC` olduğu için geç günde YAPISAL olarak
+// false: gün çoktan bitmiştir. Yani tampon HÂLÂ boşalırken koşan tur, günü "bitmiş" sayıp
+// segmentleri anında kapatıyor ve KIRPIK gezi üretiyordu (1440 noktalık yolculuktan 150 noktayla
+// 5 km) — sonra gelen noktalar o geziyi TAMAMLAMIYORDU. Çözüm: geç günü ancak cihaz SUSTUKTAN
+// sonra işle. İşaretin yazma anı (su seviyesi) bu pencere kadar eskimediyse tur ATLANIR.
+// ÖLÇÜYE DAYALI DEĞER: istemcinin kendi geri çekilme tablosu [5, 15, 60, 300] sn (GpsKuyruk.bitir),
+// yani iki boşaltma turu arası EN KÖTÜ 300 sn olabilir. 300 sn'lik pencere tam o sınıra oturur ve
+// ağ takılan bir boşaltmanın ortasında günü işleyebilirdi; gap_minutes'in yarısı (450 sn) hem
+// istemci tavanının üstünde hem GAP_SEC'in (15 dk, segment ayıran boşluk) altında kalır.
+const GERIGUN_YERLESME_SN = (CFG.gap_minutes * 60) / 2
+// kvListe cursor'lu: tavan yalnız tur başına iş miktarını sınırlar. 40 ÇOK DÜŞÜKTÜ — anahtarlar
+// artık silinmediği (30 gün TTL ile durduğu) ve sözlüksel sıralandığı için tek bir cihazın eski
+// günleri listeyi doldurup YENİ geç günü turun dışında bırakabilirdi.
+const GERIGUN_LISTE_TAVAN = 500
+// İşlenmiş bir çift bu kadar süredir yeni nokta almadıysa iki anahtar da düşer (liste şişmesin).
+// Silmek güvenli: gerçekten yeni bir nokta gelirse gps işareti TAZE seviyeyle yeniden yazar.
+const GERIGUN_TEMIZLIK_SN = 86400
+// Geç günde saat kapısına takılan ÖZET PUSH'u (veri değil, yalnız bildirim — aşağıya bak).
+const GECOZET_PUSH_ONEK = 'gecozet-push:'
+const GECOZET_PUSH_TTL = 2 * 86400
+// Otonom video: geç gün için en fazla kaç gezi (kullanıcı + geç gün başına) buluta gider.
+// KV `gerigun-video-tavan` ile deploy'suz ayarlanır; 0/geçersiz = geç günde video YOK.
+const GEC_VIDEO_TAVAN_VARSAYILAN = 1
+const GEC_VIDEO_MAX_GUN = 2         // 2 günden eski gün: gezi yazılır, otomatik video YOK
 
 const TYPES: Record<string, [string, string]> = {
   walk: ['Yürüyüş', '🚶'], run: ['Koşu', '🏃'], bike: ['Bisiklet', '🚴'], moto: ['Motor', '🏍️'], car: ['Araba', '🚗'],
@@ -89,6 +140,147 @@ async function otoMinKm(env: Env): Promise<number> {
     const n = v === null ? NaN : parseFloat(v)
     return Number.isFinite(n) && n >= 0 ? n : OTO_MIN_KM_VARSAYILAN
   } catch { return OTO_MIN_KM_VARSAYILAN }
+}
+
+/**
+ * GEÇ GÜN OTONOM VİDEO KAPISI — KARAR + GEREKÇE (22.09).
+ *
+ * SORU: geç gelen gün işlenirken otonom video ÜRETİLMELİ mi?
+ * ÖLÇÜLEN DURUM: otonom (`oto: true`) iş DAILY_AUTO_CAP'e (api grup1.ts:69, 3/gün) TAKILMAZ —
+ * o tavan yalnız kullanıcının kendi bastığı /api/rides/generate yolunda çalışır. Geç günün
+ * videosu dispatch'teki iki kapıdan geçer: `gpu-gunluk-limit-usd` (günlük $ tavanı) ve
+ * kullanıcının AYLIK bütçesi (dispatch/src/index.ts:116 `j?.oto && uid` → aylikButce).
+ * Yani geç gün otomatik olarak aylık bütçeden yiyor.
+ *
+ * KARAR (güvenli taraf): GEZİ HER ZAMAN OLUŞUR (registerRide bedava — vakanın asıl derdi bu),
+ * VİDEO ise kısıtlı:
+ *   · 2 günden eski gün → video YOK (kullanıcı o rotayı çoktan unuttu, sürpriz masraf olur),
+ *   · kullanıcı + geç gün başına en fazla GEC_VIDEO_TAVAN_VARSAYILAN (1) gezi,
+ *   · mevcut kapıların HEPSİ yerinde kalır (premium · minKm · videos/pending_videos · bütçe).
+ * NEDEN TAVAN ŞART: tek bir tampon boşalması SAATLERCE nokta + birden çok geç gün getirebilir;
+ * tavansız hâlde bir yolculuk, kullanıcının aylık payını tek gecede bitirir ve gerçekten
+ * istediği videoyu üretemez hâle gelir. Aynı gezinin retry'ı yeni hak TÜKETMEZ (aşağıda).
+ * Kullanıcı isterse videoyu uygulamadan kendisi üretebilir — o yol bu kapıya girmez.
+ */
+async function gecVideoHakki(
+  env: Env, uid: string, gun: string, vst: number, gunYasi: number, log: (s: string) => void,
+): Promise<boolean> {
+  if (gunYasi > GEC_VIDEO_MAX_GUN) {
+    log(`  geç gün ${gun} (${gunYasi} gün önce): otomatik video YOK, gezi yazıldı`)
+    return false
+  }
+  const ham = await env.KV.get('gerigun-video-tavan')
+  const tavan = ham === null ? GEC_VIDEO_TAVAN_VARSAYILAN : parseInt(ham, 10)
+  if (!Number.isFinite(tavan) || tavan <= 0) {
+    log(`  geç gün ${gun}: otomatik video KAPALI (KV gerigun-video-tavan=${ham})`)
+    return false
+  }
+  const anahtar = `gerigunvid:${uid}:${gun}`
+  const st = await kvJson<{ ids: number[] }>(env, anahtar, { ids: [] })
+  const ids = Array.isArray(st.ids) ? st.ids : []
+  if (ids.includes(vst)) return true          // aynı gezinin retry'ı: yeni hak tüketmez
+  if (ids.length >= tavan) {
+    log(`  geç gün ${gun}: otomatik video tavanı doldu (${ids.length}/${tavan})`)
+    return false
+  }
+  ids.push(vst)
+  await kvJsonYaz(env, anahtar, { ids }, 7 * 86400)
+  return true
+}
+
+/**
+ * DOĞRUDAN KV yazımı — hata LOGLANIR.
+ * 🔴 NEDEN kvJsonYaz DEĞİL: o yardımcı `catch { }` ile TÜM hataları yutar ("kuyruk yazımı asla
+ * görevi düşürmez"). Geç gün emniyetleri (deneme sayacı + işlenen seviye) oraya yazıldığında
+ * "sonsuz tur yok" güvencesi SESSİZCE devre dışı kalıyordu: sayaç hiç artmaz, aynı çift her
+ * dakika yeniden denenirdi. Buradaki yazım da görevi düşürmez ama hatayı GÖRÜNÜR yapar.
+ */
+async function kvYazLogla(c: GorevCtx, anahtar: string, deger: unknown, ttlSn: number): Promise<boolean> {
+  try {
+    await c.env.KV.put(anahtar, JSON.stringify(deger), { expirationTtl: Math.max(60, ttlSn) })
+    return true
+  } catch (e) {
+    c.log(`KV yazılamadı (${anahtar}): ${String(e).slice(0, 140)}`)
+    return false
+  }
+}
+
+/** Verilen anahtarları düşürür (silinemeyen anahtar sonraki turda yeniden denenir). */
+async function kvSil(c: GorevCtx, ...anahtarlar: string[]): Promise<void> {
+  for (const a of anahtarlar) {
+    try { await c.env.KV.delete(a) } catch { /* sonraki tur yeniden dener */ }
+  }
+}
+
+/**
+ * Geç gün turunun sonucunu `gerigun-islendi:` seviyesine yazar.
+ *  · BAŞARI → seviye işlenmiş sayılır, hata sayacı sıfırlanır. İŞARET SİLİNMEZ: boşalma sürerken
+ *    gelen her yeni nokta seviyeyi ileri taşır ve gün yeniden işlenir (vakanın çözümü budur).
+ *  · HATA   → sayaç artar, seviye GÜNCELLENMEZ → sonraki tur aynı işi yeniden dener.
+ *  · GERIGUN_MAX_DENEME → seviye "işlendi" yazılır + Barış'a bildirim: sonsuz tur yok. Gün büsbütün
+ *    kaybolmaz; daha yüksek bir seviye (yeni nokta) gelirse yeniden kuyruğa girer.
+ */
+async function gerigunSonuc(
+  c: GorevCtx, dev: string, gun: string, seviye: number, onceki: GeriGunIslendi, ok: boolean,
+): Promise<void> {
+  const anahtar = gerigunIslendiAnahtar(dev, gun)
+  if (ok) {
+    const yeni: GeriGunIslendi = { sv: seviye, hata: 0, t: c.now }
+    await kvYazLogla(c, anahtar, yeni, GERIGUN_TTL_SN)
+    return
+  }
+  const n = (Number(onceki.hata) || 0) + 1
+  if (n >= GERIGUN_MAX_DENEME) {
+    const pes: GeriGunIslendi = { sv: seviye, hata: 0, t: c.now }
+    await kvYazLogla(c, anahtar, pes, GERIGUN_TTL_SN)
+    await bildirimBekleyen(c.env,
+      `⚠️ Geç gelen gün ${GERIGUN_MAX_DENEME} turdur işlenemedi, seviye işlenmiş sayıldı: ${dev} ${gun}`,
+      'activity-detect')
+    c.log(`gerigun düştü (${GERIGUN_MAX_DENEME} deneme): ${dev} ${gun}`)
+    return
+  }
+  const sayac: GeriGunIslendi = { sv: Number(onceki.sv) || 0, hata: n, t: c.now }
+  await kvYazLogla(c, anahtar, sayac, GERIGUN_TTL_SN)
+  c.log(`gerigun hata ${n}/${GERIGUN_MAX_DENEME}: ${dev} ${gun} (sonraki tur yeniden denenecek)`)
+}
+
+/** Geç günde saat kapısında bekleyen özet push kaydı (VERİ değil, yalnız bildirim). */
+type GecOzetPush = { uid: string; gun: string; saat: number; baslik: string; govde: string; t: number }
+
+/**
+ * Saat kapısına takılmış geç gün özet push'larını uygun saatte gönderir.
+ * 🔴 kos()'un EN BAŞINDA çağrılır: "bugün aktif cihaz yok" erken dönüşünün ARKASINDA kalsaydı
+ * hareketsiz bir günde push hiç gitmezdi.
+ */
+async function gecOzetPushGonder(c: GorevCtx): Promise<void> {
+  for (const k of await kvListe(c.env, GECOZET_PUSH_ONEK, 200)) {
+    // 🔴 BAŞARISIZ OKUMAYI BOZUK KAYITTAN AYIR. kvJson hatayı YUTUYOR (lib.ts:52
+    // `catch { return dflt }`), yani geçici bir KV arızası ile gerçekten bozuk gövde aynı
+    // görünüyordu ve ikisinde de anahtar SİLİNİYORDU -> tek bir okuma hatası bekleyen özet
+    // bildirimini kalıcı olarak düşürürdü. Artık ham değeri okuyup ayırıyoruz: anahtar
+    // GERÇEKTEN yoksa (ya da gövde bozuksa) sil; okuma patlamışsa DOKUNMA, sonraki tur dener.
+    let ham: string | null
+    try {
+      ham = await c.env.KV.get(k)
+    } catch (e) {
+      c.log(`geç gün özet push'u okunamadı, sonraki tura bırakıldı (${k}): ${String(e).slice(0, 120)}`)
+      continue
+    }
+    const r = ham === null ? null : jsonParse<GecOzetPush | null>(ham, null)
+    if (!r || typeof r.uid !== 'string' || !r.uid) {
+      await kvSil(c, k)
+      continue
+    }
+    if (c.now - (Number(r.t) || 0) > GECOZET_PUSH_TTL) {   // bayat: özet ekranda zaten duruyor
+      await kvSil(c, k)
+      c.log(`geç gün özet push'u bayat, düştü: ${k}`)
+      continue
+    }
+    if (trSaat(c.now) < (Number(r.saat) || CFG.summary_hour)) continue   // saati gelmedi, beklesin
+    await pushBekleyen(c.env, { user: r.uid, title: r.baslik, body: r.govde })
+    await kvSil(c, k)   // silinemezse: en kötü ihtimalle bir kez daha push (para harcamaz)
+    c.log(`geç gün özet push'u gönderildi (${r.gun} → ${r.uid.slice(0, 14)})`)
+  }
 }
 
 // ---------- free bildirim freni (satır 58-76) — KV freepush:{uid} ----------
@@ -203,9 +395,12 @@ async function queueCloudVideo(
 }
 
 // ---------- tek cihaz analizi ----------
-async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
+// `gec`: bu gün GERİ DÖNÜK işleniyor (gps'in `gerigun:` işareti). Varsayılan false → bugünkü
+// çağrıların (bugün + özet isteği yolu) davranışı BİREBİR AYNI kalır.
+async function cihazIsle(c: GorevCtx, dev: string, gun: string, gec = false): Promise<void> {
   const { env, now, log } = c
   const [g0, g1] = trGunAralik(gun)
+  const gunYasi = Math.round((trGunAralik(trGun(now))[0] - g0) / 86400)   // bugün=0, dün=1
   const prof = await env.DB.prepare(`SELECT ${PROFIL_KOLON} FROM users WHERE tracker_id = ?1`)
     .bind(dev).first<ProfilRow>()
   const uid = prof?.uid || ''
@@ -246,6 +441,14 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
     } else cur.push(p)
   }
   if (cur.length) segs.push(cur)
+  // 🔴 AÇIK GEZİ (openTrip) ve GEÇ GÜN — 22.09 KIRPIK GEZİ BULGUSU.
+  // Bu kıyas `now - sonNoktaTs < STOP_SEC` olduğu için geç günde YAPISAL olarak false'tur: gün
+  // çoktan bitmiştir, son nokta saatler öncesine aittir. Tampon HÂLÂ boşalırken koşan bir tur bu
+  // yüzden günü "bitmiş" sayıp segmentleri anında kapatıyor, elindeki ilk ~150 noktayla 5 km'lik
+  // KIRPIK bir gezi üretiyor ve sonradan gelen noktalar o geziyi tamamlamıyordu.
+  // ARTIK GÜVENLİ: kos() geç günü ancak cihaz GERIGUN_YERLESME_SN kadar SUSTUKTAN sonra işliyor
+  // (su seviyesi + yerleşme penceresi), yani buraya gelindiğinde o günün noktaları tamamlanmıştır.
+  // ⚠️ Yerleşme penceresini kaldırmak/kısaltmak kırpık geziyi GERİ GETİRİR.
   let openTrip = false
   if (segs.length && now - segs[segs.length - 1][segs[segs.length - 1].length - 1].t < STOP_SEC) {
     openTrip = true; segs.pop()
@@ -299,7 +502,12 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
   const onDemand = reqler.length > 0
   const sumEnabled = (prof?.summary_enabled ?? 1) !== 0            // COALESCE(summary_enabled,1)
   const userHour = prof?.summary_hour ?? CFG.summary_hour          // COALESCE(summary_hour,21)
-  const summaryDue = onDemand || (sumEnabled && trSaat(now) >= userHour)
+  // 22.09: GEÇ GÜNDE SAAT KAPISI VERİ İÇİN ANLAMSIZ — o gün çoktan bitti. Saat kapısı "gün daha
+  // bitmedi, özeti erken gönderme" içindi; geç günde beklenecek bir şey yok (aksi hâlde gece
+  // yarısından sonra boşalan tampon için özet HİÇ üretilmezdi). `sent:ozet:` mükerrerini keser.
+  // ⚠️ Bu kapı YALNIZ VERİYİ açar. Kullanıcıyı 03:00'te uyandırmamak için PUSH ayrı kapıda
+  // bekletilir — aşağıdaki "VERİ ile BİLDİRİM AYRI" bloğuna bak.
+  const summaryDue = onDemand || (sumEnabled && (gec || trSaat(now) >= userHour))
   const needSummary = acts.length > 0 && summaryDue && (onDemand || !ozetVar)
 
   // --- OTO-VİDEO RETRY (satır 554-611): R2'de hazırsa render-done, yoksa backoff'lu yeniden kuyruk ---
@@ -335,6 +543,8 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
       const mk = await kvJson<{ n: number; son: number }>(env, `autovid:${uid}:${vst}`, { n: 0, son: 0 })
       if (mk.n >= 8) continue
       if (now - mk.son < 1200) continue
+      // Geç gün kapısı EN SONDA: diğer tüm koşullar geçmeden hak tüketilmesin (bkz. gecVideoHakki).
+      if (gec && !(await gecVideoHakki(env, uid, gun, vst, gunYasi, log))) continue
       await queueCloudVideo(c, dev, uid, prof, prefs, P, vst, ven, a.type, devName, false)
       await kvJsonYaz(env, `autovid:${uid}:${vst}`, { n: mk.n + 1, son: now }, 2 * 86400)
       log(`  🔁 OTO-VİDEO RETRY: ${vrid} (deneme ${mk.n + 1}/8)`)
@@ -438,21 +648,41 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
     if (onDemand) log(`on-demand istek tüketildi (${reqler.length})`)
 
     if (uid) {
-      await pushBekleyen(env, {
-        user: uid, title: 'Günlük özetin hazır 📊',
-        body: `${totalKm.toFixed(1)} km · ${acts.length} aktivite · en hızlı ~${sp(fastest).toFixed(0)} km/s`,
-      })
+      const ozetBaslik = 'Günlük özetin hazır 📊'
+      const ozetGovde = `${totalKm.toFixed(1)} km · ${acts.length} aktivite · en hızlı ~${sp(fastest).toFixed(0)} km/s`
+      // 🔴 VERİ ile BİLDİRİM AYRI (22.09 bulgusu: geç günde saat kapısı tamamen kaldırılmıştı →
+      // tampon gece 03:00'te boşalınca kullanıcı 03:00'te "Günlük özetin hazır" push'uyla
+      // uyanıyordu). Özet YUKARIDA D1'e ve `sent:ozet:` bayrağına ZATEN yazıldı — ekran dolu,
+      // kullanıcı sabah uygulamayı açtığında her şey yerinde. Geriye yalnız BİLDİRİM kaldı ve o
+      // kullanıcının kendi özet saatine (userHour) bırakılır.
+      // onDemand HARİÇ: kullanıcı "üret"e kendisi bastıysa cevabı o an ister, saat kapısı işlemez.
+      if (gec && !onDemand && trSaat(now) < userHour) {
+        const kayit: GecOzetPush = {
+          uid, gun, saat: userHour, baslik: ozetBaslik, govde: ozetGovde, t: now,
+        }
+        await kvYazLogla(c, `${GECOZET_PUSH_ONEK}${uid}_${gun}`, kayit, GECOZET_PUSH_TTL)
+        log(`  geç gün: özet YAZILDI, push ${userHour}:00'a bırakıldı (şu an ${trSaat(now)}:00)`)
+      } else {
+        await pushBekleyen(env, { user: uid, title: ozetBaslik, body: ozetGovde })
+      }
       const motorlu = acts.filter((x) => x.type === 'moto' || x.type === 'car')
       // 🔴 FİKS 05.09: 2 km eşiği yalnız tekil oto-videolarda vardı, ÖZET dalında YOKTU —
       // 0,4 km'lik bir gün de ~25 dk 3B GPU render'ı tetikleyebiliyordu (bakiye koruması).
       const ozetMinKm = await otoMinKm(env)
       // oto-video hatası özet akışını düşürmesin (yukarıdaki istek tüketimi zaten yapıldı)
       if (prof?.premium && motorlu.length && totalKm >= ozetMinKm) {
-        try {
-        await queueCloudVideo(c, dev, uid, prof, prefs, P,
-          Math.trunc(first.s[0].t), Math.trunc(last.s[last.s.length - 1].t),
-          motorlu[motorlu.length - 1].type, `${devName} • Gün özeti`, true)
-        } catch (e) { log(`oto-video kuyruklanamadı: ${String(e).slice(0, 140)}`) }
+        const ozetVst = Math.trunc(first.s[0].t)
+        // Geç günde ÖZET videosu da aynı tavana girer: gün özeti en uzun/en pahalı render'dır,
+        // kullanıcı istemeden buluta gitmesi tam da kaçındığımız sürpriz masraf.
+        if (gec && !(await gecVideoHakki(env, uid, gun, ozetVst, gunYasi, log))) {
+          log('  geç gün: gün özeti videosu atlandı (özet metni yine gönderildi)')
+        } else {
+          try {
+            await queueCloudVideo(c, dev, uid, prof, prefs, P,
+              ozetVst, Math.trunc(last.s[last.s.length - 1].t),
+              motorlu[motorlu.length - 1].type, `${devName} • Gün özeti`, true)
+          } catch (e) { log(`oto-video kuyruklanamadı: ${String(e).slice(0, 140)}`) }
+        }
       }
     }
     // 🔴 FİKS 04.09: `summaryreq:` istekleri OKUNUYOR ama HİÇ SİLİNMİYORDU (satır 306) → bir kez
@@ -467,13 +697,77 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string): Promise<void> {
 
 // ---------- görev girişi: bugün aktif tüm cihazlara fan-out (satır 99-114) ----------
 export async function kos(c: GorevCtx): Promise<void> {
+  // 🔴 EN BAŞTA: geç günde saat kapısına takılmış özet push'ları. Aşağıdaki "bugün aktif cihaz
+  // yok" erken dönüşünün ARKASINDA kalsaydı, hareketsiz bir günde bekleyen push hiç gitmezdi.
+  await gecOzetPushGonder(c)
   const gun = trGun(c.now)
   const [g0, g1] = trGunAralik(gun)
   const devs = await c.env.DB.prepare('SELECT DISTINCT device FROM positions WHERE ts >= ?1 AND ts < ?2')
     .bind(g0, g1).all<{ device: string }>()
-  // cihaz -> işlenecek TR günü
-  const isle = new Map<string, string>()
-  for (const d of devs.results) isle.set(d.device, gun)
+  // cihaz -> işlenecek TR GÜNLERİ (22.09'a kadar TEK gündü).
+  // 🔴 NEDEN ÇOĞUL: geç gün tam da telefonun ŞEBEKEYE KAVUŞTUĞU an gelir — yani cihaz aynı turda
+  // hem bugün aktiftir hem de dünü işlenmelidir. Tek günlük Map'te ikisinden biri diğerinin
+  // üstüne yazılır ve o gün sessizce düşerdi.
+  const isle = new Map<string, Set<string>>()
+  const ekle = (dev: string, g: string): void => {
+    const s = isle.get(dev) ?? new Set<string>()
+    s.add(g)
+    isle.set(dev, s)
+  }
+  for (const d of devs.results) ekle(d.device, gun)
+
+  // 🔴 GEÇ GELEN GÜN (22.09 "otobüs vakası") — gps worker'ının bıraktığı işaretler.
+  // KONUM ÖNEMLİ: bu blok aşağıdaki özet-isteği döngüsünün ve onun `isle` kapısının ÖNÜNDE.
+  const gecKume = new Set<string>()   // `${dev}|${g}` — bu turda geri dönük işlenecek çiftler
+  // `${dev}|${g}` -> bu turda GÖRÜLEN seviye + o anki işlenmiş kayıt (tur sonunda yazılır).
+  // Seviye turun BAŞINDA okunan değerdir: iş sürerken gelen yeni noktalar daha yüksek bir seviye
+  // yazar, biz eskisini "işlendi" diye kaydederiz ve gün sonraki turda yeniden işlenir. Doğru olan
+  // da budur — yeni nokta hiçbir zaman işlenmiş sayılmaz.
+  const gecDurum = new Map<string, { seviye: number; islendi: GeriGunIslendi }>()
+  for (const k of await kvListe(c.env, GERIGUN_ONEK, GERIGUN_LISTE_TAVAN)) {
+    const coz = gerigunCoz(k)
+    if (!coz) {
+      await kvSil(c, k)
+      c.log(`gerigun anahtarı bozuk, silindi: ${k}`)
+      continue
+    }
+    const { dev, gun: g } = coz
+    const islendiAnahtar = gerigunIslendiAnahtar(dev, g)
+    if (g >= gun) { await kvSil(c, k, islendiAnahtar); continue }
+    if (c.now - trGunAralik(g)[1] > GERIGUN_MAX_YAS) {       // çok eski: gezi de artık anlamsız
+      await kvSil(c, k, islendiAnahtar)
+      c.log(`gerigun düştü (${g} çok eski): ${dev}`)
+      continue
+    }
+    // SU SEVİYESİ: işaret = son geç noktanın yazma anı, işlendi = cron'un işlediği seviye.
+    // Eski biçimdeki ({t, ts} ve hata sayacı eklenmiş) kayıtlar da aynen okunur — `t` alanı
+    // ikisinde de var, dolayısıyla canlıda duran anahtarlar için göç adımı GEREKMEZ.
+    const isaret = await kvJson<GeriGunIsaret>(c.env, k, { t: 0, ts: 0 })
+    const seviye = Number(isaret.t) || 0
+    const ham = await kvJson<GeriGunIslendi>(c.env, islendiAnahtar, { sv: 0, hata: 0, t: 0 })
+    const islendi: GeriGunIslendi = {
+      sv: Number(ham.sv) || 0, hata: Number(ham.hata) || 0, t: Number(ham.t) || 0,
+    }
+    if (seviye <= islendi.sv) {
+      // Bu seviye işlendi. Bir gündür yeni nokta da gelmediyse iki anahtar da düşsün (liste
+      // şişmesin). Silme güvenli: gerçekten yeni bir nokta gelirse gps işareti TAZE seviyeyle
+      // yeniden yazar. (Teorik yarış: tam bu ara nokta gelirse o tek nokta işlenmeden kalır —
+      // boşalma yüzlerce nokta gönderdiği için sıradaki nokta günü yeniden kuyruğa sokar.)
+      if (c.now - seviye > GERIGUN_TEMIZLIK_SN) await kvSil(c, k, islendiAnahtar)
+      continue
+    }
+    // 🔴 YERLEŞME (settle): tampon HÂLÂ boşalıyorsa günü İŞLEME — yoksa kırpık gezi üretilir
+    // (bkz. cihazIsle'deki openTrip notu). Her yeni nokta seviyeyi ileri ittiği için bu koşul
+    // ancak cihaz gerçekten sustuğunda açılır.
+    if (c.now - seviye <= GERIGUN_YERLESME_SN) {
+      c.log(`gerigun bekliyor: ${dev} ${g} — tampon hâlâ boşalıyor (${c.now - seviye}sn < ${GERIGUN_YERLESME_SN}sn)`)
+      continue
+    }
+    ekle(dev, g)
+    gecKume.add(`${dev}|${g}`)
+    gecDurum.set(`${dev}|${g}`, { seviye, islendi })
+    c.log(`gerigun: ${dev} → ${g} günü geri dönük işlenecek (seviye ${seviye}, işlenen ${islendi.sv})`)
+  }
 
   // 🔴 FİKS 04.09 — ON-DEMAND ÖZET, BUGÜN HAREKET OLMASA DA İŞLENMELİ.
   // Eskiden burada "bugün aktif cihaz yok" deyip ÇIKILIYORDU: kullanıcı "üret"e bastığında
@@ -488,16 +782,36 @@ export async function kos(c: GorevCtx): Promise<void> {
       .bind(uid).first<{ tracker_id: string | null }>()
     const dev = row?.tracker_id || ''
     if (!dev) { await c.env.KV.delete(k); c.log(`özet isteği düştü (takipçi yok): ${uid}`); continue }
-    if (isle.has(dev)) continue                      // zaten bugün işlenecek
+    if (isle.get(dev)?.has(gun)) continue            // zaten BUGÜN işlenecek (geç gün sayılmaz)
     const son = await c.env.DB.prepare('SELECT MAX(ts) AS t FROM positions WHERE device = ?1 AND ts >= ?2')
       .bind(dev, c.now - 3 * 86400).first<{ t: number | null }>()
     if (!son?.t) { await c.env.KV.delete(k); c.log(`özet isteği düştü (3 günde veri yok): ${uid}`); continue }
-    isle.set(dev, trGun(son.t))                      // son hareketli günü özetle
+    ekle(dev, trGun(son.t))                          // son hareketli günü özetle
     c.log(`özet isteği: ${uid} → ${trGun(son.t)} günü işlenecek (bugün hareket yok)`)
   }
 
   if (!isle.size) { c.log('bugün aktif cihaz yok, bekleyen özet isteği de yok'); return }
-  for (const [dev, g] of isle) {
-    try { await cihazIsle(c, dev, g) } catch (e) { c.log(`cihaz ${dev} hata: ${String(e).slice(0, 150)}`) }
+  // AYNI GÜN İKİ KEZ İŞLENİRSE NE OLUR (sorulan soru — ölçülen cevap): güvenli.
+  //   · rides  : ic.registerRide INSERT ... ON CONFLICT(rid) DO UPDATE, rid = `${TRgun}_${başlangıç}`
+  //              → çift kayıt YOK, üstüne yazar.
+  //   · özet   : activities ON CONFLICT(uid, day) DO UPDATE → çift kayıt YOK.
+  //   · bildirim: `sent:act:` kümesi + `sent:ozet:` bayrağı keser (TTL 3 gün; ondan sonra en fazla
+  //              bir kez tekrar push gider — para harcamaz).
+  //   · video  : videos/pending_videos/R2 + `autovid:` sayacı + geç gün tavanı → ikinci GPU işi YOK.
+  // Bu yüzden seviye ancak iş BAŞARIYLA bittikten sonra ilerletiliyor: bir tur fazladan koşmak,
+  // bir günü hiç işlememekten kıyas kabul etmez biçimde ucuz.
+  for (const [dev, gunler] of isle) {
+    for (const g of gunler) {
+      const cift = `${dev}|${g}`
+      const durum = gecDurum.get(cift)
+      try {
+        await cihazIsle(c, dev, g, gecKume.has(cift))
+        if (durum) await gerigunSonuc(c, dev, g, durum.seviye, durum.islendi, true)
+      } catch (e) {
+        c.log(`cihaz ${dev} (${g}) hata: ${String(e).slice(0, 150)}`)
+        // Seviye İLERLEMEZ → sonraki tur aynı günü yeniden dener (MAX_DENEME'de pes eder).
+        if (durum) await gerigunSonuc(c, dev, g, durum.seviye, durum.islendi, false)
+      }
+    }
   }
 }
