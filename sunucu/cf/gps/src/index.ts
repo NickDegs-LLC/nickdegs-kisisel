@@ -100,12 +100,20 @@ export default {
       //   500'e çevirip noktayı kuyrukta SONSUZA DEK tutardı — bu yüzden kod indeksten ÖNCE gider.
       // ⚠️ OR IGNORE kısıt ihlallerini sessizce yutar; buraya gelen satırda device/ts/lat/lon
       //   yukarıda doğrulandı ve created_at daima dolu → NOT NULL ihlali sessizce düşemez.
+      // NABIZ (22.09): saat her noktaya `&hr=` ekliyor ama bu uç okumuyordu ve kolon yoktu →
+      // nabız sessizce düşüyordu. Artık yazılıyor. 25 < hr < 250 dışı değer YOK SAYILIR (null):
+      // sensör teması kopunca saat 0 veya uçuk değer basabiliyor; /api/live/hr-report ucu da
+      // aynı aralığı kullanıyor (grup2.ts), sözleşme ortak kalsın.
+      // 🔴 SIRA: bu satır ancak 0012_positions_hr.sql UYGULANDIKTAN SONRA dağıtılabilir; kolon
+      // yokken INSERT patlar → her nokta 500 → tüm kullanıcılarda konum akışı durur.
+      const hrHam = num('hr')
+      const hrDeger = hrHam !== null && hrHam > 25 && hrHam < 250 ? Math.round(hrHam) : null
       await env.DB.prepare(
-        `insert or ignore into positions (device, ts, lat, lon, spd, alt, acc, brg, batt, charge, created_at)
-         values (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`)
+        `insert or ignore into positions (device, ts, lat, lon, spd, alt, acc, brg, batt, charge, created_at, hr)
+         values (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`)
         .bind(device, ts, lat, lon, num('speed'), num('altitude'), num('accuracy'), num('bearing'),
               batt === null ? null : Math.max(0, Math.min(100, Math.round(batt))),
-              q.get('charge') === 'true' ? 1 : 0, now)
+              q.get('charge') === 'true' ? 1 : 0, now, hrDeger)
         .run()
     } catch (e) {
       console.log(`positions yazilamadi: device=${device} ts=${ts} ${String(e).slice(0, 200)}`)
