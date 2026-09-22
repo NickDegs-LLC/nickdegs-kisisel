@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.71"   // 18.09: kapsam daraltma — Ultra + sesli/yazılı sohbet + kulüp/rozet kaldırıldı
+        versionName = "1.72"   // 22.09: offline konum tamponu (şebekesiz rota kaybı fiksi)
     }
 
     signingConfigs {
