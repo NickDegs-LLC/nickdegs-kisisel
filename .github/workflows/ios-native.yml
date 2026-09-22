@@ -171,6 +171,13 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
+          # 🔴 22.09: bu adim `node: command not found` (exit 127) ile dustu. Runner adiminin
+          # kabugu /opt/homebrew/bin'i GORMUYOR (Xcode'un kendi alt sureci goruyor, o yaniltmasin).
+          # `continue-on-error: true` oldugu icin kosu YESIL gorundu ama TestFlight ic dagitimi
+          # HIC yapilmadi — yani "success" etiketi bu adim icin kanit DEGIL.
+          # Ayni tuzak Mac'e SSH ile baglanirken de var (non-interactive kabuk).
+          export PATH="/opt/homebrew/bin:$PATH"
+          command -v node >/dev/null || { echo "🔴 node yok — ic dagitim atlandi"; exit 0; }
           node <<'NODE'
           const crypto = require("crypto");
           const fs = require("fs");
