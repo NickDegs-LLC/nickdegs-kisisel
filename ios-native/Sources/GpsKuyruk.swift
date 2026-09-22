@@ -245,7 +245,14 @@ final class GpsKuyruk {
                         self.turSayaci += 1
                         self.hataUstUste = 0
                         self.durumYayinla(teslim: 1, hata: nil)
-                        self.siradakiniGonder(kim, nesil: n0)   // yeni yığın (ağ gidiş-dönüşü) -> büyüme yok
+                        // 🔴 KİLİTLENME FİKSİ (22.09, Watch tamponu yazılırken bulundu): burada
+                        // `nesil: n0` geçiliyordu. Ama basIlerlet -> sikistir -> yenidenYaz zinciri
+                        // (baş göstergesi 256 KB'ı geçince) `nesil`i ARTIRIYOR. Eski n0 ile devam
+                        // edilince giriş guard'ı `n0 == nesil`de düşüyor, tur SESSİZCE terk ediliyor,
+                        // bitir() hiç çalışmıyor ve `mesgul` sonsuza dek true kalıyor -> kuyruk o
+                        // oturum boyunca KİLİTLENİYOR. ~5957 teslim edilmiş noktadan sonra tetikleniyor,
+                        // yani tam da 8 saatlik şebekesiz yolculuk senaryosunda. Taze nesli oku.
+                        self.siradakiniGonder(kim, nesil: self.nesil)   // yeni yığın (ağ gidiş-dönüşü) -> büyüme yok
                     } else {
                         // 🔴 4xx dahil HER başarısızlıkta DUR, sırayı bozma, başı İLERLETME.
                         // 4xx'i "kalıcı ret" sayan dal KALDIRILDI: Cloudflare WAF/rate-limit 403'ü

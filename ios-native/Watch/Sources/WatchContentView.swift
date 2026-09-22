@@ -12,6 +12,15 @@ struct WatchContentView: View {
             else if link.ready { startView }
             else { pairView }
         }
+        // 🔴 ÖNE GELİNCE BOŞALT. Diğer tetikler (init / begin / end) sürüş anına bağlı; oysa
+        // çevrimdışı biten bir sürüşten sonra tamponun asıl boşalma fırsatı kullanıcının saatte
+        // uygulamayı AÇTIĞI andır — watchOS uygulamayı sürüş biter bitmez askıya alabiliyor.
+        // Bu satır olmadan 800 nokta, kullanıcı yeni bir sürüş başlatana kadar diskte bekler.
+        // ⚠️ BİLEREK yalnız .onAppear: watchOS hedefi 10.0 ve `.onChange`in iki parametreli hâli
+        // ile `@Environment(\.scenePhase)` tam o sürümde geliyor — sınırda. Sunucuda swiftc YOK,
+        // ilk derleme Mac'te ve deneme şansı pahalı; risk almıyoruz. .onAppear watchOS'ta görünüm
+        // her canlandığında çalışır, yani "uygulama öne geldi" anını pratikte zaten yakalar.
+        .onAppear { WatchGpsKuyruk.shared.bosalt() }
     }
 
     // Telefonla eşleşme bekleniyor
@@ -71,6 +80,10 @@ struct WatchContentView: View {
                 Text(String(format: "%.2f km", workout.distanceKm)).font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text("↑\(workout.sentCount)").font(.caption2).foregroundStyle(.secondary)
+                // Çevrimdışı tampon: nokta KAYBOLMADI, ağ gelince gidecek.
+                if workout.pendingCount > 0 {
+                    Text("⏳\(workout.pendingCount)").font(.caption2).foregroundStyle(.orange)
+                }
             }
             Button(role: .destructive) { workout.end() } label: {
                 Label(WL("Bitir","Finish"), systemImage: "stop.fill")
@@ -106,6 +119,19 @@ struct WatchContentView: View {
                             "Failed — try from phone (may need Premium)."))
                         .font(.caption2).foregroundStyle(.orange).multilineTextAlignment(.center)
                 }
+            }
+            // 🔴 SÜRÜŞ BİTTİ AMA NOKTALAR HENÜZ GİTMEDİ. Bu satır olmadan kullanıcı çevrimdışı
+            // biten bir sürüşten sonra yalnız mesafeyi görüp "Kapat"a basıyor ve saati bırakıyor;
+            // 2000 nokta diskte bekliyor, haberi yok. Sessiz bekleme = sessiz kayıp hissi.
+            if workout.pendingCount > 0 {
+                Text("⏳\(workout.pendingCount) "
+                     + WL("nokta gönderilmeyi bekliyor — ağ gelince otomatik gidecek",
+                          "points waiting to upload — they'll go automatically when you reconnect"))
+                    .font(.caption2).foregroundStyle(.orange).multilineTextAlignment(.center)
+            }
+            if let hata = workout.kuyrukHatasi, workout.pendingCount > 0 {
+                Text(hata).font(.system(size: 9)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).lineLimit(2)
             }
             Button(WL("Kapat","Close")) { workout.endedAt = nil; videoState = 0 }
                 .foregroundStyle(.secondary)

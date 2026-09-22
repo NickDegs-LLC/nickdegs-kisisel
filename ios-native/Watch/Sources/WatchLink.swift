@@ -28,10 +28,19 @@ final class WatchLink: NSObject, ObservableObject, WCSessionDelegate {
     private func store(_ ctx: [String: Any]) {
         let d = UserDefaults.standard
         if let t = ctx["token"] as? String, !t.isEmpty { d.set(t, forKey: "w_token") }
-        if let v = ctx["devid"] as? String, !v.isEmpty { d.set(v, forKey: "w_devid") }
+        // 🔴 KİMLİK DEĞİŞİMİ = TAMPONU SİL. Cihaz numarası değiştiyse (telefonda çıkış + başka
+        // hesapla giriş) eski hesabın bekleyen noktaları YENİ cihaza akar ve rotalar karışırdı.
+        // Telefon tarafındaki Store.logout() -> GpsKuyruk.temizle() ile aynı koruma.
+        if let v = ctx["devid"] as? String, !v.isEmpty {
+            let eski = d.string(forKey: "w_devid") ?? ""
+            if !eski.isEmpty, eski != v { WatchGpsKuyruk.shared.temizle() }
+            d.set(v, forKey: "w_devid")
+        }
         if let u = ctx["ingest"] as? String, !u.isEmpty { d.set(u, forKey: "w_ingest") }
         if let p = ctx["premium"] as? Bool { d.set(p, forKey: "w_premium") }
         refresh()
+        // Kimlik YENİ geldi: kimliksizken birikmiş noktalar varsa hemen gitsin.
+        WatchGpsKuyruk.shared.bosalt()
     }
 
     func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {

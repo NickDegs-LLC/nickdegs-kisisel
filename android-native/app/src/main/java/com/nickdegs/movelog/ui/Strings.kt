@@ -93,6 +93,11 @@ private val TRANS: Map<String, Map<String, String>> = mapOf(
     "Accept" to mapOf("tr" to "Kabul et","de" to "Annehmen","fr" to "Accepter","es" to "Aceptar","it" to "Accetta","pt" to "Aceitar","ru" to "Принять","ja" to "承認","zh" to "接受","ko" to "수락","ar" to "قبول"),
     "Friend added 🤝" to mapOf("tr" to "Arkadaş eklendi 🤝","de" to "Freund hinzugefügt 🤝","fr" to "Ami ajouté 🤝","es" to "Amigo añadido 🤝","it" to "Amico aggiunto 🤝","pt" to "Amigo adicionado 🤝","ru" to "Друг добавлен 🤝","ja" to "友だちを追加しました 🤝","zh" to "已添加好友 🤝","ko" to "친구가 추가됐어요 🤝","ar" to "تمت إضافة صديق 🤝"),
     "Invalid or expired code." to mapOf("tr" to "Kod geçersiz veya süresi dolmuş.","de" to "Code ungültig oder abgelaufen.","fr" to "Code invalide ou expiré.","es" to "Código no válido o caducado.","it" to "Codice non valido o scaduto.","pt" to "Código inválido ou expirado.","ru" to "Код недействителен или истёк.","ja" to "コードが無効か期限切れです。","zh" to "邀请码无效或已过期。","ko" to "코드가 유효하지 않거나 만료됐어요.","ar" to "الرمز غير صالح أو منتهٍ."),
+    // 22.09 — çevrimdışı konum tamponu bildirimi (TrackingService). "points waiting" ÖNÜNE sayı
+    // gelecek şekilde yazıldı: sayı çeviri anahtarının DIŞINDA kalsın (bkz. TrackingService.notification).
+    "Route recording" to mapOf("tr" to "Rota kaydı","de" to "Routenaufzeichnung","fr" to "Enregistrement d'itinéraire","es" to "Grabación de ruta","it" to "Registrazione percorso","pt" to "Gravação de rota","ru" to "Запись маршрута","ja" to "ルート記録","zh" to "路线记录","ko" to "경로 기록","ar" to "تسجيل المسار"),
+    "Recording your route…" to mapOf("tr" to "Rotan kaydediliyor…","de" to "Deine Route wird aufgezeichnet…","fr" to "Enregistrement de ton itinéraire…","es" to "Grabando tu ruta…","it" to "Registrazione del percorso…","pt" to "Gravando sua rota…","ru" to "Маршрут записывается…","ja" to "ルートを記録中…","zh" to "正在记录你的路线…","ko" to "경로 기록 중…","ar" to "جارٍ تسجيل مسارك…"),
+    "points waiting" to mapOf("tr" to "nokta bekliyor","de" to "Punkte warten","fr" to "points en attente","es" to "puntos en espera","it" to "punti in attesa","pt" to "pontos aguardando","ru" to "точек ожидают","ja" to "地点が待機中","zh" to "个点待发送","ko" to "개 지점 대기 중","ar" to "نقطة قيد الانتظار"),
 )
 
 fun L(tr: String, en: String): String {

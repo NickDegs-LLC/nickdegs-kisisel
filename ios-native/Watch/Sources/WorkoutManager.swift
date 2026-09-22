@@ -16,6 +16,11 @@ final class WorkoutManager: NSObject, ObservableObject {
     @Published var distanceKm = 0.0
     @Published var heartRate = 0            // 0 = henüz ölçüm yok
     @Published var sentCount = 0
+    @Published var pendingCount = 0         // kuyrukta bekleyen (çevrimdışı) nokta sayısı
+    // 🔴 Kuyruğun hata kanalı EKRANA çıkar. Eskiden geri bildirimde `_` ile atılıyordu: uç kalıcı
+    // 403 dönse bile kullanıcı yalnız büyüyen bir sayı görür, "gönderiliyor" sanırdı. Telefondaki
+    // `lastError` karşılığı — sessiz başarısızlık bu ürünün asıl derdiydi, saatte de olmasın.
+    @Published var kuyrukHatasi: String?
     @Published var locDenied = false
 
     private let store = HKHealthStore()
@@ -23,13 +28,28 @@ final class WorkoutManager: NSObject, ObservableObject {
     private var builder: HKLiveWorkoutBuilder?
     private let mgr = CLLocationManager()
     private var lastLoc: CLLocation?
-    private var lastSentAt = Date.distantPast
+    private var lastQueuedAt = Date.distantPast   // eski adı lastSentAt: artık KUYRUĞA giriş kapısı
 
     override init() {
         super.init()
         mgr.delegate = self
         mgr.desiredAccuracy = kCLLocationAccuracyBest
         mgr.distanceFilter = 10
+        // Kuyruk durumu -> UI. 🔴 WatchGpsKuyruk.init HİÇBİR singleton'a dokunmaz (o dosyadaki
+        // kural 1), bu yüzden buradan erişmek static-let lazy init kilidi yaratmaz.
+        // Geri bildirim zaten ana iş parçacığında geliyor (durumYayinla).
+        WatchGpsKuyruk.shared.durumBildirKur { [weak self] bekleyen, teslim, hata in
+            guard let self else { return }
+            self.pendingCount = bekleyen
+            // 🔴 Hata artık YUTULMUYOR (eskiden `_` ile atılıyordu). Uç kalıcı 403/5xx dönerse
+            // kuyruk backoff'a oturur ve hiçbir nokta teslim edilmez; kullanıcı yalnız büyüyen bir
+            // sayı görüp "gönderiliyor" sanırdı. Teslim gelince temizlenir.
+            if teslim > 0 { self.sentCount += teslim; self.kuyrukHatasi = nil }
+            else if let hata { self.kuyrukHatasi = hata }
+        }
+        // Açılış: önceki sürüşten teslim edilmemiş nokta kaldıysa hemen gitsin. Saat uygulaması
+        // sürüş biter bitmez askıya alınabildiği için tamponun asıl boşaldığı an BURASI olabilir.
+        WatchGpsKuyruk.shared.bosalt()
     }
 
     private func activity(for type: String) -> HKWorkoutActivityType {
@@ -66,11 +86,20 @@ final class WorkoutManager: NSObject, ObservableObject {
         mgr.startUpdatingLocation()
         startedAt = Date(); endedAt = nil
         distanceKm = 0; speedKmh = 0; heartRate = 0; sentCount = 0; lastLoc = nil
+        // 🔴 lastQueuedAt SIFIRLANIR: önceki sürüşten kalan kapı yüzünden yeni sürüşün ilk
+        // noktası 5 sn'ye kadar gecikmesin (eski kodda da bu sıfırlama yoktu, burada düzeltiliyor).
+        lastQueuedAt = .distantPast
         running = true
+        // Yeni sürüş başlarken önceki sürüşten kalan tampon varsa boşaltmayı dene.
+        WatchGpsKuyruk.shared.bosalt()
     }
 
     func end() {
         mgr.stopUpdatingLocation()
+        // 🔴 KUYRUĞU OTURUM KAPANMADAN ÖNCE BOŞALT. HKWorkoutSession bitince watchOS uygulamayı
+        // hızla askıya alır; burada denemek elde kalan noktalara en geniş çalışma zamanını verir.
+        // Yetişmeyen nokta KAYBOLMAZ — diskte durur, uygulama bir dahaki açılışta gönderir.
+        WatchGpsKuyruk.shared.bosalt()
         session?.end()
         builder?.endCollection(withEnd: Date()) { [weak self] _, _ in
             self?.builder?.finishWorkout { _, _ in }
@@ -161,34 +190,35 @@ final class WorkoutManager: NSObject, ObservableObject {
         }.resume()
     }
 
-    // Konum noktasını Traccar'a bas (OsmAnd protokolü) — nabız &hr= olarak eklenir.
+    // Konum noktasını ingest ucuna yolla — 🔴 ARTIK ATEŞLE-UNUT DEĞİL (22.09 "otobüs vakası").
+    // Nokta ÖNCE diske (WatchGpsKuyruk), SONRA gönderilir; kuyruktan düşürme YALNIZ 2xx alınınca.
+    // Çevrimiçiyken kuyrukta tek kayıt bulunur -> tek POST, davranış bugünküyle AYNI.
+    // URL kurma/gönderme işi tamamen kuyruğa taşındı (parametre kümesi birebir korundu).
     private func send(_ loc: CLLocation) {
-        let link = WatchLink.shared
-        guard !link.devid.isEmpty, Date().timeIntervalSince(lastSentAt) >= 5 else { return }
-        lastSentAt = Date()
-        var c = URLComponents(string: link.ingest)!
-        var items = [
-            URLQueryItem(name: "id", value: link.devid),
-            URLQueryItem(name: "lat", value: String(loc.coordinate.latitude)),
-            URLQueryItem(name: "lon", value: String(loc.coordinate.longitude)),
-            URLQueryItem(name: "timestamp", value: String(Int(loc.timestamp.timeIntervalSince1970))),
-            // 🔴 FİKS 05.09: saat hızı m/s gönderiyordu ama sunucu KNOT varsayıp ×1.852 ile km/h'ye
-            // çeviriyor (motor3d/iz.ts:75, grup7.ts:347/352/584) → %94 hatalı hız. Telefon tarafı
-            // (Tracker.swift:383) zaten ×1.94384 ile knot'a çeviriyordu; saat de aynı sözleşmeye uyar.
-            URLQueryItem(name: "speed", value: String(max(0, loc.speed) * 1.94384)),
-            URLQueryItem(name: "bearing", value: String(max(0, loc.course))),
-            URLQueryItem(name: "altitude", value: String(loc.altitude)),
-            URLQueryItem(name: "accuracy", value: String(loc.horizontalAccuracy)),
-        ]
-        if heartRate > 0 { items.append(URLQueryItem(name: "hr", value: String(heartRate))) }
-        c.queryItems = items
-        guard let u = c.url else { return }
-        var req = URLRequest(url: u); req.httpMethod = "POST"; req.timeoutInterval = 15
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, _ in
-            if (resp as? HTTPURLResponse)?.statusCode == 200 {
-                DispatchQueue.main.async { self?.sentCount += 1 }
-            }
-        }.resume()
+        // 5 sn'lik kapı artık KUYRUĞA GİRİŞİ sınırlıyor. Eskiden gönderimi sınırlıyordu ama
+        // `lastSentAt` POST'tan ÖNCE yazıldığı için BAŞARISIZ istek de pencereyi yakıyordu:
+        // nokta hem kayboluyor hem 5 sn boyunca yenisi denenmiyordu. Kayıt hızı bugünküyle AYNI.
+        guard Date().timeIntervalSince(lastQueuedAt) >= 5 else { return }
+        lastQueuedAt = Date()
+        let n = WatchNokta(ts: loc.timestamp.timeIntervalSince1970,
+                           lat: loc.coordinate.latitude,
+                           lon: loc.coordinate.longitude,
+                           // 🔴 FİKS 05.09: saat hızı m/s gönderiyordu ama sunucu KNOT varsayıp ×1.852
+                           // ile km/h'ye çeviriyor (motor3d/iz.ts:75, grup7.ts:347/352/584) → %94 hatalı
+                           // hız. Telefon (Tracker.swift) ×1.94384 ile knot'a çeviriyor; saat de uyar.
+                           spd: Float(max(0, loc.speed) * 1.94384),
+                           alt: Float(loc.altitude),
+                           acc: Float(loc.horizontalAccuracy),
+                           brg: Float(max(0, loc.course)),
+                           // Nabız ÖLÇÜM ANINDA donar. Eskiden gönderim anındaki güncel değer
+                           // gidiyordu; kuyrukla nokta saatler sonra boşalabildiği için o değer
+                           // yanlış noktaya yapışırdı.
+                           hr: heartRate > 0 ? Int16(min(250, heartRate)) : -1)
+        // 🔴 `guard !link.devid.isEmpty` KALDIRILDI: kimlik yokken nokta iz bırakmadan düşüyordu.
+        // Kimlik artık BOŞALTMA anında okunuyor -> telefonla henüz eşleşmemişken de noktalar birikir.
+        // Ayrıca `URLComponents(string: link.ingest)!` zorlama açılımı gitti (çökme riski).
+        WatchGpsKuyruk.shared.ekle(n)      // önce diske
+        WatchGpsKuyruk.shared.bosalt()     // sonra gönder (ağ yoksa şebeke gelince otomatik)
     }
 }
 

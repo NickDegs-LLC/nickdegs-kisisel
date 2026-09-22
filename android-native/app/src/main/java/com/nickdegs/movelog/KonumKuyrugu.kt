@@ -1,5 +1,10 @@
 package com.nickdegs.movelog
 
+import android.app.job.JobInfo
+import android.app.job.JobParameters
+import android.app.job.JobScheduler
+import android.app.job.JobService
+import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.location.Location
@@ -59,6 +64,12 @@ object KonumKuyrugu {
     private const val K_HATA = "nd_kuyruk_son_hata"  // teşhis: son başarısızlık (boş catch'in yerine)
     private const val K_BAS = "nd_kuyruk_bas"        // teslim edilmiş ön: dosyadaki BAŞ ofseti (bayt)
     private const val NL = '\n'.code.toByte()
+    // ---- sistem tetiği (JobScheduler) ----
+    private const val IS_ID = 4201                       // bu uygulamaya ait iş kimliği
+    // İş en erken 1 dk sonra çalışsın: uygulama/servis AYAKTAYSA kuyruğu zaten onlar akıtıyor,
+    // sistemi hemen uyandırmak boşuna. Asıl değer ağ DÖNDÜĞÜNDE sistemin bizi çağırmasında.
+    private const val IS_GECIKME_MS = 60_000L
+    private const val IS_BACKOFF_MS = 60_000L            // başarısızlıkta üstel geri çekilmenin başlangıcı
 
     private val kilit = Any()
     private val gonderiliyor = AtomicBoolean(false)
@@ -72,6 +83,11 @@ object KonumKuyrugu {
     @Volatile private var basOfset = -1L                  // -1 = prefs'ten henüz okunmadı
     // Dosya yeniden yazıldığında artar: uçuştaki turun elindeki BAYT ofsetleri geçersizleşir.
     @Volatile private var nesil = 0L
+    // JobService şu an ÇALIŞIYOR mu. İki yerde kritik: (a) çalışan işi yeniden schedule etmek onu
+    // DURDURUR, (b) çalışan işi cancel etmek onStopJob'u tetikler. İkisini de bu bayrakla önleriz.
+    @Volatile private var isAktif = false
+    // İlk sayım ısmarlandı mı (bekleyen() ana iş parçacığından her çağrıldığında yeni iş açmasın).
+    private val sayimIstendi = AtomicBoolean(false)
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences("movelog", Context.MODE_PRIVATE)
@@ -98,7 +114,34 @@ object KonumKuyrugu {
     /// yalnız bellekteki sayacı okur. Sayım arka planda (ilk ekle/boşaltma) yapılır.
     fun bekleyen(ctx: Context): Int {
         val n = satirSayisi
-        return if (n < 0) 0 else n
+        if (n < 0) {
+            // Sayım HENÜZ bitmedi -> bu çağrı 0 döner. Burada SAYMAYIZ: dosya 4,5 MB'a kadar
+            // çıkabiliyor ve burası ana iş parçacığı (bildirim) — ANR demek olurdu. Bunun yerine
+            // sayımı arka plana ISMARLARIZ, bir sonraki bildirim tazelemesi doğru sayıyı gösterir.
+            // (Normalde süreç açılışında primle() zaten yaptığı için buraya nadiren düşülür.)
+            if (sayimIstendi.compareAndSet(false, true)) {
+                val app = ctx.applicationContext
+                try { yazici.execute { synchronized(kilit) { if (satirSayisi < 0) sayDosyadan(app) } } }
+                catch (e: Exception) { sayimIstendi.set(false) }
+            }
+            return 0
+        }
+        return n
+    }
+
+    /// SÜREÇ AÇILIŞINDA çağrılır (MoveLogApplication.onCreate). İki iş yapar, ikisi de ağ/token
+    /// GEREKTİRMEZ: (1) bekleyen sayısını primler — bosalt() token/kimlik yokken sayımı yapmadan
+    /// dönebiliyordu, bildirimde sayı geç görünüyordu; (2) kuyruk önceki oturumdan doluysa sistem
+    /// tetiğini YENİDEN kurar — uygulama güncellemesi ya da "zorla durdur" planlı işi düşürmüş olabilir.
+    fun primle(ctx: Context) {
+        val app = ctx.applicationContext
+        sayimIstendi.set(true)
+        try {
+            yazici.execute {
+                synchronized(kilit) { if (satirSayisi < 0) sayDosyadan(app) }
+                if (satirSayisi > 0) isPlanla(app)
+            }
+        } catch (e: Exception) { sayimIstendi.set(false) }
     }
 
     // ---- 1) ÖNCE DİSKE ----
@@ -117,6 +160,7 @@ object KonumKuyrugu {
     }
 
     private fun diskeEkle(ctx: Context, satir: String) {
+        var planla = false
         synchronized(kilit) {
             try {
                 if (satirSayisi < 0) sayDosyadan(ctx)
@@ -124,7 +168,12 @@ object KonumKuyrugu {
                 satirSayisi++
             } catch (e: Exception) { hataYaz(ctx, "yazma: ${e.message}"); return }
             if (satirSayisi > TAVAN) seyrelt(ctx)
+            planla = satirSayisi > 0
         }
+        // 🔴 KİLİT DIŞINDA (binder çağrısı kilit altında tutulmaz): kuyruğa nokta girdiği an sistem
+        // tetiği kurulur, kuyruk boşalınca iptal edilir -> BOŞ KUYRUKTA HİÇ uyanma olmaz.
+        // isPlanla zaten planlıysa/iş çalışıyorsa hiçbir şey yapmaz (backoff sıfırlanmasın).
+        if (planla) isPlanla(ctx)
     }
 
     // Taşma politikası — kilit altında çağrılır.
@@ -170,15 +219,32 @@ object KonumKuyrugu {
     private fun zaman(satir: String): Long = satir.split(",").getOrNull(2)?.toLongOrNull() ?: 0L
 
     // ---- 2) SONRA GÖNDER (sıralı, en eskiden en yeniye) ----
-    fun bosalt(ctx: Context) {
+    /// `bitti`: tur sonunda YENİDEN DENEMEK anlamlı mı (nokta kaldı ve tıkalı değil) bilgisiyle
+    /// çağrılır. YALNIZ JobService kullanır (jobFinished'in reschedule bayrağı); diğer tüm çağrı
+    /// yerleri parametresiz kalır, davranışları DEĞİŞMEZ.
+    @JvmOverloads
+    fun bosalt(ctx: Context, bitti: ((Boolean) -> Unit)? = null) {
         val app = ctx.applicationContext
-        if (!gonderiliyor.compareAndSet(false, true)) return   // tek gönderici: sıra bozulmasın
+        // Tek gönderici: sıra bozulmasın. Zaten uçuşta bir tur varsa iş onun sonucuna bakar.
+        if (!gonderiliyor.compareAndSet(false, true)) { bitti?.invoke(kaldiMi(app)); return }
         Thread({
             try { dongu(app) }
             catch (e: Exception) { hataYaz(app, "dongu: ${e.message}") }
-            finally { gonderiliyor.set(false) }
+            finally {
+                gonderiliyor.set(false)
+                val kaldi = kaldiMi(app)
+                // Kuyruk boşaldı (ya da tıkandı): planlı iş BOŞUNA uyanmasın. İş şu an kendisi
+                // çalışıyorsa isIptal no-op'tur; onun düşmesi jobFinished(reschedule=false) ile olur.
+                if (!kaldi) isIptal(app)
+                try { bitti?.invoke(kaldi) } catch (e: Exception) { }
+            }
         }, "nd-kuyruk-gonderici").start()
     }
+
+    /// Tekrar denemek anlamlı mı: nokta VAR ve kuyruk TIKALI değil. Tıkalıyken (token/kimlik yok)
+    /// tekrar denemek ilerleme sağlamaz — sistemi boşuna uyandırmayız; giriş yenilenince
+    /// dongu() tıkanıklığı açar ve işi yeniden planlar.
+    private fun kaldiMi(ctx: Context): Boolean = bekleyen(ctx) > 0 && !tikali
 
     private fun dongu(ctx: Context) {
         val p = prefs(ctx)
@@ -194,6 +260,9 @@ object KonumKuyrugu {
         val url = kimlikUrl(ctx)
         if (id.isEmpty() || url.isEmpty()) { tikali = true; return }   // kimlik yok: noktalar SİLİNMEZ, diskte bekler
         tikali = false
+        // TIKANIKLIK AÇILDI (giriş/kimlik geldi): tıkalıyken iptal edilmiş sistem tetiğini geri kur,
+        // yoksa bekleyen noktalar yine "kullanıcı uygulamayı açana kadar" beklerdi.
+        if (satirSayisi > 0) isPlanla(ctx)
 
         // Kuyruk başka bir cihaz kimliğine (başka hesaba) aitse gönderme, at.
         val sahip = p.getString(K_SAHIP, "") ?: ""
@@ -295,8 +364,17 @@ object KonumKuyrugu {
         }
     }
 
-    // Takip KAPATILIRSA kuyruk SİLİNMEZ (yalnız gönderilmeye çalışılır); burası SADECE hesap
-    // değişimi içindir (K_SAHIP kapısı). Boş token'da ARTIK ÇAĞRILMAZ — yukarıdaki 1. kural.
+    /// Ana iş parçacığından (Store.signOut / deleteAccount — düğme tıklaması) çağrılan sürüm:
+    /// dosya silme G/Ç'si UI'da yapılmaz, yazıcı executor'ına ısmarlanır. Sıra korunur: bekleyen
+    /// diske-yazma işleri önce biter, sonra temizlik çalışır.
+    fun temizleArkaPlan(ctx: Context) {
+        val app = ctx.applicationContext
+        try { yazici.execute { temizle(app) } }
+        catch (e: Exception) { hataYaz(app, "temizleme ismarlanamadi: ${e.message}") }
+    }
+
+    // Takip KAPATILIRSA kuyruk SİLİNMEZ (yalnız gönderilmeye çalışılır); burası hesap değişimi
+    // (K_SAHIP kapısı) ve ÇIKIŞ/HESAP SİLME içindir. Boş token'da ARTIK ÇAĞRILMAZ — 1. kural.
     fun temizle(ctx: Context) {
         synchronized(kilit) {
             try { dosya(ctx).delete() } catch (e: Exception) { }
@@ -306,6 +384,7 @@ object KonumKuyrugu {
             nesil++                                  // uçuştaki tur artık baş ilerletemez
         }
         try { prefs(ctx).edit().remove(K_SAHIP).apply() } catch (e: Exception) { }
+        isIptal(ctx)                                 // kuyruk boş: planlı iş boşuna uyanmasın
     }
 
     // ---- dosya katmanı: BAŞ ofseti modeli (iOS GpsKuyruk ile aynı fikir) ----
@@ -455,5 +534,71 @@ object KonumKuyrugu {
             c.disconnect()
             kod
         } catch (e: Exception) { -1 }
+    }
+
+    // ---- 3) SİSTEM TETİĞİ: uygulama KAPALI + takip KAPALI + ağ YOKKEN de kuyruk boşalsın ----
+    // AÇIK KALAN KUSUR BUYDU: noktalar diskte güvendeydi ama kullanıcı uygulamayı açana kadar
+    // (günlerce) bekleyebiliyorlardı — tetik yalnız TrackingService ve uygulama öne gelişiydi.
+    //
+    // 🔴 WorkManager EKLENMEDİ (yeni bağımlılık yasak). Çerçevenin kendi JobScheduler'ı:
+    //   setRequiredNetworkType(NETWORK_TYPE_ANY) -> ağ YOKKEN sistem bizi HİÇ uyandırmaz
+    //                                              (otobüste 8 saat boyunca sıfır pil tüketimi),
+    //                                              ağ gelince kendisi uyandırır.
+    //   setPersisted(true)  -> iş yeniden başlatmayı da aşar (RECEIVE_BOOT_COMPLETED izni ŞART).
+    //   setBackoffCriteria  -> sunucu hata verirse üstel geri çekilme; tur tavanı dolduysa da
+    //                          jobFinished(reschedule=true) ile kalan akmaya devam eder.
+    // İş YALNIZCA kuyrukta nokta varken planlanır (ilk ekle) ve kuyruk boşalınca/tıkanınca iptal
+    // edilir -> BOŞ KUYRUKTA UYANMA YOK.
+    private fun zamanlayici(ctx: Context): JobScheduler? =
+        try { ctx.applicationContext.getSystemService(JobScheduler::class.java) } catch (e: Exception) { null }
+
+    fun isPlanla(ctx: Context) {
+        if (isAktif) return                              // çalışan işi yeniden schedule etmek onu DURDURUR
+        val app = ctx.applicationContext
+        val z = zamanlayici(app) ?: return
+        try {
+            if (z.getPendingJob(IS_ID) != null) return   // zaten planlı: backoff'u sıfırlama
+            val j = JobInfo.Builder(IS_ID, ComponentName(app, KuyrukIsi::class.java))
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setPersisted(true)
+                .setMinimumLatency(IS_GECIKME_MS)
+                .setBackoffCriteria(IS_BACKOFF_MS, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
+                .build()
+            if (z.schedule(j) != JobScheduler.RESULT_SUCCESS) hataYaz(app, "is planlanamadi")
+        } catch (e: Exception) {
+            // SESSİZ YUTMA YOK: setPersisted izni düşerse tek belirti bu satır olur.
+            hataYaz(app, "is planlama: ${e.message}")
+        }
+    }
+
+    private fun isIptal(ctx: Context) {
+        if (isAktif) return                              // cancel çalışan işi keser (onStopJob); jobFinished zaten düşürür
+        try { zamanlayici(ctx)?.cancel(IS_ID) } catch (e: Exception) { }
+    }
+
+    internal fun isBasladi() { isAktif = true }
+    internal fun isBitti() { isAktif = false }
+}
+
+/// Kuyruğun SİSTEM TETİKLİ boşaltıcısı. Uygulama kapalı ve takip kapalıyken bile, ağ geri
+/// geldiğinde sistem bizi uyandırır ve bekleyen noktalar akar.
+/// Gövde yok: tüm iş KonumKuyrugu'nda — burası yalnız "uyandırma" kablosu.
+class KuyrukIsi : JobService() {
+    override fun onStartJob(params: JobParameters?): Boolean {
+        KonumKuyrugu.isBasladi()
+        // bosalt() kendi iş parçacığını açar -> true döneriz (iş CANLI kalsın), bitince jobFinished.
+        // jobFinished her iş parçacığından çağrılabilir.
+        KonumKuyrugu.bosalt(applicationContext) { kaldi ->
+            KonumKuyrugu.isBitti()
+            // kaldi = nokta kaldı ve tıkalı değil -> sistem bizi tekrar (backoff ile) çağırsın.
+            try { jobFinished(params, kaldi) } catch (e: Exception) { }
+        }
+        return true
+    }
+
+    // Sistem işi YARIDA kesti (kısıt düştü / kota). Nokta kaldıysa yeniden planlansın.
+    override fun onStopJob(params: JobParameters?): Boolean {
+        KonumKuyrugu.isBitti()
+        return KonumKuyrugu.bekleyen(applicationContext) > 0
     }
 }

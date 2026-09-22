@@ -13,6 +13,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
+import com.nickdegs.movelog.ui.L
 import java.util.Locale
 
 // Canlı rota kaydı: foreground service + FusedLocation -> Traccar OsmAnd ingest (iOS Tracker.swift karşılığı).
@@ -27,7 +28,7 @@ class TrackingService : Service() {
         // yani her tetik yığının bir bölümünü akıtır. 60 sn'de bir denemek 8 saatlik bir birikimi
         // saatlerce sürüncemede bırakırdı; 5 sn'de bir ~80 nokta/sn'ye çıkar.
         private const val TEKRAR_HIZLI_MS = 5_000L
-        private const val ILK_TEKRAR_MS = 3_000L     // ilk tur: bildirimdeki bekleyen sayısı hızla dolsun
+        private const val ILK_TEKRAR_MS = 1_000L     // ilk tur: bildirimdeki bekleyen sayısı hızla dolsun
         private const val ETIKET = "MoveLogTakip"
         fun start(ctx: Context, deviceId: String, url: String) {
             // Kimlik KALICI yere de yazılır. AÇIK (20.09): deviceId/ingestUrl YALNIZCA intent
@@ -46,6 +47,11 @@ class TrackingService : Service() {
     private var agCb: ConnectivityManager.NetworkCallback? = null
     private val el = Handler(Looper.getMainLooper())
     // Ağ geri gelmese bile periyodik dene (bazı cihazlarda ağ geri çağrısı gecikir/gelmez).
+    // 🔴 BU TİK CİHAZI UYANDIRMAZ: Handler/postDelayed uyku sırasında İLERLEMEZ, Doze'da tikler
+    // kayar. Bilerek böyle — uyandırma işi KonumKuyrugu'nun JobScheduler tetiğinde (setPersisted +
+    // NETWORK_TYPE_ANY): ağ yokken sistem bizi hiç uyandırmaz, ağ gelince kendisi uyandırır.
+    // Burası yalnız CİHAZ ZATEN UYANIKKEN hızlı kadans + bildirim tazeleme içindir; ikisi
+    // birbirinin yedeği, ikisi de kuyruk boşken/tıkalıyken boşuna çalışmaz.
     private var sonGosterilenBekleyen = -1
     private val tekrar = object : Runnable {
         override fun run() {
@@ -134,7 +140,7 @@ class TrackingService : Service() {
 
     private fun notification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(CH, "Rota kaydı", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(CH, L("Rota kaydı", "Route recording"), NotificationManager.IMPORTANCE_LOW)
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
         }
         val tap = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
@@ -142,9 +148,15 @@ class TrackingService : Service() {
         // TEŞHİS KULLANICIYA GÖRÜNÜR: bekleyen nokta varsa bildirimde yazar. "Rotan kaydediliyor…"
         // tek başına YANILTICIYDI — 20.09'da tek nokta bile gitmezken de aynı yazı duruyordu.
         val bekleyen = KonumKuyrugu.bekleyen(this)
+        // 12 DİL. 🔴 SAYI, ÇEVRİLEN DİZENİN DIŞINDA: L() çeviriyi İNGİLİZCE metne göre arar, yani
+        // "1.234 nokta bekliyor" gibi sayı GÖMÜLÜ bir anahtar her sayı için ayrı satır demekti
+        // (ve hiçbiri eşleşmez, 10 dil sessizce İngilizce'ye düşerdi). Sayı ayrı tutulunca
+        // anahtar sabit kalır; sıralama her dilde "<sayı> <isim>" olarak doğru okunur.
+        val kayit = L("Rotan kaydediliyor…", "Recording your route…")
         val metin = if (bekleyen > 0)
-            "Rotan kaydediliyor… ${String.format(Locale.getDefault(), "%,d", bekleyen)} nokta bekliyor"
-        else "Rotan kaydediliyor…"
+            kayit + " · " + String.format(Locale.getDefault(), "%,d", bekleyen) + " " +
+                L("nokta bekliyor", "points waiting")
+        else kayit
         return NotificationCompat.Builder(this, CH)
             .setContentTitle("Move Log")
             .setContentText(metin)

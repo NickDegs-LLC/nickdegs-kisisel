@@ -17,6 +17,12 @@ import android.os.Bundle
 class MoveLogApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // 0) SAYIMI PRİMLE + SİSTEM TETİĞİNİ KUR. Ağ/token GEREKTİRMEZ (bosalt bunların
+        //    yokluğunda anında dönüyor, sayımı yapmadan dönebiliyordu) -> bildirimdeki
+        //    "N nokta bekliyor" saniyeler değil milisaniyeler içinde doğru olur. Ayrıca önceki
+        //    oturumdan dolu kuyruk kaldıysa JobScheduler işini yeniden planlar: uygulama
+        //    güncellemesi ya da "zorla durdur" planlanmış işi düşürmüş olabilir.
+        KonumKuyrugu.primle(this)
         // 1) AÇILIŞ: önceki oturumdan kalan noktalar varsa hemen akmaya başlasın.
         KonumKuyrugu.bosalt(this)
         // 2) ÖNE GELME: kullanıcı uygulamayı her açtığında yeniden dene (tipik olarak kapsama
