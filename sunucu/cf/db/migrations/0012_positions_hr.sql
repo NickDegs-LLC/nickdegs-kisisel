@@ -22,6 +22,11 @@
 -- 134.102 satirlik tabloda bile anlik. Varsayilan deger VERILMEZ (eski satirlar NULL kalir:
 -- "o noktada nabiz olculmedi" dogru anlami tasir; 0 yaziimak "nabiz sifir" gibi okunurdu).
 --
+-- 🟢 DURUM: 22.09'da CANLI movelog-db'ye ELLE UYGULANDI (kolon var, 134.102 satir korundu).
+--    Bu dosya artik SEMA KAYDIDIR — yeniden calistirilmasi GEREKMEZ ve HATA VERIR (asagi bak).
+--    `main`'e merge [skip ci] ile yapildi, yani cf-deploy bunu otomatik uygulamayi DENEMEDI.
+--    Elle tetikleyecek olan (workflow_dispatch -f d1_dosya=...) ONCE kolonun yoklugunu dogrulamali.
+--
 -- ⚠️ IDEMPOTENS: SQLite `ADD COLUMN IF NOT EXISTS` DESTEKLEMEZ. Ikinci kosumda
 -- "duplicate column name: hr" hatasi verir. Uygulayan taraf ONCE pragma ile kontrol etmeli:
 --   SELECT COUNT(*) FROM pragma_table_info('positions') WHERE name='hr';
