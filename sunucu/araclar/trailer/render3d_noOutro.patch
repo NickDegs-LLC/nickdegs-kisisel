@@ -1,0 +1,11 @@
+--- /opt/matrix/_build/nickdegs-kisisel/sunucu/render-worker/3d/render3d.js	2026-09-17 10:25:47.136240255 +0200
++++ render3d.js	2026-10-05 07:08:55.727015473 +0200
+@@ -540,7 +540,7 @@
+   const SEG_FIRST=SEG_FROM===0, SEG_LAST=SEG_TO>=frames;
+   // intro (isim+aktivite) + outro (özet istatistik) kart kareleri + fade in/out (flat/flyover paritesi)
+   // FADE dilim-farkındalı: fade-in sadece İLK, fade-out sadece SON dilimde (yoksa dilim sınırları kararır)
+-  const introN=Math.round(fps*1.6), outroN=IN.satStyle?Math.round(fps*6.0):Math.round(fps*3.2);   // uzun rota: dünya-finali (2 aşamalı 4.2sn zoom-out: rota kadrajı -> UZAYDAN KÜRE + 1.8sn bilgi)
++  const introN=Math.round(fps*1.6), outroN=IN.noOutro?0:(IN.satStyle?Math.round(fps*6.0):Math.round(fps*3.2));   // PROMO: noOutro -> küre finali yok   // uzun rota: dünya-finali (2 aşamalı 4.2sn zoom-out: rota kadrajı -> UZAYDAN KÜRE + 1.8sn bilgi)
+   const _fd=0.8, _segFrames=SEG_TO-SEG_FROM;   // v96: video aç/kapa fade'i daha yumuşak (0.5->0.8sn)
+   const _dur=((SEG_FIRST?introN:0)+_segFrames+(SEG_LAST?outroN:0))/fps;
+   const _filters=[];
