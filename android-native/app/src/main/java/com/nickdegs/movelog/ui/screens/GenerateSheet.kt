@@ -50,6 +50,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var paketAcik by remember { mutableStateOf(false) }   // 402 sonrası paket paneli
+    var showPaywall by remember { mutableStateOf(false) }  // 10.10: 402 panelinden Premium'a geçiş
     // FIX 05.09: uretim hatasi mesaji (400/429/503) — oncesinde hicbir yerde gosterilmiyordu
     var hataMetni by remember { mutableStateOf("") }
     var paketMsg by remember { mutableStateOf("") }
@@ -105,6 +106,12 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(L("Video oluştur", "Create video"), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            // 10.10 İLK VİDEO HEDİYE: ücretsiz kullanıcı hakkını görsün (yeni üye 1 hakla doğar; sunucu düşer)
+            if (!store.premium) {
+                Text(if (store.videoHak > 0) L("Video hakkın: ", "Your video credits: ") + store.videoHak
+                     else L("Video hakkın yok", "No video credits"),
+                    color = Brand.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
             Picker(L("Görünüm", "Mode"), modes, mode) { mode = it }
             // 18.09: tactical dalı ve Ultra kamera açısı bloğu kaldırıldı; bu üç picker KALIYOR
             // (eskiden else gövdesindeydi — video üretiminin çekirdek ayarları).
@@ -210,6 +217,16 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                     if (billing.paketler.keys.none { it in VIDEO_SKULARI })
                         Text(L("Paketler şu an yüklenemedi.", "Packs couldn't load right now."),
                             color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                    // 10.10: 402 paneli YALNIZ paket sunuyordu — abonelik yolu bu ekrandan hiç yoktu
+                    // (18.09–10.10: 48×402, /api/iap/google 0 çağrı). Premium düğmesi eklendi.
+                    Button(
+                        onClick = { showPaywall = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF23303F)),
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    ) {
+                        Text(L("Premium'a geç — her sürüş otomatik video", "Go Premium — every ride becomes a video"),
+                            fontWeight = FontWeight.SemiBold)
+                    }
                     if (paketMsg.isNotEmpty())
                         Text(paketMsg, color = Color(0xFF9AA4B2), fontSize = 12.sp)
                 }
@@ -222,7 +239,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                             if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot)
                         busy = false
                         when (kod) {
-                            200 -> onClose()
+                            200 -> { if (!store.premium && store.videoHak > 0) store.videoHak -= 1; onClose() }
                             402 -> paketAcik = true       // hak yok → paket panelini aç, sayfayı KAPATMA
                             // FIX 05.09: 400/429/503 icin DAL YOKTU -> dugme sonuclanmiyor, ekran
                             // sessizce donuyordu. Sunucunun kendi aciklamasini goster.
@@ -243,6 +260,12 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                 Text(hataMetni, color = Color(0xFFFF6B6B), fontSize = 13.sp,
                      modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
+        }
+        if (showPaywall) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { showPaywall = false },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) { PaywallScreen(store) { showPaywall = false; if (store.premium) paketAcik = false } }
         }
     }
 }

@@ -252,7 +252,7 @@ struct GenerateSheet: View {
                         }.padding(.horizontal, 14).padding(.vertical, 12)
                     }.buttonStyle(.plain).glassPanel(14).tint(.primary)
 
-                    if !premium {
+                    if !premium && videoHak <= 0 {
                         Text(L("Rota kaydı ücretsiz. Videoya dökmek Premium: 1080p, filigransız, Flyover/3B, müzik.",
                                "Route tracking is free. Turning it into a video is Premium: 1080p, no watermark, Flyover/3D, music."))
                             .font(.caption2).foregroundStyle(.secondary)
@@ -263,11 +263,18 @@ struct GenerateSheet: View {
                     // 5'li paketin birim fiyatı 3'lüden ucuz — teşvik burada görünür.
                     if !premium {
                         VStack(alignment: .leading, spacing: 8) {
+                            // 10.10: sayı çeviri anahtarının DIŞINDA (12 dil TRANS "Your video credits: " ile eşleşsin)
                             Label(videoHak > 0
-                                  ? L("Video hakkın: \(videoHak)", "Your video credits: \(videoHak)")
+                                  ? L("Video hakkın: ", "Your video credits: ") + "\(videoHak)"
                                   : L("Video hakkın yok", "No video credits"),
                                   systemImage: "film.stack")
                                 .font(.subheadline.weight(.semibold))
+                            if videoHak > 0 {
+                                // İLK VİDEO HEDİYE: yeni üye 1 hakla doğar — hak varken tüm modlar açık
+                                Text(L("Hakkın bu videoya yeter — Flyover ve 3B dahil.",
+                                       "Your credit covers this video — Flyover and 3D included."))
+                                    .font(.caption2).foregroundStyle(Brand.accent)
+                            }
                             Text(L("Sürüşlerin Rotalar'da kayıtlı. Videoya dönüştürmek için paket al ya da Premium'a geç — Premium'da her sürüş otomatik videoya döner.",
                                    "Your rides are saved in Routes. Buy a pack to turn them into videos, or go Premium — Premium turns every ride into a video automatically."))
                                 .font(.caption2).foregroundStyle(.secondary)
@@ -606,9 +613,12 @@ struct GenerateSheet: View {
     }
     func modeRow(_ id: String, _ label: String, free: Bool) -> some View {
         // Button + interaktif glassEffect dokunuşu yutuyordu → doğrudan tap-gesture + contentShape.
-        HStack {
+        // 10.10 İLK VİDEO HEDİYE: video hakkı olan ücretsiz kullanıcıya Flyover/3B de açık — sunucu hak
+        // yolunda mod kısıtlamıyor; "aha" anı 3B'de yaşanır (düz haritayla değil). Android'de zaten kilit yok.
+        let acik = free || premium || videoHak > 0
+        return HStack {
             Text(label)
-            if !free && !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
+            if !acik { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
             Spacer()
             if mode == id { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
         }
@@ -616,7 +626,7 @@ struct GenerateSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel(14)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture { if free || premium { mode = id } else { showPaywall = true } }
+        .onTapGesture { if acik { mode = id } else { showPaywall = true } }
     }
 }
 let TACTICAL_TRACKS: [String] = [

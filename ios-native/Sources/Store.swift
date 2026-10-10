@@ -78,6 +78,7 @@ struct Ride: Codable, Identifiable, Hashable {
     var novideo: Bool? = nil         // algılandı ama videosu yok -> Rotalar'da "Video oluştur" gösterilir
     var failed: Bool? = nil          // render başarısız — Videolarım'da HATA kartı olarak kalır (kaybolmaz)
     var error: String? = nil         // başarısızlık sebebi (kartta gösterilir)
+    var sample: Bool? = nil          // 10.10: ÖRNEK içerik (appreview) — sil/tip menüsü gizlenir (sunucu 404 verir)
 }
 struct Stats: Codable { var totalRides: Int; var byType: [String:Int]; var latest: Ride? }
 struct Position: Codable, Identifiable, Hashable {

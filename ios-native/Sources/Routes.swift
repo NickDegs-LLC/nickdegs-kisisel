@@ -8,6 +8,8 @@ struct PlayerBox: Identifiable { let id = UUID(); let player: AVPlayer }
 
 struct RoutesView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var tracker: Tracker
+    @State private var trackerBusy = false   // "Aç" düğmesi: trackerInfo beklenirken
     @State private var rides: [Ride] = []
     @State private var playerBox: PlayerBox?
     @State private var editRide: Ride?
@@ -99,12 +101,50 @@ struct RoutesView: View {
                 AuroraBackground()
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        // 10.10 (Barış: "rotalar sekmesine otomatik takip kapalı butonu"). Profil'deki "Rotamı kaydet"
+                        // anahtarı KAPALIYKEN burada kırmızı kart + "Aç" görünür. 26.09 Semra vakası: takip kapalıydı,
+                        // iki uzun yolculuk kaydedilmedi, kullanıcı uygulamayı bozuk sandı; 18.09–10.10 arası 42 yeni
+                        // üyenin 35'i hiç konum göndermedi. "Aç" = Profil anahtarıyla BİREBİR aynı yol (trackerInfo → start).
+                        if !tracker.active && !tracker.recording {
+                            HStack(spacing: 12) {
+                                Image(systemName: "location.slash.fill").font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.red).frame(width: 44, height: 44).glassPanel(14)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(L("Otomatik takip kapalı", "Auto-tracking is off")).font(.system(size: 15, weight: .semibold))
+                                    Text(L("Sürüşlerin kaydedilmiyor. Aç — her gezin otomatik rota olur.",
+                                           "Your trips aren't being recorded. Turn it on and every ride becomes a route."))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button {
+                                    trackerBusy = true
+                                    Task {
+                                        if let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
+                                        await MainActor.run { trackerBusy = false }
+                                    }
+                                } label: {
+                                    Group {
+                                        if trackerBusy { ProgressView().tint(.white) }
+                                        else { Text(L("Aç", "Turn on")).font(.system(size: 14, weight: .semibold)) }
+                                    }.foregroundStyle(.white).padding(.horizontal, 16).frame(height: 38)
+                                        .background(Brand.gradient, in: Capsule())
+                                }.buttonStyle(.borderless).disabled(trackerBusy)
+                            }
+                            .padding(14).glassPanel(20).smoothAppear()
+                        }
                         ForEach(sortedRides) { r in
                             HStack(spacing: 14) {
                                 Image(systemName: typeIcon(r.type)).font(.system(size: 22))
                                     .foregroundStyle(Brand.accent).frame(width: 50, height: 50).glassPanel(16)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(dayTime(r)).font(.system(size: 17, weight: .semibold))
+                                    if r.sample == true {
+                                        // 10.10: ÖRNEK rota (appreview) — tip menüsü yok (sunucu 404 verir), "Örnek" etiketi var
+                                        HStack(spacing: 4) {
+                                            Text(typeLabel(r.type)).foregroundStyle(.secondary)
+                                            Text("· " + L("Örnek", "Sample")).foregroundStyle(Brand.accent)
+                                        }.font(.caption)
+                                    } else {
                                     Menu {
                                         ForEach(RIDE_TYPES, id: \.id) { t in
                                             Button {
@@ -117,9 +157,12 @@ struct RoutesView: View {
                                             Image(systemName: "chevron.down").font(.system(size: 9))
                                         }.font(.caption).foregroundStyle(.secondary)
                                     }
+                                    }
                                 }
                                 Spacer()
-                                if r.novideo == true || r.failed == true {
+                                if r.sample == true && r.novideo == true {
+                                    EmptyView()   // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
+                                } else if r.novideo == true || r.failed == true {
                                     // Videosuz algılanan rota VEYA başarısız render -> kullanıcı (yeniden) video ürettirir
                                     Button { createRide = r } label: {
                                         HStack(spacing: 6) {
@@ -151,9 +194,11 @@ struct RoutesView: View {
                                 }
                             }
                             .padding(14).glassPanel(20).smoothAppear()
-                            .contextMenu {   // uzun bas → sil
-                                Button(role: .destructive) { pendingDelete = r } label: {
-                                    Label(L("Geçmişten sil", "Delete"), systemImage: "trash")
+                            .contextMenu {   // uzun bas → sil (10.10: örnek içerikte yok — sunucu 404 veriyordu)
+                                if r.sample != true {
+                                    Button(role: .destructive) { pendingDelete = r } label: {
+                                        Label(L("Geçmişten sil", "Delete"), systemImage: "trash")
+                                    }
                                 }
                             }
                         }

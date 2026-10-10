@@ -1,6 +1,9 @@
 package com.nickdegs.movelog.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -92,22 +95,43 @@ fun RoutesScreen(store: Store) {
                 else Icon(Icons.Filled.FileUpload, L("GPX/TCX yükle", "Upload GPX/TCX"), tint = Brand.accent)
             }
         }
-        // GEZİ KAYDI (16.09): Harita paneli kaldırıldı; "Rota kaydını başlat / durdur" düğmesi
-        // oradan buraya taşındı — kaydı başlatmanın tek yolu oydu. Davranış birebir aynı.
-        Button(
-            onClick = {
-                if (recording) { com.nickdegs.movelog.TrackingService.stop(ctx); recording = false }
-                else perm.launch(arrayOf(
-                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                    android.Manifest.permission.POST_NOTIFICATIONS))
-            },
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (recording) Color(0xFFFF3B30) else Brand.accent),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-        ) {
-            Icon(if (recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord, null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (recording) L("Kaydı durdur", "Stop recording") else L("Rota kaydını başlat", "Start recording"))
+        // GEZİ KAYDI (16.09): Harita paneli kaldırıldı; kaydı başlat/durdur düğmesi buraya taşındı.
+        // 10.10 (Barış: "rotalar sekmesine otomatik takip kapalı butonu"): düğme DURUM KARTI oldu.
+        // 26.09 Semra vakası: takip kapalıyken iki uzun yolculuk kaydedilmedi, kullanıcı uygulamayı bozuk
+        // sandı; 18.09–10.10 arası 42 yeni üyenin 35'i hiç konum göndermedi. Kapalıyken kırmızı kart +
+        // "Aç"; açıkken yeşil kart + "Durdur". Davranış eski düğmeyle BİREBİR aynı (izin → start / stop).
+        Surface(color = if (recording) Color(0xFF12301F) else Color(0xFF3A1D1D), shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape)
+                    .background(if (recording) Color(0xFF34C759) else Color(0xFFFF3B30)))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (recording) L("Otomatik takip açık", "Auto-tracking is on")
+                         else L("Otomatik takip kapalı", "Auto-tracking is off"),
+                        color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(if (recording) L("Rotan arka planda kaydediliyor.", "Your route is being recorded in the background.")
+                         else L("Sürüşlerin kaydedilmiyor. Aç — her gezin otomatik rota olur.",
+                                "Your trips aren't being recorded. Turn it on and every ride becomes a route."),
+                        color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = {
+                        if (recording) { com.nickdegs.movelog.TrackingService.stop(ctx); recording = false }
+                        else perm.launch(arrayOf(
+                            android.Manifest.permission.ACCESS_FINE_LOCATION,
+                            android.Manifest.permission.POST_NOTIFICATIONS))
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (recording) Color(0xFFFF3B30) else Brand.accent),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Icon(if (recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (recording) L("Durdur", "Stop") else L("Aç", "Turn on"))
+                }
+            }
         }
         if (loaded && rides.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -122,12 +146,15 @@ fun RoutesScreen(store: Store) {
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
                             Text(dayTime(r), color = Color.White, fontWeight = FontWeight.SemiBold)
+                            // 10.10: ÖRNEK rota (appreview) — tip menüsü yok (sunucu 404 verir), "Örnek" etiketi var.
                             Box {
-                                Row(Modifier.clickable { typeMenuFor = r.id }, verticalAlignment = Alignment.CenterVertically) {
+                                Row(if (r.sample) Modifier else Modifier.clickable { typeMenuFor = r.id },
+                                    verticalAlignment = Alignment.CenterVertically) {
                                     Text(typeLabel(r.type), color = Color(0xFF9AA4B2), fontSize = 13.sp)
-                                    Icon(Icons.Filled.ArrowDropDown, null, tint = Color(0xFF9AA4B2), modifier = Modifier.size(16.dp))
+                                    if (r.sample) Text("  · " + L("Örnek", "Sample"), color = Brand.accent, fontSize = 12.sp)
+                                    else Icon(Icons.Filled.ArrowDropDown, null, tint = Color(0xFF9AA4B2), modifier = Modifier.size(16.dp))
                                 }
-                                DropdownMenu(expanded = typeMenuFor == r.id, onDismissRequest = { typeMenuFor = null }) {
+                                if (!r.sample) DropdownMenu(expanded = typeMenuFor == r.id, onDismissRequest = { typeMenuFor = null }) {
                                     listOf("moto", "car", "bike", "run", "walk").forEach { t ->
                                         DropdownMenuItem(text = { Text(typeLabel(t)) }, onClick = {
                                             typeMenuFor = null
@@ -139,6 +166,8 @@ fun RoutesScreen(store: Store) {
                         }
                         if (r.rendering) {
                             Text(L("Hazırlanıyor…", "Rendering…"), color = Brand.accent, fontSize = 13.sp)
+                        } else if (r.novideo && r.sample) {
+                            // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
                         } else if (r.novideo) {
                             IconButton(onClick = { genRide = r }) {
                                 Icon(Icons.Filled.MovieCreation, L("Video oluştur", "Create video"), tint = Brand.accent)

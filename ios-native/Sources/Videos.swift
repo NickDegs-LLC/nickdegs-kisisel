@@ -196,10 +196,13 @@ struct VideosView: View {
                                         }.buttonStyle(.borderless).disabled(savingId == r.id)
                                     }
                                     // sil (borderless = bağımsız tıklama alanı; yoksa tap play'e gidiyordu)
-                                    Button { pendingDelete = r } label: {
-                                        Image(systemName: "trash").font(.system(size: 16, weight: .semibold))
-                                            .foregroundStyle(.red).frame(width: 44, height: 44).contentShape(Rectangle()).glassPanel(21)
-                                    }.buttonStyle(.borderless)
+                                    // 10.10: ÖRNEK (appreview) videoda yok — sunucu 404 veriyordu, düğme sessizce ölüydü
+                                    if r.sample != true {
+                                        Button { pendingDelete = r } label: {
+                                            Image(systemName: "trash").font(.system(size: 16, weight: .semibold))
+                                                .foregroundStyle(.red).frame(width: 44, height: 44).contentShape(Rectangle()).glassPanel(21)
+                                        }.buttonStyle(.borderless)
+                                    }
                                 }.padding(.top, 10)
                             }
                             .padding(12).glassPanel(22).smoothAppear()

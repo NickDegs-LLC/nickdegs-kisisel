@@ -68,6 +68,9 @@ data class Ride(
     // Android modelinde ALAN YOKTU -> basarisiz render kartlari OYNATILABILIR gibi gorunuyor,
     // dokununca 404 aliniyordu. OLCULDU: 14 adet sahte oynatilabilir kart.
     val failed: Boolean = false, val error: String? = null,
+    // 10.10: ÖRNEK İÇERİK (appreview). Kendi kaydı olmayan kullanıcı demo rotaları görür; sunucu bunları
+    // silmeye/tip değiştirmeye 404 verir (18.09–10.10: 27 DELETE + 27 type 404). Kartta sil/tip menüsü gizlenir.
+    val sample: Boolean = false,
 )
 
 data class Profile(val username: String?, val name: String, val premium: Boolean)
@@ -366,6 +369,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 novideo = o.optBoolean("novideo", false),
                 failed = o.optBoolean("failed", false),
                 error = o.optString("error", null),
+                sample = o.optBoolean("sample", false),
             )
         // FIX 05.09: iOS Routes.swift'teki dedupedByRide karsiligi Android'de YOKTU -> ayni rota
         // icin uc parcali rid + up_* cogalmasi yuzunden LISTEDE KOPYA KART cikiyordu (olculdu:

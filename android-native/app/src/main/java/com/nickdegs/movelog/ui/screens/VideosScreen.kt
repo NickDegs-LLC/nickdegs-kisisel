@@ -113,8 +113,8 @@ fun VideosScreen(store: Store) {
                             IconButton(onClick = {
                                 scope.launch { playUrl = store.signedVideoUrl(r.id) ?: store.videoUrl(r.id) }
                             }) { Icon(Icons.Filled.PlayCircle, null, tint = Brand.accent, modifier = Modifier.size(40.dp)) }
-                            // Sil
-                            IconButton(onClick = { pendingDelete = r }) {
+                            // Sil — 10.10: ÖRNEK (appreview) videoda yok; sunucu 404 veriyordu, düğme sessizce ölüydü
+                            if (!r.sample) IconButton(onClick = { pendingDelete = r }) {
                                 Icon(Icons.Filled.Delete, L("Sil", "Delete"), tint = Color(0xFFFF6B6B))
                             }
                         }

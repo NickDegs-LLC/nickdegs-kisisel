@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.72"   // 22.09: offline konum tamponu (şebekesiz rota kaybı fiksi)
+        versionName = "1.73"   // 10.10: ilk video hediye · otomatik takip durum kartı · örnek rota sil/tip fiksi
     }
 
     signingConfigs {

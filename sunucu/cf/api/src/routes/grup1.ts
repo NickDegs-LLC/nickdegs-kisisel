@@ -516,6 +516,11 @@ g.get('/api/rides', authUser, async (c) => {
   const db = c.env.DB
   const user = c.get('user')
   const sahip = await etkinSahip(db, user)          // ÖRNEK İÇERİK: kendi kaydı olmayan → appreview
+  // 10.10: örnek içerik işareti. Kendi kaydı olmayan kullanıcı appreview rotalarını görür ama
+  // silemez/tipini değiştiremez (rideOwner ≠ user → 404). İstemci bu kartlarda sil/tip menüsünü
+  // gizlesin diye `sample: true` eklenir (18.09–10.10 arası Android'den 27 DELETE + 27 type 404'ü).
+  // Alan EKLENİR, hiçbir alan silinmez (canlı istemci kuralı).
+  const ornek = sahip !== user
   const [ovrR, delR, cloudR, detR, pendR, failR] = await db.batch([
     db.prepare('SELECT rid, ride_type FROM ride_type_overrides'),
     db.prepare('SELECT rid FROM deleted_rides'),
@@ -560,6 +565,7 @@ g.get('/api/rides', authUser, async (c) => {
         ? { file: (v.r2_key as string).split('/').pop() as string }
         : { file: (v.r2_key as string) || '', cloud: true }),
       done, _mt: done,
+      ...(ornek ? { sample: true } : {}),
     }
   }
 
@@ -624,6 +630,7 @@ g.get('/api/rides', authUser, async (c) => {
       type: typ, emoji: emoji(typ),
       mode: 'flyover', speed: 'medium', aspect: '16:9', size: 0,
       novideo: true, done: 0, _mt: ts,
+      ...(ornek ? { sample: true } : {}),
     }
   }
 
