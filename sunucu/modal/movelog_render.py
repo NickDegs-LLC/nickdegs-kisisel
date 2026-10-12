@@ -36,7 +36,7 @@ import time
 
 import modal
 
-IMAJ_ETIKET = "ghcr.io/nickdegs/movelog-render:v151"
+IMAJ_ETIKET = "ghcr.io/nickdegs/movelog-render:v152"   # 12.10: harita fiksleri (mesafe/süre + finalde deniz dikişi); geri dönüş = v151
 
 IMAJ = modal.Image.from_registry(
     IMAJ_ETIKET,
