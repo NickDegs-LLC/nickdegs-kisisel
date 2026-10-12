@@ -1,5 +1,5 @@
-// ⚠️ OTOMATİK ÜRETİLDİ — ELLE DÜZENLEME. Kaynak: /opt/matrix/render-worker/3d/telefon-html.js (satır 33..189)
-// Üretici: cf/tools/motor3d/uret.mjs · kaynak SHA-256: 93ffdf0e4a57909739d0f819ecaaa721e931da05161d275270a241945059e2dd
+// ⚠️ OTOMATİK ÜRETİLDİ — ELLE DÜZENLEME. Kaynak: /opt/matrix/_build/nickdegs-kisisel/sunucu/render-worker/3d/telefon-html.js (satır 33..189)
+// Üretici: cf/tools/motor3d/uret.mjs · kaynak SHA-256: 96df11816054b44d6a82a816ab0650af850aca9c6839c018ec98fa3ec709cdba
 // Değişiklik SADECE mekanik: mod.exports destructuring -> fonksiyon parametresi; fs.writeFileSync -> return.
 /* eslint-disable */
 export function surucuUret(m) {
@@ -152,6 +152,9 @@ window.finalCiz=async function(k){
     else { let t=(u-0.5)/0.5; t=t*t*(3-2*t);
       zz=(_fit.zoom-0.2)+(GLOBE_Z-(_fit.zoom-0.2))*t; lo=_fit.lon; la=_fit.lat; }
     const pp=_p0*(1-Math.min(1,u*2)), bb=_b0+angd(0,_b0)*Math.min(1,u*2);
+    // 12.10 DENİZ DİKİŞİ (render3d.js finaliyle AYNI eğri): dikişli z12-13 uydu bandında z11 görüntüsüne geç.
+    { const _ss=(a,b,x)=>{ let q=Math.max(0,Math.min(1,(x-a)/(b-a))); return q*q*(3-2*q); };
+      if(window.setDeniz) window.setDeniz(Math.min(_ss(14.4,13.4,zz), _ss(8.4,9.4,zz))); }
     window.setPos(mLon,mLat,lo,la,bb,zz,pp);
     window.draw({title:title.date+'  •  '+title.totkm+' km', tm:'', spd:0, cum:(pts[N-1].cum||0), hr:null, poi:'', poiA:0,
       hudA:Math.max(0,1-u*2.2),

@@ -261,8 +261,14 @@ def _hh(a,b): return hav((a["lat"],a["lon"]),(b["lat"],b["lon"]))
 for _ in range(4):                              # birkaç geçiş (ardışık outlier)
     if len(P)<3: break
     ch=False
-    if _hh(P[0],P[1])>200 and _hh(P[1],P[2])<160: P=P[1:]; ch=True
-    if len(P)>=3 and _hh(P[-1],P[-2])>200 and _hh(P[-2],P[-3])<160: P=P[:-1]; ch=True
+    # 11.10 FİKS: uç nokta YALNIZ gerçekten ışınlanmaysa atılır (ima edilen hız > 198 km/s ya da
+    # zaman ilerlemiyor). Eskiden sadece mesafeye bakılıyordu: seyrek kayıtta (telefon 5 dk'da bir
+    # nokta kümesi yolluyor) sürüşün GERÇEK ilk/son noktası komşusundan 200 m'den uzak olduğu
+    # için siliniyordu -> 37 dk'lık sürüş 22 dk, 18:11 başlangıç 18:20 görünüyordu (Ordu, 04.10).
+    def _isin(a,b):
+        dt=abs(b["t"]-a["t"]); return dt<=0 or _hh(a,b)/dt>55
+    if _hh(P[0],P[1])>200 and _hh(P[1],P[2])<160 and _isin(P[0],P[1]): P=P[1:]; ch=True
+    if len(P)>=3 and _hh(P[-1],P[-2])>200 and _hh(P[-2],P[-3])<160 and _isin(P[-2],P[-1]): P=P[:-1]; ch=True
     cl=[P[0]]
     for i in range(1,len(P)-1):
         if _hh(P[i-1],P[i])>160 and _hh(P[i],P[i+1])>160 and _hh(P[i-1],P[i+1])<_hh(P[i-1],P[i])*0.6:
@@ -355,6 +361,14 @@ if _matched and len(_matched)>=2:
         m["hr"]=int(ah+(bh-ah)*fr) if isinstance(ah,(int,float)) and isinstance(bh,(int,float)) else (int(ah) if isinstance(ah,(int,float)) else None)
         m["cum"]=d_along
     M[0]["t"]=P[0]["t"]; M[-1]["t"]=P[-1]["t"]; M[0]["cum"]=0.0; M[-1]["cum"]=srctot
+    # 11.10 FİKS: MESAFE yola oturtulmuş geometriden. Eskiden km, ham GPS noktaları arasındaki
+    # KUŞ UÇUŞU kirişlerin toplamıydı; seyrek kayıtta virajlar sayılmadığı için eksik çıkıyordu
+    # (Ordu 04.10: gösterilen 6.8 km, yol üzerinden 8+ km). Zaman/hız/nabız taşıması yukarıda
+    # eski orana göre yapıldı (değişmedi); yalnız gösterilen/biriken mesafe gerçek yol uzunluğu olur.
+    # Koruma: eşleşme saçmaysa (yolun 3 katından uzun ya da yarısından kısa) eski değer kalır.
+    if 0.5*srctot <= mtot <= 3.0*srctot:
+        for i,m in enumerate(M): m["cum"]=mcum[i]
+        srctot=mtot; TOTKM=mtot/1000.0
     M[0]["spd"]=P[0]["spd"]; M[-1]["spd"]=P[-1]["spd"]
     P=M; print(f"{day}: yola oturtuldu (map-match) {srcN} -> {len(P)} nokta")
     # KİLİTLENME KORUMASI: map-match overview=full çıktısı nokta sayısını patlatabiliyor (2997->12045 görüldü).

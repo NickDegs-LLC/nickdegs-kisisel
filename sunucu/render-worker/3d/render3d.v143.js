@@ -77,7 +77,10 @@ const MLSTYLE = {
   sources: {
     sat: { type: 'raster', tiles: [SAT_URL], tileSize: 256, maxzoom: 19, attribution: '' },
     str: { type: 'raster', tiles: [STR_URL], tileSize: 256, maxzoom: 19, attribution: '' },
-    vektor: { type: 'vector', tiles: [MVT_URL], minzoom: 0, maxzoom: 15, attribution: '' }
+    vektor: { type: 'vector', tiles: [MVT_URL], minzoom: 0, maxzoom: 15, attribution: '' },
+    // 12.10: AYNI uydu kaynağı, z11'de KESİLMİŞ (üstü büyütülür). Yalnız final zoom-out'unda kullanılır
+    // (bkz. 'zemin11' katmanı). Katman görünmezken karo İSTENMEZ.
+    sat11: { type: 'raster', tiles: [SAT_URL], tileSize: 256, maxzoom: 11, attribution: '' }
   },
   layers: IN.satStyle
     ? [{ id: 'zemin', type: 'raster', source: 'sat' }]
@@ -198,6 +201,24 @@ map.on('style.load',()=>{
                 'sky-horizon-blend':0.55,'horizon-fog-blend':0.55,'fog-ground-blend':0.30,'atmosphere-blend':0.85});
   }catch(e){ console.log('terrain hata:',e); } }
   // rota çizgisi + konum: binalardan SONRA eklenir -> üstte çizilir (MapLibre'de slot yok, sıra belirler)
+  // ═══ DENİZ DİKİŞİ (12.10) ═══
+  // KAYNAK KUSURU (ölçüldü, Ordu açıkları, ham karolar): uydu mozaiğinin z12 karolarında kıyı
+  // suyunda iki ayrı çekim şeridi DİK bir dikişle yan yana (turkuaz | soluk gri); z<=11 karolar
+  // temiz ve lacivert. Final zoom-out'u o banttan geçerken denizde dikdörtgen leke görünüyordu.
+  // Kaynak pikseli düzeltilemez -> yalnız FİNALDE, harita zoom'u ~14.4'ün altına inerken (dikiş z13-14 karolarında da var, ölçüldü) aynı
+  // kaynağın z11'de kesilmiş kopyası ('zemin11') üstte yumuşakça belirir; dikişli bant hiç
+  // gösterilmez. Sürüş boyunca katman kapalıdır (görüntü ve karo yükü DEĞİŞMEZ).
+  // (İlk deneme vektör okyanus poligonuyla örtmekti: düşük zoom poligonu karayı da kapattı,
+  //  karo gelmeden kare alındı -> BIRAKILDI. Raster katman motorun zaten güvenle çizdiği türdür.)
+  try{
+    if(${IN.satStyle?'true':'false'}){
+      map.addLayer({id:'zemin11',type:'raster',source:'sat11',layout:{visibility:'none'},
+        paint:{'raster-opacity':0,'raster-fade-duration':0}});
+    }
+  }catch(e){ console.log('zemin11 hata:',e); }
+  window.setDeniz=(o)=>{ try{ if(!map.getLayer('zemin11')) return;
+      map.setLayoutProperty('zemin11','visibility',o>0.004?'visible':'none');
+      map.setPaintProperty('zemin11','raster-opacity',o); }catch(e){} };
   map.addSource('route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:${JSON.stringify(pts.map(p=>[p.lon,p.lat]))}}}});
   map.addLayer({id:'rline-glow',type:'line',source:'route',paint:{'line-color':'#000','line-width':9,'line-opacity':0.55},layout:{'line-cap':'round','line-join':'round'}});
   map.addLayer({id:'rline',type:'line',source:'route',paint:{'line-color':'${IN.lineColor||"#00e5ff"}','line-width':5},layout:{'line-cap':'round','line-join':'round'}});
@@ -557,6 +578,10 @@ window.waitIdle=(cap)=>new Promise(res=>{
           zz=(fit.zoom-0.2)+(GLOBE_Z-(fit.zoom-0.2))*t; lo=fit.lon; la=fit.lat; }
         let t=u*u*(3-2*u);
         const pp=p0*(1-Math.min(1,u*2)), bb=b0+angd(0,b0)*Math.min(1,u*2);
+        // 12.10 DENİZ DİKİŞİ: harita zoom'u 14.4 -> 13.4 arasında z11 görüntüsü belirir, 9.4'e kadar
+        // durur, 8.4'te çekilir (o zoom'larda asıl katman zaten aynı temiz karoları kullanır).
+        { const _ss=(a,b,x)=>{ let q=Math.max(0,Math.min(1,(x-a)/(b-a))); return q*q*(3-2*q); };
+          await page.evaluate(o=>window.setDeniz&&window.setDeniz(o), Math.min(_ss(14.4,13.4,zz), _ss(8.4,9.4,zz))); }
         await page.evaluate((mlon,mlat,clon,clat,brg2,zm,pit,s3)=>{window.setPos(mlon,mlat,clon,clat,brg2,zm,pit);window.draw(s3);},
           mLon,mLat,lo,la,bb,zz,pp,
           {title:title.date+'  •  '+title.totkm+' km', tm:'', spd:0, cum:(pts[N-1].cum||0), hr:null, poi:'', poiA:0,

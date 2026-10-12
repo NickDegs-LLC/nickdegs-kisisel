@@ -1,0 +1,21 @@
+# v152 (2026-10-12) — HARİTA DÜZELTMELERİ (Barış 11.10: "hepsini teker teker dikkatle fixle").
+# Ölçüm videosu: Ordu 04.10 moto sürüşü (seyrek kayıt: 37 dk'da 35 nokta).
+#
+# 1) MESAFE/SÜRE (route-video.py):
+#    · Uç nokta kırpma yalnız mesafeye bakıyordu -> seyrek kayıtta sürüşün GERÇEK ilk/son noktası
+#      siliniyordu (37 dk -> 22 dk, 18:11 -> 18:20). Artık ima edilen hız > 55 m/s ise kırpılır.
+#    · km, ham GPS noktaları arası kuş uçuşu toplamıydı -> yola oturtulmuş geometriden (6,8 -> 11,4 km).
+# 2) FİNALDE DENİZ DİKİŞİ (render3d.js): uydu mozaiğinin z12-14 karolarında kıyı suyunda iki çekim
+#    şeridi dik bir dikişle yan yana (kaynak kusuru, ham karolarla ölçüldü). Final zoom-out'unda
+#    harita zoom'u ~14,4'ün altına inerken aynı kaynağın z11'de kesilmiş kopyasına yumuşak geçiş.
+#    Sürüş boyunca görüntü ve karo yükü DEĞİŞMEZ.
+#
+# ⚠️ v143 TUZAĞI SÜRÜYOR: imajda çalışan dosya `3d/render3d.v143.js`'tir (-> /app/3d/render3d.js),
+# `3d/render3d.js` telefon şablonunun kaynağıdır. Spec üretici `imaj-v149/route-video.py`'dir
+# (-> /app/scripts/route-video.py), `scripts/route-video.py` DEĞİL. Düzeltmeler İKİSİNE de işlendi.
+# 3B şerit kopukluğu (render3d.js custom katmanı) bulut imajını ETKİLEMEZ: v143 çizgiyi araziye
+# yapışık (drape) çizer; o düzeltme yalnız telefon hattına (cf api motor3d) gider.
+ARG BASE=ghcr.io/nickdegs/movelog-render:v151
+FROM ${BASE}
+COPY 3d/render3d.v143.js /app/3d/render3d.js
+COPY imaj-v149/route-video.py /app/scripts/route-video.py

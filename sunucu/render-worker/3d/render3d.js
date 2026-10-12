@@ -78,6 +78,24 @@ const YUK_URL = HARITA + '/yukseklik?bbox=' + YBB.map(v=>v.toFixed(5)).join(',')
 const SAT_URL = HARITA + '/xyz/sat/{z}/{x}/{y}.jpg?k=' + KATMAN;
 const STR_URL = HARITA + '/xyz/str/{z}/{x}/{y}.jpg?k=' + KATMAN;
 const MVT_URL = HARITA + '/mvt/{z}/{x}/{y}.mvt';
+// 11.10: 3B şerit köşelerini <=8 m aralığa sıklaştır (lon/lat/alt doğrusal). Çok uzun rotada
+// köşe sayısı 60 bin ile sınırlanır (adım büyür) — tampon ~3 MB, DEM örneklemesi <1 sn.
+function _rp3Sik(pts){
+  const R=6371000, rad=Math.PI/180;
+  const d=(a,b)=>{ const x=(b.lon-a.lon)*rad*Math.cos((a.lat+b.lat)/2*rad), y=(b.lat-a.lat)*rad; return Math.sqrt(x*x+y*y)*R; };
+  let top=0; for(let i=1;i<pts.length;i++) top+=d(pts[i-1],pts[i]);
+  const adim=Math.max(8, top/60000);
+  const alt=p=>(typeof p.alt==='number'?p.alt:null);
+  const out=[];
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i]; out.push([a.lon,a.lat,alt(a)]);
+    if(i===pts.length-1) break;
+    const b=pts[i+1], L=d(a,b), k=Math.floor(L/adim);
+    for(let j=1;j<=k;j++){ const t=j/(k+1), za=alt(a), zb=alt(b);
+      out.push([a.lon+(b.lon-a.lon)*t, a.lat+(b.lat-a.lat)*t, (za!==null&&zb!==null)?za+(zb-za)*t:null]); }
+  }
+  return out;
+}
 // Arazi: anahtarsız kamu terrarium DEM (AWS elevation-tiles-prod; CORS'lu, doğrulandı).
 const DEM_URL = process.env.DEM_TABAN || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
@@ -88,7 +106,10 @@ const MLSTYLE = {
   sources: {
     sat: { type: 'raster', tiles: [SAT_URL], tileSize: 256, maxzoom: 19, attribution: '' },
     str: { type: 'raster', tiles: [STR_URL], tileSize: 256, maxzoom: 19, attribution: '' },
-    vektor: { type: 'vector', tiles: [MVT_URL], minzoom: 0, maxzoom: 15, attribution: '' }
+    vektor: { type: 'vector', tiles: [MVT_URL], minzoom: 0, maxzoom: 15, attribution: '' },
+    // 12.10: AYNI uydu kaynağı, z11'de KESİLMİŞ (üstü büyütülür). Yalnız final zoom-out'unda kullanılır
+    // (bkz. 'zemin11' katmanı). Katman görünmezken karo İSTENMEZ.
+    sat11: { type: 'raster', tiles: [SAT_URL], tileSize: 256, maxzoom: 11, attribution: '' }
   },
   layers: IN.satStyle
     ? [{ id: 'zemin', type: 'raster', source: 'sat' }]
@@ -190,6 +211,24 @@ map.on('style.load',()=>{
                 'sky-horizon-blend':0.55,'horizon-fog-blend':0.55,'fog-ground-blend':0.30,'atmosphere-blend':0.85});
   }catch(e){ console.log('terrain hata:',e); } }
   // rota çizgisi + konum: binalardan SONRA eklenir -> üstte çizilir (MapLibre'de slot yok, sıra belirler)
+  // ═══ DENİZ DİKİŞİ (12.10) ═══
+  // KAYNAK KUSURU (ölçüldü, Ordu açıkları, ham karolar): uydu mozaiğinin z12 karolarında kıyı
+  // suyunda iki ayrı çekim şeridi DİK bir dikişle yan yana (turkuaz | soluk gri); z<=11 karolar
+  // temiz ve lacivert. Final zoom-out'u o banttan geçerken denizde dikdörtgen leke görünüyordu.
+  // Kaynak pikseli düzeltilemez -> yalnız FİNALDE, harita zoom'u ~14.4'ün altına inerken (dikiş z13-14 karolarında da var, ölçüldü) aynı
+  // kaynağın z11'de kesilmiş kopyası ('zemin11') üstte yumuşakça belirir; dikişli bant hiç
+  // gösterilmez. Sürüş boyunca katman kapalıdır (görüntü ve karo yükü DEĞİŞMEZ).
+  // (İlk deneme vektör okyanus poligonuyla örtmekti: düşük zoom poligonu karayı da kapattı,
+  //  karo gelmeden kare alındı -> BIRAKILDI. Raster katman motorun zaten güvenle çizdiği türdür.)
+  try{
+    if(${IN.satStyle?'true':'false'}){
+      map.addLayer({id:'zemin11',type:'raster',source:'sat11',layout:{visibility:'none'},
+        paint:{'raster-opacity':0,'raster-fade-duration':0}});
+    }
+  }catch(e){ console.log('zemin11 hata:',e); }
+  window.setDeniz=(o)=>{ try{ if(!map.getLayer('zemin11')) return;
+      map.setLayoutProperty('zemin11','visibility',o>0.004?'visible':'none');
+      map.setPaintProperty('zemin11','raster-opacity',o); }catch(e){} };
   map.addSource('route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:${JSON.stringify(pts.map(p=>[p.lon,p.lat]))}}}});
   // ═══ 3B ROTA ŞERİDİ — custom WebGL (v139, Barış 2026-08-28) ═══
   // NEDEN: MapLibre'nin type:'line' katmanı terrain açıkken araziye DRAPE edilir (DEM yüzeyine
@@ -200,7 +239,10 @@ map.on('style.load',()=>{
   // z = max(GPS alt, DEM) + 2m  -> köprüde GPS kazanır (çizgi yukarıda), düz yolda DEM kazanır
   // (GPS gürültüsü çizgiyi yerin altına sokmaz). renderingMode:'3d' + depth test sayesinde
   // arazi sırtı çizgiyi DOĞRU gizler (overlay'de olmayan kazanç).
-  window._RP3 = ${JSON.stringify(pts.map(p=>[p.lon,p.lat,(typeof p.alt==='number'?p.alt:null)]))};
+  // 11.10 FİKS: şerit köşeleri SIKLAŞTIRILDI (bkz. _rp3Sik). Eskiden rota noktaları olduğu gibi
+  // kullanılıyordu (medyan 17 m, 36 m'ye kadar): iki köşe arasındaki düz kiriş bombeli araziyi
+  // KESİP altında kalıyor, şerit parça parça görünüyordu (11.10 Ordu videosu, şehir içi cadde).
+  window._RP3 = ${JSON.stringify(_rp3Sik(pts))};
   // ═══ ARAZİ YÜKSEKLİĞİNİ KENDİMİZ ÖLÇ (v140) ═══
   // map.queryTerrainElevation KULLANILMAZ: vendor'da getDEMElevation, karo yoksa 0 doner
   // yani karo YÜKLÜ DEĞİLKEN null değil **0** döner. 0'ı geçerli yükseklik sayınca "veri tam"
@@ -210,33 +252,53 @@ map.on('style.load',()=>{
   // aynı rota = aynı video; karo yükleme yarışı yok, private API yok).
   window._demZ = null;
   window._demHesapla = async function(){
-    const P=window._RP3, Z=12, N=Math.pow(2,Z), U=${JSON.stringify(DEM_URL)};
-    const kon=(lat,lon)=>{ const rad=lat*Math.PI/180;
+    // 11.10 FİKS: eskiden Z=12 + EN YAKIN PİKSEL okunuyordu (piksel ~29 m). Harita arazisi ise
+    // z14 DEM'den (piksel ~7 m) ÇİFT DOĞRUSAL ağ kuruyor -> eğimde iki yüzey arasında 10 m'yi
+    // aşan fark çıkıyor, şerit arazinin altında kalıp KOPUK görünüyordu. Artık aynı çözünürlük
+    // (kaynağın maxzoom'u = 14) ve aynı ara değerleme. Çok uzun rotada karo sayısı patlamasın
+    // diye zoom kademeli düşer (<=160 karo).
+    const P=window._RP3, U=${JSON.stringify(DEM_URL)};
+    const konZ=(lat,lon,N)=>{ const rad=lat*Math.PI/180;
       return [ (lon+180)/360*N,
                (1-Math.log(Math.tan(rad)+1/Math.cos(rad))/Math.PI)/2*N ]; };
-    const gerek=new Set();
-    for(const p of P){ const c=kon(p[1],p[0]); gerek.add(Math.floor(c[0])+'/'+Math.floor(c[1])); }
-    const kar={};
-    for(const k of gerek){
-      const xy=k.split('/');
-      try{
-        const r=await fetch(U.replace('{z}',Z).replace('{x}',xy[0]).replace('{y}',xy[1]));
-        if(!r.ok){ kar[k]=null; continue; }
-        const im=await createImageBitmap(await r.blob());
-        const cv=new OffscreenCanvas(im.width,im.height), cx=cv.getContext('2d');
-        cx.drawImage(im,0,0); kar[k]=cx.getImageData(0,0,im.width,im.height);
-      }catch(e){ kar[k]=null; }
+    let Z=14, gerek=null;
+    for(; Z>=10; Z--){
+      const N=Math.pow(2,Z); gerek=new Set();
+      for(const p of P){ const c=konZ(p[1],p[0],N); gerek.add(Math.floor(c[0])+'/'+Math.floor(c[1])); }
+      if(gerek.size<=160) break;
     }
+    if(Z<10) Z=10;
+    const N=Math.pow(2,Z), kon=(lat,lon)=>konZ(lat,lon,N);
+    const kar={}, liste=[...gerek];
+    const al=async(k)=>{
+      const xy=k.split('/');
+      for(let dn=0; dn<3; dn++){
+        try{
+          const r=await fetch(U.replace('{z}',Z).replace('{x}',xy[0]).replace('{y}',xy[1]));
+          if(!r.ok){ if(r.status===404||r.status===403){ kar[k]=null; return; } continue; }
+          const im=await createImageBitmap(await r.blob());
+          const cv=new OffscreenCanvas(im.width,im.height), cx=cv.getContext('2d',{willReadFrequently:true});
+          cx.drawImage(im,0,0); kar[k]=cx.getImageData(0,0,im.width,im.height); return;
+        }catch(e){}
+      }
+      kar[k]=null;
+    };
+    for(let i=0;i<liste.length;i+=8) await Promise.all(liste.slice(i,i+8).map(al));
+    const oku=(g,ix,iy)=>{ const o=(iy*g.width+ix)*4; return (g.data[o]*256+g.data[o+1]+g.data[o+2]/256)-32768; };   // terrarium formülü
     let n=0;
     window._demZ=P.map(p=>{
       const c=kon(p[1],p[0]), k=Math.floor(c[0])+'/'+Math.floor(c[1]), g=kar[k];
       if(!g) return null;
-      const ix=Math.min(g.width-1, Math.floor((c[0]-Math.floor(c[0]))*g.width));
-      const iy=Math.min(g.height-1,Math.floor((c[1]-Math.floor(c[1]))*g.height));
-      const o=(iy*g.width+ix)*4;
-      n++; return (g.data[o]*256+g.data[o+1]+g.data[o+2]/256)-32768;   // terrarium formülü
+      // çift doğrusal: piksel MERKEZLERİ arasında (karo kenarında aynı karoya kıstırılır)
+      const fx=Math.max(0,Math.min(g.width-1, (c[0]-Math.floor(c[0]))*g.width-0.5));
+      const fy=Math.max(0,Math.min(g.height-1,(c[1]-Math.floor(c[1]))*g.height-0.5));
+      const x0=Math.floor(fx), y0=Math.floor(fy), x1=Math.min(g.width-1,x0+1), y1=Math.min(g.height-1,y0+1);
+      const tx=fx-x0, ty=fy-y0;
+      const v=(oku(g,x0,y0)*(1-tx)+oku(g,x1,y0)*tx)*(1-ty)+(oku(g,x0,y1)*(1-tx)+oku(g,x1,y1)*tx)*ty;
+      if(!isFinite(v)) return null;
+      n++; return v;
     });
-    return n+'/'+P.length;
+    return n+'/'+P.length+' (z'+Z+', '+liste.length+' karo)';
   };
   const _RCOL = ${JSON.stringify(IN.lineColor||'#00e5ff')};
   function _hex2rgb(h){ const n=parseInt(h.replace('#',''),16);
@@ -302,7 +364,10 @@ map.on('style.load',()=>{
         let z=(typeof P[i][2]==='number')?P[i][2]:null;
         if(D[i]!==null) z=(z===null)?D[i]:Math.max(z,D[i]);
         if(z===null) z=0;
-        const mc=maplibregl.MercatorCoordinate.fromLngLat({lng:lon,lat:lat}, z+8);
+        // 11.10: +8 m -> +3 m. 60° eğik kamerada 8 m havadaki şerit, yolun 10-14 m YANINA düşüyordu
+        // ("çizgi yola oturmuyor"). DEM artık haritayla aynı çözünürlükte okunduğu için 3 m yetiyor;
+        // kalan derinlik kavgasını polygonOffset + aşağıdaki soluk alt geçiş karşılar.
+        const mc=maplibregl.MercatorCoordinate.fromLngLat({lng:lon,lat:lat}, z+3);
         M[i]=[mc.x,mc.y,mc.z];
       }
       window._RP3DEM=demOk;
@@ -354,6 +419,13 @@ map.on('style.load',()=>{
       const c=_hex2rgb(_RCOL);
       // ölçek: motor rscale ile küçük tuval kullanabiliyor -> kalınlık tuvale göre ölçeklenir
       const k=vpy/${JSON.stringify(IN.H||832)};
+      // 11.10 EMNİYET GEÇİŞİ: derinlik testi KAPALI, soluk (%38) renkli iz. Şerit bir noktada
+      // arazinin/binanın arkasında kalırsa o parça tamamen kaybolmak yerine soluk görünür ->
+      // çizgi hiçbir karede KOPUK görünmez; tepe arkası yine "arkada" okunur.
+      gl.disable(gl.DEPTH_TEST);
+      gl.uniform1f(this.uHalf,2.5*k); gl.uniform4f(this.uCol,c[0],c[1],c[2],0.38);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,this.say);
+      gl.enable(gl.DEPTH_TEST);
       // 1) siyah kenarlık (9px) 2) renkli iz (5px) — eski iki line katmanının birebir karşılığı
       gl.uniform1f(this.uHalf,4.5*k); gl.uniform4f(this.uCol,0,0,0,0.55);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,this.say);
@@ -710,6 +782,10 @@ window.waitIdle=(cap)=>new Promise(res=>{
           zz=(fit.zoom-0.2)+(GLOBE_Z-(fit.zoom-0.2))*t; lo=fit.lon; la=fit.lat; }
         let t=u*u*(3-2*u);
         const pp=p0*(1-Math.min(1,u*2)), bb=b0+angd(0,b0)*Math.min(1,u*2);
+        // 12.10 DENİZ DİKİŞİ: harita zoom'u 14.4 -> 13.4 arasında z11 görüntüsü belirir, 9.4'e kadar
+        // durur, 8.4'te çekilir (o zoom'larda asıl katman zaten aynı temiz karoları kullanır).
+        { const _ss=(a,b,x)=>{ let q=Math.max(0,Math.min(1,(x-a)/(b-a))); return q*q*(3-2*q); };
+          await page.evaluate(o=>window.setDeniz&&window.setDeniz(o), Math.min(_ss(14.4,13.4,zz), _ss(8.4,9.4,zz))); }
         await page.evaluate((mlon,mlat,clon,clat,brg2,zm,pit,s3)=>{window.setPos(mlon,mlat,clon,clat,brg2,zm,pit);window.draw(s3);},
           mLon,mLat,lo,la,bb,zz,pp,
           {title:title.date+'  •  '+title.totkm+' km', tm:'', spd:0, cum:(pts[N-1].cum||0), hr:null, poi:'', poiA:0,

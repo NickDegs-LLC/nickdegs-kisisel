@@ -251,8 +251,12 @@ export async function specUret(
   for (let pass = 0; pass < 4; pass++) {
     if (P.length < 3) break
     let ch = false
-    if (hh(P[0], P[1]) > 200 && hh(P[1], P[2]) < 160) { P = P.slice(1); ch = true }
-    if (P.length >= 3 && hh(P[P.length - 1], P[P.length - 2]) > 200 && hh(P[P.length - 2], P[P.length - 3]) < 160) {
+    // 11.10 FİKS (route-video.py ile AYNI): uç nokta YALNIZ gerçekten ışınlanmaysa atılır (ima edilen
+    // hız > 55 m/s ya da zaman ilerlemiyor). Seyrek kayıtta sürüşün gerçek ilk/son noktası siliniyordu.
+    const isin = (a: P, b: P) => { const dt = Math.abs(b.t - a.t); return dt <= 0 || hh(a, b) / dt > 55 }
+    if (hh(P[0], P[1]) > 200 && hh(P[1], P[2]) < 160 && isin(P[0], P[1])) { P = P.slice(1); ch = true }
+    if (P.length >= 3 && hh(P[P.length - 1], P[P.length - 2]) > 200 && hh(P[P.length - 2], P[P.length - 3]) < 160
+        && isin(P[P.length - 2], P[P.length - 1])) {
       P = P.slice(0, -1); ch = true
     }
     const cl: P[] = [P[0]]
@@ -305,12 +309,13 @@ export async function specUret(
     P[i].spd = sayiMi(ps) ? ps : (dt > 0 && dt < 600 ? (d / dt) * 3.6 : P[i - 1].spd)
     P[i].cum = P[i - 1].cum + d
   }
-  const TOTKM = P[P.length - 1].cum / 1000.0
+  let TOTKM = P[P.length - 1].cum / 1000.0
 
   // ── route-video.py:339-370: map-match + t/spd/alt/hr/cum taşıma ──
   const matched = await mapMatch(P, g.acttype, onek, token, log, harita)
   if (matched && matched.length >= 2) {
-    const srcN = P.length, srctot = P[P.length - 1].cum || 1.0
+    const srcN = P.length
+    let srctot = P[P.length - 1].cum || 1.0
     const srccum = P.map((p) => p.cum)
     const M: P[] = matched.map((m) => ({ ...m, t: 0, alt: null, spd: 0, hr: null, cum: 0, dwell: false, poi: '' }))
     const mcum = [0.0]
@@ -332,6 +337,12 @@ export async function specUret(
     }
     M[0].t = P[0].t; M[M.length - 1].t = P[P.length - 1].t
     M[0].cum = 0.0; M[M.length - 1].cum = srctot
+    // 11.10 FİKS (route-video.py ile AYNI): MESAFE yola oturtulmuş geometriden; eskiden ham GPS
+    // noktaları arası kuş uçuşu toplamıydı (seyrek kayıtta eksik). Saçma eşleşmede eski değer kalır.
+    if (0.5 * srctot <= mtot && mtot <= 3.0 * srctot) {
+      for (let i = 0; i < M.length; i++) M[i].cum = mcum[i]
+      srctot = mtot; TOTKM = mtot / 1000.0
+    }
     M[0].spd = P[0].spd; M[M.length - 1].spd = P[P.length - 1].spd
     P = M
     log.push(`yola oturtuldu (map-match) ${srcN} -> ${P.length} nokta`)
