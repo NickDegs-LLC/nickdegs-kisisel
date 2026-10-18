@@ -496,10 +496,8 @@ g.post('/auth/apple', async (c) => {
   const now = simdi()
   const ad = name ? name.slice(0, 40) : ''
   if (!mevcut) {
-    // 10.10 İLK VİDEO HEDİYE: yeni üye 1 video hakkıyla doğar (bkz. migrations/0013). 18.09–10.10
-    // arası 42 yeni üye, 48 "video oluştur" denemesi, 48×402, 0 satın alma: ücretsiz kullanıcı kendi
-    // rotasından tek video bile göremiyordu. Hak, generate'te düşer (grup1 hakOdendi; bütçeden düşmez).
-    await env.DB.prepare('INSERT INTO users (uid, name, apple_sub, video_hak, created_at, updated_at) VALUES (?1,?2,?3,1,?4,?4)')
+    // 18.10: İLK VİDEO HEDİYE KALDIRILDI (Barış istemedi; bkz. migrations/0014). Yeni üye hak almadan doğar.
+    await env.DB.prepare('INSERT INTO users (uid, name, apple_sub, video_hak, created_at, updated_at) VALUES (?1,?2,?3,0,?4,?4)')
       .bind(username, ad || null, sub, now).run()
     await uyeBildir(env, username, ad || null, 'Apple', String(payload?.email ?? ''))
   } else {
@@ -604,8 +602,8 @@ g.post('/auth/google', async (c) => {
   const nm = name || String(payload?.name ?? '')     // body.name yoksa payload.name (main.py:664)
   const ad = nm ? nm.slice(0, 40) : ''
   if (!mevcut) {
-    // 10.10 İLK VİDEO HEDİYE (Apple dalıyla aynı): yeni üye 1 video hakkıyla doğar.
-    await env.DB.prepare('INSERT INTO users (uid, name, google_sub, video_hak, created_at, updated_at) VALUES (?1,?2,?3,1,?4,?4)')
+    // 18.10: İLK VİDEO HEDİYE KALDIRILDI (Apple dalıyla aynı) — yeni üye hak almadan doğar.
+    await env.DB.prepare('INSERT INTO users (uid, name, google_sub, video_hak, created_at, updated_at) VALUES (?1,?2,?3,0,?4,?4)')
       .bind(username, ad || null, sub, now).run()
     await uyeBildir(env, username, ad || null, 'Google', String(payload?.email ?? ''))
   } else {
