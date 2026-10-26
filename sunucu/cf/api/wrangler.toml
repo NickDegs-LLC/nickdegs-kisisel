@@ -44,3 +44,8 @@ queue = "movelog-render"
 [[services]]
 binding = "HARITA"
 service = "harita-katman"
+
+# 26.10: paylaşılabilir PNG kartlar (routes/kart.ts) — saf render servisi, public adresi yok
+[[services]]
+binding = "KART"
+service = "movelog-kart"

@@ -9,6 +9,7 @@ export type Env = {
                                  //  R2 lifecycle ile kendiliğinden düşer, hesap silme de temizliyor)
   RENDER_Q: Queue                // movelog-render kuyruğu (producer) — tüketici: movelog-dispatch
   DISPATCH?: Fetcher             // movelog-dispatch service binding (opsiyonel; wrangler.toml'a Faz 3'te eklenir)
+  KART?: Fetcher                 // movelog-kart service binding (routes/kart.ts — PNG kartlar; yoksa 503)
 
   // [vars]
   ORTAM: string                  // "golge" | "canli"

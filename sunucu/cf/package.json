@@ -5,11 +5,12 @@
     "api",
     "gps",
     "dispatch",
-    "cron"
+    "cron",
+    "kart"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dry": "for w in api gps dispatch cron; do (cd $w && npx wrangler deploy --dry-run --outdir /tmp/wr-$w) || exit 1; done"
+    "dry": "for w in api gps dispatch cron kart; do (cd $w && npx wrangler deploy --dry-run --outdir /tmp/wr-$w) || exit 1; done"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

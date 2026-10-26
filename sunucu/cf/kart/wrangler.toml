@@ -1,0 +1,20 @@
+# movelog-kart — paylaşılabilir PNG kart üreticisi (sürüş kartı + haftalık özet kartı).
+# Saf render servisi: veri tabanı/KV/R2 BAĞI YOK; girdiyi movelog-api hazırlar ve service binding
+# (api/wrangler.toml [[services]] KART) üzerinden POST eder. Public adresi YOK (workers_dev=false).
+#
+# NEDEN AYRI WORKER: resvg WASM (2,4 MB) + Noto Sans (1 MB) api paketini şişirmesin; ayrıca
+# raster iş api izolatının belleğini kirletmesin. harita-katman/statik.js'teki "WASM elendi" notu
+# KARO DİKİŞİ (N×M JPEG mozaik) içindi; burada tek SVG → tek PNG, 1080×1920 RGBA ≈ 8 MB, sınır içinde.
+name = "movelog-kart"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+workers_dev = false
+
+[observability]
+enabled = true
+
+# .wasm için wrangler varsayılan CompiledWasm kuralı yeter; yalnız fontlar için Data kuralı gerekiyor.
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true

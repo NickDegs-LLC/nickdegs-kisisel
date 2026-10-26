@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       workerlar:
-        description: 'Worker klasörleri, boşlukla (api gps dispatch cron app-yonlendir movelog-karo harita-katman)'
+        description: 'Worker klasörleri, boşlukla (kart api gps dispatch cron app-yonlendir movelog-karo harita-katman)'
         required: false
         default: ''
       d1_dosya:
@@ -61,7 +61,7 @@ jobs:
           ELLE_D1: ${{ inputs.d1_dosya }}
         run: |
           set -euo pipefail
-          IZINLI="api gps dispatch cron app-yonlendir movelog-karo harita-katman"
+          IZINLI="kart api gps dispatch cron app-yonlendir movelog-karo harita-katman"
           if [ "$OLAY" = "workflow_dispatch" ]; then
             W="$ELLE_W"; D1="$ELLE_D1"
           else
