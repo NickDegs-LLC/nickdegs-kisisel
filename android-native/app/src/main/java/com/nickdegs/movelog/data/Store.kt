@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.nickdegs.movelog.KonumKuyrugu
 import com.nickdegs.movelog.util.saveVideoToGallery
+import com.nickdegs.movelog.ui.L
 
 const val API = "https://kisisel-api.nickdegs.com"
 
@@ -447,6 +448,51 @@ class Store(app: Application) : AndroidViewModel(app) {
         }
     }
     suspend fun summarizeToday(): Boolean = req("/api/activities/summarize", "POST", JSONObject()) != null
+
+    // ---- PAYLAŞILABİLİR KART (26.10): sunucu PNG üretir (1080×1920 dikey / 1080×1080 kare) ----
+    // path örn. "/api/rides/<id>/kart?f=dikey" ya da "/api/summary/kart?f=kare".
+    // 200 değilse sunucunun {"detail": "..."} açıklamasıyla exception fırlatır (404 = iz/sürüş yok,
+    // 502/503 = kart üretilemedi) -> ekran bu mesajı Toast'ta gösterir.
+    suspend fun kartIndir(path: String): ByteArray = withContext(Dispatchers.IO) {
+        val c = (URL(API + path).openConnection() as HttpURLConnection)
+        try {
+            c.connectTimeout = 15000; c.readTimeout = 60000   // kart çizimi birkaç sn sürebilir
+            if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
+            c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
+            val code = c.responseCode
+            if (code in 200..299) return@withContext c.inputStream.use { it.readBytes() }
+            val txt = c.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            val detay = runCatching { JSONObject(txt).optString("detail", "") }.getOrDefault("")
+            throw Exception(detay.ifEmpty {
+                when (code) {
+                    404 -> L("Bu kart için kayıtlı iz yok.", "No recorded track for this card.")
+                    502, 503 -> L("Kart şu an üretilemedi, biraz sonra tekrar dene.", "Couldn't create the card right now, try again shortly.")
+                    else -> L("Kart indirilemedi ($code).", "Couldn't download the card ($code).")
+                }
+            })
+        } finally { c.disconnect() }
+    }
+
+    // Kartı indir -> cacheDir/kartlar/<dosyaAdi> -> FileProvider URI -> paylaşım menüsü.
+    // Authority manifest'teki ile AYNI olmalı: "${applicationId}.kartlar" (res/xml/kart_paths.xml).
+    suspend fun kartPaylas(ctx: Context, path: String, dosyaAdi: String) {
+        val bytes = kartIndir(path)
+        val uri = withContext(Dispatchers.IO) {
+            val dir = java.io.File(ctx.cacheDir, "kartlar").apply { mkdirs() }
+            val f = java.io.File(dir, dosyaAdi)
+            f.writeBytes(bytes)
+            androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".kartlar", f)
+        }
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = android.content.Intent.createChooser(send, L("Kartı paylaş", "Share card"))
+        if (ctx !is android.app.Activity) chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(chooser)
+    }
 
     // ---- Video üret (iOS generateRide ile aynı gövde) ----
     // HTTP durumunu döner: 200 = üretim başladı, 402 = hak yok (paket panelini aç), diğer = hata.

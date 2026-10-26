@@ -1166,6 +1166,35 @@ enum DavetLink {
         return URL(string: API + s)
     }
     var authHeader: [String:String] { ["Authorization": "Bearer " + token, "X-Device-Id": cihazKimligi()] }   // 17.09 gece (e2e #9)
+
+    // PAYLAŞILABİLİR KART (26.10): sunucu rota/haftalık özet kartını PNG olarak üretir
+    // (f=dikey 1080×1920 · f=kare 1080×1080). `path` API köküne göre: "/api/rides/<id>/kart?f=dikey"
+    // veya "/api/summary/kart?gun=YYYY-MM-DD&f=kare". 200 + çözülebilir görüntü değilse hata FIRLATIR;
+    // sunucunun {"detail": "..."} metni hata mesajı olur (generateRide'daki `sonUretimHatasi` kalıbı).
+    // `reqKod` üzerinden gider → Authorization + X-Device-Id + Accept-Language aynı, 401'de logout aynı.
+    func kartIndir(path: String) async throws -> Data {
+        let (d, kod) = try await reqKod(path)
+        if kod == 200, !d.isEmpty, UIImage(data: d) != nil { return d }
+        let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        if let m = o?["detail"] as? String, !m.isEmpty { throw KartHatasi(kod: kod, mesaj: m) }
+        switch kod {
+        case 200:
+            throw KartHatasi(kod: kod, mesaj: L("Kart görüntüsü bozuk geldi, tekrar dene.", "The card image was corrupted, try again."))
+        case 404:
+            throw KartHatasi(kod: kod, mesaj: L("Bu kart için iz bulunamadı.", "No track found for this card."))
+        case 502, 503:
+            throw KartHatasi(kod: kod, mesaj: L("Kart şu an üretilemedi, biraz sonra tekrar dene.", "Couldn't create the card right now, try again later."))
+        default:
+            throw KartHatasi(kod: kod, mesaj: L("sunucu \(kod) döndü", "server returned \(kod)"))
+        }
+    }
+}
+
+/// `Store.kartIndir` hatası: HTTP kodu + kullanıcıya gösterilecek metin (`localizedDescription` = mesaj).
+struct KartHatasi: LocalizedError {
+    let kod: Int
+    let mesaj: String
+    var errorDescription: String? { mesaj }
 }
 
 // İsimden baş harf + tutarlı renk avatarı

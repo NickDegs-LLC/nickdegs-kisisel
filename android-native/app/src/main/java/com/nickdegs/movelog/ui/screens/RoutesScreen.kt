@@ -52,6 +52,9 @@ fun RoutesScreen(store: Store) {
     var genRide by remember { mutableStateOf<Ride?>(null) }
     var uploading by remember { mutableStateOf(false) }
     var typeMenuFor by remember { mutableStateOf<String?>(null) }
+    // PAYLAŞILABİLİR KART (26.10): hangi rotanın biçim menüsü açık / hangisi indiriliyor
+    var kartMenuFor by remember { mutableStateOf<String?>(null) }
+    var kartIndiriliyor by remember { mutableStateOf<String?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var recording by remember { mutableStateOf(com.nickdegs.movelog.TrackingService.active) }
     // konum izni verilince kaydı başlat (eskiden MapPane içindeydi)
@@ -162,6 +165,36 @@ fun RoutesScreen(store: Store) {
                                         })
                                     }
                                 }
+                            }
+                        }
+                        // PAYLAŞ (26.10): sunucu rota kartını PNG çizer -> paylaşım menüsü.
+                        // Örnek (sample) rotada da var: sunucu /kart ucunda appreview rotalarına izin verir
+                        // (inceleyici paylaşımı deneyebilsin); sil/tip menüsünden farklı.
+                        Box {
+                            IconButton(onClick = { kartMenuFor = r.id }, enabled = kartIndiriliyor == null) {
+                                if (kartIndiriliyor == r.id)
+                                    CircularProgressIndicator(Modifier.size(20.dp), color = Brand.accent, strokeWidth = 2.dp)
+                                else Icon(Icons.Filled.Share, L("Kartı paylaş", "Share card"), tint = Brand.accent)
+                            }
+                            DropdownMenu(expanded = kartMenuFor == r.id, onDismissRequest = { kartMenuFor = null }) {
+                                listOf("dikey" to L("Story (9:16)", "Story (9:16)"), "kare" to L("Kare (1:1)", "Square (1:1)"))
+                                    .forEach { (f, etiket) ->
+                                        DropdownMenuItem(text = { Text(etiket) }, onClick = {
+                                            kartMenuFor = null
+                                            kartIndiriliyor = r.id
+                                            scope.launch {
+                                                try {
+                                                    store.kartPaylas(ctx, "/api/rides/${android.net.Uri.encode(r.id)}/kart?f=$f",
+                                                        "movelog-${r.id}.png")
+                                                } catch (e: Exception) {
+                                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                                    android.widget.Toast.makeText(ctx,
+                                                        e.message ?: L("Kart paylaşılamadı", "Couldn't share the card"),
+                                                        android.widget.Toast.LENGTH_SHORT).show()
+                                                } finally { kartIndiriliyor = null }
+                                            }
+                                        })
+                                    }
                             }
                         }
                         if (r.rendering) {
