@@ -652,6 +652,16 @@ async function cihazIsle(c: GorevCtx, dev: string, gun: string, gec = false, zor
       // zaten geziyor ve videos/pending_videos/R2/autovid/eşik korumalarının HEPSİNE sahip.
       // Bu dal artık yalnız else-zincirini kısa devre ettirmek için duruyor.
       log(`  → ${a.type} (premium): oto-video RETRY dalına bırakıldı (çift kuyruklama yok)`)
+      // 30.10 (Barış onayı): premium motorlu gezide de "kaydedildi" bildirimi — eskiden tek bildirim
+      // "video hazır"dı; render düşünce (Modal bakiyesi) kullanıcı sürüşün algılandığını HİÇ duymuyordu.
+      // Metin motorsuz dalla BİREBİR aynı. Tek sefer: `yeni` zaten sent:act ile süzülü (done.add yukarıda).
+      if (uid) {
+        await pushBekleyen(env, {
+          user: uid, title: `${em} ${lbl} kaydedildi`,
+          body: `${(a.dist / 1000).toFixed(1)} km · ${Math.floor(a.dur / 60)} dk otomatik algılandı. İstersen videoya dönüştür.`,
+        })
+        log(`  → ${a.type} (premium): kaydedildi + bildirim`)
+      }
     } else if (CFG.auto_video && isAuto && uid) {
       // ücretsiz motorlu: oto-üretim YOK (Barış 2026-08-28) — frenli upsell
       if (await freeBildirimHakki(env, uid, log)) {
