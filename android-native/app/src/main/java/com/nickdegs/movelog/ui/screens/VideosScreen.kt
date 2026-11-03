@@ -56,6 +56,8 @@ fun VideosScreen(store: Store) {
             .sortedByDescending { sortKey(it) }
         store.autoSaveNewVideos()   // aktif oturumda yeni biten videoyu hemen galeriye kaydet
     }
+    // 03.11: telefonda üretilen video yüklenince (YerelVideo -> store.videolarYenile++) listeyi tazele.
+    LaunchedEffect(store.videolarYenile) { if (store.videolarYenile > 0) reload() }
     LaunchedEffect(Unit) {
         reload()
         while (true) {                                  // render olan varken 12sn'de bir tazele

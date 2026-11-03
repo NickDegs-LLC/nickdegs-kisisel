@@ -93,7 +93,7 @@ fun RoutesScreen(store: Store) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Move Log", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { if (store.premium) picker.launch("*/*") }, enabled = !uploading) {
+            IconButton(onClick = { picker.launch("*/*") }, enabled = !uploading) {   // 03.11: ücretsiz — kapı yok
                 if (uploading) CircularProgressIndicator(Modifier.size(20.dp), color = Brand.accent, strokeWidth = 2.dp)
                 else Icon(Icons.Filled.FileUpload, L("GPX/TCX yükle", "Upload GPX/TCX"), tint = Brand.accent)
             }

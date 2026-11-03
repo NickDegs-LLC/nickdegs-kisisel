@@ -84,12 +84,11 @@ class Store(app: Application) : AndroidViewModel(app) {
         private set
     var me by mutableStateOf("")
     var displayName by mutableStateOf("")
-    var premium by mutableStateOf(prefs.getBoolean("nd_premium", false))
-    // 18.09: ultra / freeTactical / canTactical / sokakHak KALDIRILDI — tek abonelik katmanı: Premium.
-    // (Cihazdaki "nd_ultra" / "nd_free_tactical" tercihleri öksüz kalır, zararsız; okuyan kimse yok.)
-    // Paket hakları (1.61). Yalnız GÖSTERİM içindir; gerçek kapı sunucuda (/api/rides/generate 402 döner).
-    var videoHak by mutableStateOf(0)
-    val canGenerate: Boolean get() = premium || videoHak > 0
+    // 03.11.2026 (Barış): Move Log TAMAMEN ÜCRETSİZ — abonelik/IAP/paket kalktı. Alan geriye dönük
+    // uyum için duruyor ama HER ZAMAN true: sunucu da /api/profile'da herkese premium=true döner.
+    // (Eski "nd_ultra" / "nd_free_tactical" / video_hak tercihleri öksüz kalır, zararsız.)
+    var premium by mutableStateOf(true)
+        private set
     var loginError by mutableStateOf(false)
 
     // Açılış kapısı: token yoksa giriş; varsa SUNUCUDA doğrulanana kadar CHECKING.
@@ -110,7 +109,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 val rc = c.responseCode
                 if (rc == 200) {
                     val o = JSONObject(c.inputStream.bufferedReader().readText())
-                    me = o.optString("username", me); persistPremium(o.optBoolean("premium", premium))
+                    me = o.optString("username", me); persistPremium(true)
                 }
                 rc
             } catch (e: Exception) { -1 }
@@ -153,8 +152,10 @@ class Store(app: Application) : AndroidViewModel(app) {
     private fun persistToken(t: String) {
         token = t; prefs.edit().putString("nd_token", t).apply()
     }
+    // 03.11: değer YOK SAYILIR — uygulama ücretsiz, her kapı açık. TrackingService de nd_premium okur.
+    @Suppress("UNUSED_PARAMETER")
     fun persistPremium(v: Boolean) {
-        premium = v; prefs.edit().putBoolean("nd_premium", v).apply()
+        premium = true; prefs.edit().putBoolean("nd_premium", true).apply()
     }
     // ÇIKIŞTA KUYRUĞU DA TEMİZLE. Gerekçe: bekleyen noktalar ÇIKAN hesabın gezisine aittir.
     // Farklı hesapla girilirse KonumKuyrugu'ndaki K_SAHIP kapısı nasılsa siliyordu, ama SİLME ANI
@@ -210,11 +211,12 @@ class Store(app: Application) : AndroidViewModel(app) {
         }
 
     // Durum kodlu istek (handle çakışması gibi hataları ayırt etmek için) — iOS reqCode karşılığı
-    private suspend fun reqCode(path: String, method: String = "GET", body: JSONObject? = null): Pair<Int, String> =
+    private suspend fun reqCode(path: String, method: String = "GET", body: JSONObject? = null,
+                                okumaMs: Int = 30000): Pair<Int, String> =
         withContext(Dispatchers.IO) {
             try {
                 val c = (URL(API + path).openConnection() as HttpURLConnection)
-                c.requestMethod = method; c.connectTimeout = 15000; c.readTimeout = 30000
+                c.requestMethod = method; c.connectTimeout = 15000; c.readTimeout = okumaMs
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
                 c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
                 c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
@@ -281,8 +283,7 @@ class Store(app: Application) : AndroidViewModel(app) {
         displayName = o.optString("name", displayName)
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
-        persistPremium(o.optBoolean("premium", premium))
-        videoHak = o.optInt("video_hak", 0)
+        persistPremium(true)
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -495,10 +496,17 @@ class Store(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Video üret (iOS generateRide ile aynı gövde) ----
-    // HTTP durumunu döner: 200 = üretim başladı, 402 = hak yok (paket panelini aç), diğer = hata.
+    // HTTP durumunu döner: 200 = istek kabul edildi, diğer = hata (03.11: 402/hak kapısı YOK).
+    // 03.11 ÜCRETSİZ MOD: bulut üretimi kalıcı kapalı; sunucu işi TELEFON KUYRUĞUNA (yerelq) yazar ve
+    // {"ok":true,"yerel":true} döner -> çağıran videoyu YerelVideo ile telefonda üretir.
     /** Son uretim isteginin sunucudan gelen ACIKLAMASI (bos = hata yok). */
     var sonUretimHatasi: String = ""
         private set
+    /** Son 200 yanıtı "telefonda üret" (yerel=true) mi dedi. false = sunucu bulutta üretiyor (eski mod). */
+    var sonUretimYerel: Boolean = false
+        private set
+    /** Videolarım'ı tazeleme tetiği — telefonda üretilen video yüklenince artar. */
+    var videolarYenile by mutableStateOf(0)
 
     suspend fun generate(from: Double, to: Double, type: String, mode: String, aspect: String,
                          speed: String, camdist: String = "orta", music: String = "", line: String = "", cam: String = "", dot: String = ""): Int {
@@ -513,10 +521,78 @@ class Store(app: Application) : AndroidViewModel(app) {
         sonUretimHatasi = if (code == 200) "" else
             runCatching { JSONObject(txt).optString("detail", JSONObject(txt).optString("error", "")) }
                 .getOrDefault("")
+        sonUretimYerel = false
         if (code != 200) return code
+        sonUretimYerel = runCatching { JSONObject(txt).optBoolean("yerel", false) }.getOrDefault(false)
         // 200 gövdesinde ok=false gelirse bunu başarı sayma (sunucu yumuşak hata döndürebiliyor)
         return if (runCatching { JSONObject(txt).optBoolean("ok", false) }.getOrDefault(false)) 200 else 0
     }
+
+    // ==================== TELEFONDA VİDEO (03.11 — iOS WebRouteVideo/Store eşleniği) ====================
+    // Motor sayfası: POST /api/motor3d -> {"html","frames","fps","W","H"} (sunucu: cf/api/src/routes/motor3d.ts).
+    // Sayfa üretimi map-match + karo ön-hazırlık yüzünden uzun sürebilir -> iOS gibi 190 sn okuma payı.
+    suspend fun motorSayfasi(from: Double, to: Double, type: String, mode: String, speed: String,
+                             aspect: String, camdist: String, line: String, dot: String): Pair<Int, String> {
+        val b = JSONObject().put("from", from).put("to", to).put("type", type).put("mode", mode)
+            .put("speed", speed).put("aspect", aspect).put("camdist", camdist).put("line", line).put("dot", dot)
+        return reqCode("/api/motor3d", "POST", b, okumaMs = 190_000)
+    }
+
+    // Sunucunun "telefon üretsin" kuyruğu (KV yerelq). iOS Store.localRenders ile aynı.
+    suspend fun localRenders(): List<JSONObject> {
+        val d = req("/api/local-renders") ?: return emptyList()
+        val arr = runCatching { JSONObject(d).optJSONArray("pending") }.getOrNull() ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+    }
+    suspend fun localRenderDone(from: Double) {
+        req("/api/local-renders/done", "POST", JSONObject().put("from", from))
+    }
+
+    // Telefonda üretilen MP4'ü yükle -> R2 + Videolarım. Gövde HAM MP4; dosya belleğe ALINMAZ
+    // (setFixedLengthStreamingMode + FileInputStream ile akıtılır — 40-60 MB'lık dosyada tek kopya yok).
+    // iOS uploadLocalVideo gibi 3 deneme. Başarıda true; dosyayı SİLMEK çağıranın işi.
+    suspend fun yerelVideoYukle(file: java.io.File, ts: Double, to: Double, mode: String, aspect: String,
+                                type: String, speed: String, onProgress: (Float) -> Unit = {}): Boolean =
+        withContext(Dispatchers.IO) {
+            fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
+            val q = "?ts=${ts.toLong()}&to=${to.toLong()}&mode=${enc(mode)}&aspect=${enc(aspect)}" +
+                    "&type=${enc(type)}&speed=${enc(speed)}"
+            val boy = file.length()
+            if (boy <= 0L) return@withContext false
+            for (deneme in 1..3) {
+                var c: HttpURLConnection? = null
+                try {
+                    c = (URL("$API/api/videos/upload$q").openConnection() as HttpURLConnection)
+                    c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 600_000
+                    c.doOutput = true
+                    c.setFixedLengthStreamingMode(boy)
+                    c.setRequestProperty("Content-Type", "video/mp4")
+                    if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                    c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
+                    java.io.FileInputStream(file).use { giris ->
+                        c.outputStream.use { cikis ->
+                            val tampon = ByteArray(256 * 1024)
+                            var giden = 0L
+                            while (true) {
+                                val n = giris.read(tampon)
+                                if (n < 0) break
+                                cikis.write(tampon, 0, n)
+                                giden += n
+                                onProgress((giden.toDouble() / boy).toFloat().coerceIn(0f, 1f))
+                            }
+                        }
+                    }
+                    val kod = c.responseCode
+                    runCatching { (if (kod in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes() } }
+                    if (kod in 200..299) return@withContext true
+                    if (kod in 400..499 && kod != 408 && kod != 429) return@withContext false   // kalıcı ret: tekrar deneme
+                } catch (e: Exception) {
+                    // ağ hatası -> tekrar dene
+                } finally { c?.disconnect() }
+                if (deneme < 3) kotlinx.coroutines.delay(deneme * 3000L)
+            }
+            false
+        }
 
     suspend fun musicList(): List<Pair<String, String>> {
         val d = req("/api/music") ?: return emptyList()
@@ -562,27 +638,8 @@ class Store(app: Application) : AndroidViewModel(app) {
         return if (id != null && url != null) id to url else null
     }
 
-    // ---- Play satın almasını SUNUCUDA doğrula (client'a güvenme) -> premium ----
-    suspend fun verifyGooglePurchase(token: String): Boolean {
-        val d = req("/api/iap/google", "POST", JSONObject().put("token", token)) ?: return false
-        val ok = JSONObject(d).optBoolean("ok", false)
-        if (ok) persistPremium(true)
-        return ok
-    }
-
-    // Tüketilebilir (boost / video paketi) -> sunucu hakkı yazar. (18.09: sokak paketi kaldırıldı.)
-    // sku GÖNDERİLİR: sunucu 1.61'den beri beyaz liste uyguluyor, sku'suz istek boost sayılır.
-    suspend fun verifyGoogleBoost(token: String, sku: String = BOOST_SKU): Boolean {
-        val d = req("/api/iap/google/boost", "POST",
-            JSONObject().put("token", token).put("sku", sku)) ?: return false
-        val o = JSONObject(d)
-        val ok = o.optBoolean("ok", false)
-        if (ok) {
-            // Sunucu güncel toplamı döner; profili beklemeden sayaçları tazele
-            if (o.has("video")) videoHak = o.optInt("video", videoHak)
-        }
-        return ok
-    }
+    // 03.11: Play satın alma doğrulama uçları (verifyGooglePurchase / verifyGoogleBoost) KALDIRILDI —
+    // uygulama ücretsiz, Billing yok.
 
     // ---- GPX/TCX yükle (ham body; iOS uploadRoute ile aynı) -> (from,to,km) ----
     suspend fun uploadRoute(bytes: ByteArray): Triple<Double, Double, Double>? = withContext(Dispatchers.IO) {

@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.74"   // 26.10: paylaşılabilir rota kartı + haftalık özet kartı (1.73: takip durum kartı · örnek rota fiksi)
+        versionName = "1.75"   // 03.11: ÜCRETSİZ (IAP/abonelik kalktı) + video telefonda (YerelVideo) + kart/uydu harita (1.74 yayınlanmadı)
     }
 
     signingConfigs {
@@ -83,7 +83,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)
     // 16.09: osmdroid (OpenStreetMap) KALDIRILDI — canlı konum haritası uygulamadan çıkınca
     // kütüphane hiçbir yerden kullanılmaz hâle geldi, APK'yı boşuna büyütüyordu.
-    implementation("com.android.billingclient:billing-ktx:8.0.0")   // Play zorunlulugu: 7.x 31 Agu 2026'da reddedilecek
+    // 03.11.2026: com.android.billingclient:billing-ktx KALDIRILDI — Move Log ücretsiz, IAP/abonelik yok
+    // (Billing.kt + PaywallScreen.kt silindi; BILLING izni bu bağımlılığın manifestinden geliyordu, o da gitti).
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
     // 18.09: io.livekit:livekit-android KALDIRILDI — canlı interkom/telsiz uygulamadan çıktı,
     // kütüphane hiçbir yerden kullanılmıyordu ve APK'yı boşuna büyütüyordu (osmdroid ile aynı gerekçe).

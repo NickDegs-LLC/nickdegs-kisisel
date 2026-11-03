@@ -24,11 +24,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nickdegs.movelog.data.Billing
 import com.nickdegs.movelog.data.Store
-import com.nickdegs.movelog.data.VIDEO_SKULARI
 import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
+import com.nickdegs.movelog.video.YerelVideo
 import kotlinx.coroutines.launch
 
 private data class Opt(val id: String, val label: String)
@@ -49,28 +48,9 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var userTracks by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var musicUploading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var paketAcik by remember { mutableStateOf(false) }   // 402 sonrası paket paneli
-    var showPaywall by remember { mutableStateOf(false) }  // 10.10: 402 panelinden Premium'a geçiş
     // FIX 05.09: uretim hatasi mesaji (400/429/503) — oncesinde hicbir yerde gosterilmiyordu
     var hataMetni by remember { mutableStateOf("") }
-    var paketMsg by remember { mutableStateOf("") }
     val ctx = LocalContext.current
-    // Paket satın alma: sunucu doğrularsa consume edilir, hak sayacı tazelenir.
-    val billing = remember {
-        // 17.09 gece (Cursor e2e #5): bu örnek de restore()'da aboneliği doğrulayıp ack'lesin — yoksa
-        // Paywall açılmadan gelen ack'siz abonelik 3 günde iade olur.
-        Billing(ctx, onPurchase = { tok, bitti -> scope.launch { bitti(store.verifyGooglePurchase(tok)) } },
-                onConsumable = { tok, sku, bitti ->
-            scope.launch {
-                val ok = store.verifyGoogleBoost(tok, sku)
-                bitti(ok)
-                paketMsg = if (ok) L("Hakkın eklendi.", "Credits added.")
-                           else L("Doğrulanamadı, birazdan tekrar denenecek.",
-                                  "Couldn't verify — it will retry shortly.")
-                if (ok) paketAcik = false
-            }
-        })
-    }
     LaunchedEffect(Unit) {
         stock = store.musicList(); userTracks = store.musicLibrary()
         // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (iOS 1.57 paritesi): kullanıcı müzik yüklediyse ve henüz seçim yapmadıysa
@@ -106,12 +86,10 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(L("Video oluştur", "Create video"), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            // 10.10 İLK VİDEO HEDİYE: ücretsiz kullanıcı hakkını görsün (yeni üye 1 hakla doğar; sunucu düşer)
-            if (!store.premium) {
-                Text(if (store.videoHak > 0) L("Video hakkın: ", "Your video credits: ") + store.videoHak
-                     else L("Video hakkın yok", "No video credits"),
-                    color = Brand.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            }
+            // 03.11: ücretsiz — "video hakkın" sayacı kalktı. Video artık TELEFONDA üretilir.
+            Text(L("Video telefonunda üretilir; bitene kadar ekranı açık tut.",
+                   "The video is created on your phone; keep the screen on until it finishes."),
+                color = Color(0xFF9AA4B2), fontSize = 13.sp)
             Picker(L("Görünüm", "Mode"), modes, mode) { mode = it }
             // 18.09: tactical dalı ve Ultra kamera açısı bloğu kaldırıldı; bu üç picker KALIYOR
             // (eskiden else gövdesindeydi — video üretiminin çekirdek ayarları).
@@ -190,62 +168,45 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                     }
                 }
             }
-            // ---- VİDEO PAKETİ (1.61): sunucu 402 dediyse abonelik yerine tek seferlik paket sun ----
-            if (paketAcik) {
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .background(Color(0x1AFFFFFF)).padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(L("Video hakkın kalmadı", "You're out of video credits"),
-                        color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                    Text(L("Abonelik istemiyorsan tek seferlik paket alabilirsin.",
-                           "Don't want a subscription? Buy a one-time pack."),
-                        color = Color(0xFF9AA4B2), fontSize = 13.sp)
-                    VIDEO_SKULARI.forEach { sku ->
-                        val fiyat = billing.paketFiyati(sku)
-                        if (fiyat.isNotEmpty()) {
-                            val adet = if (sku == "video_uclu") 3 else 5
-                            Button(
-                                onClick = { (ctx as? android.app.Activity)?.let { billing.buyPaket(it, sku) } },
-                                colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
-                                modifier = Modifier.fillMaxWidth().height(46.dp)
-                            ) {
-                                Text(L("$adet video · $fiyat", "$adet videos · $fiyat"),
-                                    fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                    if (billing.paketler.keys.none { it in VIDEO_SKULARI })
-                        Text(L("Paketler şu an yüklenemedi.", "Packs couldn't load right now."),
-                            color = Color(0xFF9AA4B2), fontSize = 12.sp)
-                    // 10.10: 402 paneli YALNIZ paket sunuyordu — abonelik yolu bu ekrandan hiç yoktu
-                    // (18.09–10.10: 48×402, /api/iap/google 0 çağrı). Premium düğmesi eklendi.
-                    Button(
-                        onClick = { showPaywall = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF23303F)),
-                        modifier = Modifier.fillMaxWidth().height(46.dp)
-                    ) {
-                        Text(L("Premium'a geç — her sürüş otomatik video", "Go Premium — every ride becomes a video"),
-                            fontWeight = FontWeight.SemiBold)
-                    }
-                    if (paketMsg.isNotEmpty())
-                        Text(paketMsg, color = Color(0xFF9AA4B2), fontSize = 12.sp)
-                }
-            }
             Button(
-                onClick = {
+                onClick = onClick@{
+                    val act = ctx as? android.app.Activity
+                    if (act == null || YerelVideo.calisiyor) {
+                        android.widget.Toast.makeText(ctx, L("Başka bir video şu an üretiliyor.",
+                            "Another video is being created right now."), android.widget.Toast.LENGTH_SHORT).show()
+                        return@onClick
+                    }
                     busy = true; hataMetni = ""
                     scope.launch {
-                        val kod = store.generate(from, to, type, mode, aspect, speed, cam, music, line, if (mode == "3d") camAngle else "",
-                            if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot)
-                        busy = false
-                        when (kod) {
-                            200 -> { if (!store.premium && store.videoHak > 0) store.videoHak -= 1; onClose() }
-                            402 -> paketAcik = true       // hak yok → paket panelini aç, sayfayı KAPATMA
-                            // FIX 05.09: 400/429/503 icin DAL YOKTU -> dugme sonuclanmiyor, ekran
-                            // sessizce donuyordu. Sunucunun kendi aciklamasini goster.
-                            else -> hataMetni = store.sonUretimHatasi.ifEmpty {
-                                if (kod == 0) "Sunucuya ulasilamadi (baglanti?)" else "Video olusturulamadi (sunucu $kod)"
+                        val dotHex = if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot
+                        // 1) Sunucuya bildir: ayarlar kaydedilir, iş TELEFON KUYRUĞUNA (yerelq) yazılır.
+                        //    Üretim yarıda kalırsa (iptal/arka plan/ağ) iş kuyrukta durur, sonraki açılışta
+                        //    MoveLogApp'teki ON_RESUME kancası onu otomatik üretir.
+                        val kod = store.generate(from, to, type, mode, aspect, speed, cam, music, line,
+                            if (mode == "3d") camAngle else "", dotHex)
+                        if (kod != 200) {
+                            busy = false
+                            // FIX 05.09: sunucunun kendi açıklamasını göster (400/429/503...).
+                            hataMetni = store.sonUretimHatasi.ifEmpty {
+                                if (kod == 0) L("Sunucuya ulaşılamadı (bağlantı?)", "Couldn't reach the server (network?)")
+                                else L("Video oluşturulamadı (sunucu $kod)", "Couldn't create the video (server $kod)")
                             }
+                            return@launch
+                        }
+                        if (!store.sonUretimYerel) { busy = false; onClose(); return@launch }   // eski bulut modu: sunucu üretir
+                        // 2) TELEFONDA üret -> yükle -> kuyruktan düş (tam ekran ilerleme: YerelVideoKatmani)
+                        val ok = YerelVideo.uretVeYukle(act, store, YerelVideo.Istek(
+                            from = from, to = to, type = type, mode = mode, speed = speed, aspect = aspect,
+                            camdist = cam, line = line, dot = dotHex))
+                        busy = false
+                        if (ok) {
+                            android.widget.Toast.makeText(ctx, L("Video hazır — Videolarım'da.", "Video ready — in My Videos."),
+                                android.widget.Toast.LENGTH_SHORT).show()
+                            onClose()
+                        } else {
+                            val neden = YerelVideo.sonHata.ifEmpty { L("Video üretilemedi.", "Couldn't create the video.") }
+                            hataMetni = neden
+                            android.widget.Toast.makeText(ctx, neden, android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 },
@@ -260,12 +221,6 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                 Text(hataMetni, color = Color(0xFFFF6B6B), fontSize = 13.sp,
                      modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
-        }
-        if (showPaywall) {
-            androidx.compose.ui.window.Dialog(
-                onDismissRequest = { showPaywall = false },
-                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-            ) { PaywallScreen(store) { showPaywall = false; if (store.premium) paketAcik = false } }
         }
     }
 }

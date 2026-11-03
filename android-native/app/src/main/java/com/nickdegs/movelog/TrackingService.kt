@@ -115,8 +115,8 @@ class TrackingService : Service() {
         // HERKES (ücretsiz dahil) sürekli en yüksek hassasiyette kalıp pil yiyordu. Artık iOS Tracker.sensParams
         // ile BİREBİR aynı tablo; ücretsiz kullanıcı iOS'taki gibi zorunlu "basit".
         val prefs = getSharedPreferences("movelog", MODE_PRIVATE)
-        val prem = prefs.getBoolean("nd_premium", false)
-        val sens = if (prem) (prefs.getString("nd_sensitivity", "dengeli") ?: "dengeli") else "basit"
+        // 03.11: uygulama ücretsiz -> hassasiyet seçimi herkese açık (eski nd_premium kapısı kalktı).
+        val sens = prefs.getString("nd_sensitivity", "dengeli") ?: "dengeli"
         val (ivMs, distM) = when (sens) {
             "hassas"  -> Pair(5000L, 5f)     // en hassas: 5 sn / 5 m (en yoğun iz)
             "dengeli" -> Pair(15000L, 12f)   // dengeli: 15 sn / 12 m

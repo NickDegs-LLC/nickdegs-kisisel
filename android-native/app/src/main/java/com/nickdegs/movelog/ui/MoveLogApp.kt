@@ -95,10 +95,17 @@ fun MoveLogApp(store: Store) {
     // Uygulama her öne geldiğinde (ON_RESUME): yeni videoları sessizce galeriye kaydet.
     // R2'de video 1 gün durur -> kullanıcı hangi sekmede olursa olsun bu pencere içinde galeriye iner.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    // 03.11 TELEFONDA VİDEO: öne gelişte sunucunun telefon kuyruğundaki (yerelq) bekleyen işleri üret
+    // (iOS processLocalRenderQueue eşi; en çok 2 iş, aynı anda tek üretim — YerelVideo kilidi).
+    val aktivite = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
     DisposableEffect(lifecycleOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 scope.launch { store.autoSaveNewVideos() }
+                if (aktivite != null) scope.launch {
+                    kotlinx.coroutines.delay(1500)   // ekran yerleşsin (kök görünüm ölçülmüş olsun)
+                    com.nickdegs.movelog.video.YerelVideo.kuyruguIsle(aktivite, store)
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -159,6 +166,8 @@ fun MoveLogApp(store: Store) {
             }
         }
     }
+    // Telefonda video üretimi sürerken tam ekran ilerleme (ayrı pencere — motor WebView'ı örter).
+    com.nickdegs.movelog.video.YerelVideoKatmani()
 }
 
 // Açılış kapısı ekranı: checking=doğrulanıyor (spinner); değilse İNTERNET GEREKLİ (yeniden dene).
