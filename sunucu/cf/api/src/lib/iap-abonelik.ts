@@ -8,6 +8,7 @@
 import { simdi } from './db'
 import type { Env } from './env'
 import { adminq } from './ortak'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 
 /** premium-suresi.ts DOKUNMA — inceleme hesapları asla düşürülmez. */
 export const DOKUNMA = new Set(['appreview', 'appreview2'])
@@ -102,6 +103,10 @@ export async function abonelikUygula(
     const row = await db.prepare('SELECT premium_until FROM users WHERE uid = ?1')
       .bind(uid).first<{ premium_until: number | null }>()
     const karar = abonelikKarar(uid, row ? row.premium_until : null, istek)
+    if (karar === 'dusuruldu' && UCRETSIZ_MOD) {
+      // 03.11 ÜCRETSİZ MOD: abonelik bitse de premium DÜŞMEZ (herkes premium, satış yok).
+      return karar
+    }
     if (karar === 'dusuruldu') {
       await db.prepare('UPDATE users SET premium = 0, updated_at = ?1 WHERE uid = ?2')
         .bind(ts, uid).run()

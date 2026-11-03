@@ -15,6 +15,7 @@
 // Android (grup6.ts:685 bilinçli olarak until yazmaz), redeem ve App Store inceleme hesaplarıdır
 // (appreview / appreview2 — bunlar kesilirse uygulama incelemede reddedilir).
 import type { GorevCtx } from '../takvim'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 import { bildirimBekleyen, pushBekleyen, simdi } from '../lib'
 
 // Kullanıcı bildirimi (13 dil) — abonelik bittiğinde premium kapanıyor.
@@ -53,6 +54,7 @@ const DOKUNMA = new Set(['appreview', 'appreview2'])
 
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, now, log } = c
+  if (UCRETSIZ_MOD) { log('ücretsiz mod: premium düşürme kapalı'); return }   // 03.11
   const esik = now - EK_SURE_GUN * 86400
   // 18.09: Ultra katmanı kaldırıldı → düşürme artık YALNIZ premium_until'e bakar.
   // (Eski çift katman koruması — "aktif/süresiz Ultra'sı varsa premium düşürülmez" — konusuz kaldı.)

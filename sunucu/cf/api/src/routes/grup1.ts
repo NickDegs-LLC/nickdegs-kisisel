@@ -42,6 +42,7 @@ import { authUser } from '../lib/auth'
 import { BARIS_UID, etkinSahip, getUser, ornekMi, simdi } from '../lib/db'
 import { hata } from '../lib/hata'
 import { aylikButceLimit, modMaliyet } from '../../../ortak/src/maliyet'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 
 const g = new Hono<AppEnv>()
 
@@ -498,6 +499,25 @@ function videoRenkStmts(db: D1Database, user: string, body: Record<string, unkno
 }
 
 /** Kuyruk gönderimi — 128KB Queues sınırı: büyük req (gömülü iz) R2'ye, kuyruğa işaretçi. */
+/** ÜCRETSİZ MOD (03.11): işi buluta değil TELEFON kuyruğuna (KV yerelq:{uid}, activity-detect ile aynı
+ *  kayıt biçimi) yazar; uygulama /api/local-renders ile alıp kendi GPU'suyla üretir, bitince
+ *  /api/videos/upload ile yükler. Aynı `from` zaten kuyruktaysa ikinci kez eklenmez. */
+async function yerelKuyrugaYaz(env: Env, user: string, req: Record<string, unknown>): Promise<void> {
+  const anahtar = `yerelq:${user}`
+  let lst: Record<string, unknown>[] = []
+  try { lst = JSON.parse((await env.KV.get(anahtar)) || '[]') as Record<string, unknown>[] } catch { lst = [] }
+  if (!Array.isArray(lst)) lst = []
+  const frm = Math.trunc(Number(req.from ?? 0))
+  if (!lst.some((x) => Math.trunc(Number(x.from ?? 0)) === frm)) {
+    const kayit: Record<string, unknown> = {}
+    for (const k of ['from', 'to', 'type', 'mode', 'speed', 'aspect', 'line', 'dot', 'camdist', 'vid']) if (k in req) kayit[k] = req[k]
+    if (req.music) kayit.music = req.music
+    kayit.ride_id = req.vid; kayit.ts = simdi()
+    lst.push(kayit)
+    await env.KV.put(anahtar, JSON.stringify(lst.slice(-10)))
+  }
+}
+
 async function kuyrugaGonder(env: Env, req: Record<string, unknown>, user: string, ts: number, vid: string): Promise<void> {
   const govde = JSON.stringify(req)
   if (enc.encode(govde).length > 120_000) {
@@ -806,7 +826,7 @@ g.post('/api/rides/generate', authUser, async (c) => {
   // 18.09: TEK-SEFERLİK BEDAVA TAKTİK + Ultra taktik kapısı KALKTI (taktik modu kaldırıldı).
   let hakOdendi = false          // satın alınmış video hakkıyla üretim (aylık bütçeden düşmez)
   // VİDEO HAKKI (main.py:2529-2541): free katman üretmez; paket varsa hak düşer
-  if (!prof.premium) {
+  if (!prof.premium && !UCRETSIZ_MOD) {
     const vh = Math.trunc(Number(prof.video_hak ?? 0))
     if (vh <= 0) hata(402, 'video premium özelliği')
     yaz.push(db.prepare('UPDATE users SET video_hak = COALESCE(video_hak, 0) - 1, updated_at = ?2 WHERE uid = ?1').bind(user, now))
@@ -861,14 +881,22 @@ g.post('/api/rides/generate', authUser, async (c) => {
   }
   yaz.push(...videoRenkStmts(db, user, body))
 
-  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string, hakOdendi)
-  if (!kap.ok) kapasiteHatasi(kap.why)
-  yaz.push(...kap.stmts)
-
   // BENZERSİZ VIDEO ID: {gün}_{from}_{üretim_ts} (main.py:2602-2606)
   const day = trDay(frmInt)
   const vid = `${day}_${frmInt}_${now}`
   req.vid = vid
+  if (UCRETSIZ_MOD) {
+    // ÜCRETSİZ MOD (03.11): bulut yok — telefon kuyruğu. pending_videos'a YAZILMAZ (sonsuz
+    // "Hazırlanıyor" olmasın); bütçe sayacı yok (GPU maliyeti sıfır). Yeni istemci bu yanıtı alınca
+    // üretimi telefonda hemen başlatır; eski istemci bir sonraki açılışta /api/local-renders ile alır.
+    if (!profRow) yaz.unshift(db.prepare('INSERT OR IGNORE INTO users (uid, premium, created_at, updated_at) VALUES (?1, 1, ?2, ?2)').bind(user, now))
+    if (yaz.length) await db.batch(yaz)
+    await yerelKuyrugaYaz(env, user, req)
+    return c.json({ ok: true, yerel: true, vid })
+  }
+  const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string, hakOdendi)
+  if (!kap.ok) kapasiteHatasi(kap.why)
+  yaz.push(...kap.stmts)
   if (upl) req.track = upl
 
   yaz.push(db.prepare(
@@ -909,7 +937,7 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
   const frm = Number(src?.ts) || Number(meta?.ts) || pyFloat(baseTs)   // float(base_ts): sayı değilse 500
   let to = Number(src?.to_ts) || Number(meta?.to_ts) || Math.trunc(frm) + 2 * 3600
 
-  if (!prof.premium) hata(402, 'video premium özelliği')
+  if (!prof.premium && !UCRETSIZ_MOD) hata(402, 'video premium özelliği')
 
   // YÜKLENEN GPX/TCX izi + pencere fix'i (main.py:2654-2658)
   const frmInt = Math.trunc(frm)
@@ -954,12 +982,18 @@ g.post('/api/rides/:ride_id/regenerate', authUser, async (c) => {
   }
   yaz.push(...videoRenkStmts(db, user, body))
 
+  const vid = `${day}_${frmInt}_${now}`                                // main.py:2707-2709
+  req.vid = vid
+  if (UCRETSIZ_MOD) {
+    // ÜCRETSİZ MOD (03.11): yeniden üretim de telefonda (bkz. generate).
+    if (!profRow) yaz.unshift(db.prepare('INSERT OR IGNORE INTO users (uid, premium, created_at, updated_at) VALUES (?1, 1, ?2, ?2)').bind(user, now))
+    if (yaz.length) await db.batch(yaz)
+    await yerelKuyrugaYaz(env, user, req)
+    return c.json({ ok: true, yerel: true, vid })
+  }
   const kap = await bumpDailyCap(db, env.KV, user, prof, req.mode as string, req.speed as string, false)
   if (!kap.ok) kapasiteHatasi(kap.why)
   yaz.push(...kap.stmts)
-
-  const vid = `${day}_${frmInt}_${now}`                                // main.py:2707-2709
-  req.vid = vid
   if (upl) req.track = upl
 
   yaz.push(db.prepare(

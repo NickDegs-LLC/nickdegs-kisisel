@@ -25,6 +25,7 @@ import { SpecHata, specUret, type MotorGirdi } from '../motor3d/spec'
 import { vendorAl } from '../motor3d/vendor'
 import { sayfaUret } from '../motor3d/sayfa'
 import { surucuUret } from '../motor3d/surucu'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 
 const g = new Hono<AppEnv>()
 
@@ -39,7 +40,7 @@ g.post('/api/motor3d', authUser, async (c) => {
   const prof = await getUser(c.env.DB, user)
   // ═══ PREMIUM KAPISI (harita-proxy.py:441-446, nihai 2026-08-28) ═══
   // Ücretsiz katmanda video ÜRETİLMEZ (ne telefonda ne bulutta) -> bu ucu yalnız Premium/Ultra kullanır.
-  if (!prof?.premium) hata(403, 'premium gerekli')
+  if (!prof?.premium && !UCRETSIZ_MOD) hata(403, 'premium gerekli')   // 03.11 ücretsiz mod: herkes üretir
 
   const frm = Number(gov.from ?? 0), to = Number(gov.to ?? 0)
   if (!frm || !to || to <= frm || to - frm > 86400) hata(400, 'aralik')

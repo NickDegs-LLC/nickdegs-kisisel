@@ -18,3 +18,12 @@ enabled = true
 type = "Data"
 globs = ["**/*.ttf"]
 fallthrough = true
+
+# 03.11: arka plan uydu karoları harita-katman'dan (service binding; public uç yok). HARITA_UC = öneki
+# içeren kök (api/wrangler.toml ile aynı değer); karolar `${HARITA_UC}/xyz/sat/{z}/{x}/{y}.jpg`.
+[vars]
+HARITA_UC = "https://harita.nickdegs.com/24579d9db6c7c001"
+
+[[services]]
+binding = "HARITA"
+service = "harita-katman"

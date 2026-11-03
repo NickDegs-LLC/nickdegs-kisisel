@@ -11,7 +11,7 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../lib/env'
 import { authUser } from '../lib/auth'
 import { hata } from '../lib/hata'
-import { BARIS_UID, ORNEK_UID, simdi } from '../lib/db'
+import { BARIS_UID, ORNEK_UID, kendiKaydiVar, simdi } from '../lib/db'
 import { izSuz, mesafeKm } from '../../../ortak/src/izsuzgec'
 import { trGun } from '../../../ortak/src/zaman'
 
@@ -24,6 +24,11 @@ type RideRow = { rid: string; uid: string | null; date: string | null; ts: numbe
 const MAX_NOKTA = 400          // karta giden iz (DP sadeleştirme kart tarafında)
 const MAX_POS = 20000          // D1'den okunacak en çok nokta (bir sürüş)
 const KM_SPIKE = 400           // bunun üstü GPS sıçraması, hız örneğine girmez
+
+/** Hata metni: Accept-Language tr ise Türkçe, değilse İngilizce (istemciler `detail`i olduğu gibi gösterir). */
+function metin(c: { req: { header: (k: string) => string | undefined } }, tr: string, en: string): string {
+  return (c.req.header('accept-language') ?? '').toLowerCase().startsWith('tr') ? tr : en
+}
 
 function bicim(c: { req: { query: (k: string) => string | undefined } }): 'dikey' | 'kare' {
   const f = c.req.query('f') ?? c.req.query('format') ?? ''
@@ -118,10 +123,10 @@ g.get('/api/rides/:ride_id/kart', authUser, async (c) => {
   const user = c.get('user')
   const rid = c.req.param('ride_id')
   const ride = await rideBul(c.env.DB, rid)
-  if (!ride) hata(404, 'rota bulunamadi')
+  if (!ride) hata(404, metin(c, 'Rota bulunamadı.', 'Route not found.'))
   const sahip = ride.uid || BARIS_UID
   // örnek içerik (appreview) herkese görünür; başkasının rotası → 404 (IDOR: var/yok sızdırma)
-  if (sahip !== user && sahip !== ORNEK_UID) hata(404, 'rota bulunamadi')
+  if (sahip !== user && sahip !== ORNEK_UID) hata(404, metin(c, 'Rota bulunamadı.', 'Route not found.'))
 
   const ovr = await c.env.DB.prepare('SELECT ride_type FROM ride_type_overrides WHERE rid = ?1')
     .bind(rid).first<{ ride_type: string }>()
@@ -129,7 +134,7 @@ g.get('/api/rides/:ride_id/kart', authUser, async (c) => {
   const ts = Math.trunc(Number(ride.ts)), to = Math.trunc(Number(ride.to_ts)) || ts
   const [p, izSahip] = await Promise.all([profil(c.env.DB, user), profil(c.env.DB, sahip)])
   const iz = await izYukle(c.env, ride.track_key, izSahip.tracker_id, ts, to)
-  if (iz.length < 2 && !(Number(ride.km) > 0)) hata(404, 'bu rota için iz yok')
+  if (iz.length < 2 && !(Number(ride.km) > 0)) hata(404, metin(c, 'Bu rota için kayıtlı iz yok.', 'No recorded track for this route.'))
 
   const o = olc(iz)
   const km = Number(ride.km) > 0 ? Number(ride.km) : o.km
@@ -152,21 +157,30 @@ g.get('/api/summary/kart', authUser, async (c) => {
   const user = c.get('user')
   const now = simdi()
   const gunQ = c.req.query('gun') ?? ''
-  const g1 = /^\d{4}-\d{2}-\d{2}$/.test(gunQ) ? gunQ : trGun(now)
-  const g0 = gunKaydir(g1, -6)
+  let g1 = /^\d{4}-\d{2}-\d{2}$/.test(gunQ) ? gunQ : trGun(now)
+  let g0 = gunKaydir(g1, -6)
   const db = c.env.DB
   // Barış'ın eski kayıtlarında uid boş olabilir (main.py:255) — _own kuralıyla aynı
-  const sahipKosul = user === BARIS_UID ? "(uid = ?1 OR uid IS NULL OR uid = '')" : 'uid = ?1'
-  const [haftaR, silR, gunlerR] = await db.batch<Record<string, unknown>>([
-    db.prepare(`SELECT rid, uid, date, ts, to_ts, ride_type, km, track_key FROM rides WHERE ${sahipKosul} AND date >= ?2 AND date <= ?3 ORDER BY ts`)
-      .bind(user, g0, g1),
-    db.prepare('SELECT rid FROM deleted_rides'),
-    db.prepare(`SELECT DISTINCT date FROM rides WHERE ${sahipKosul} AND date <= ?2 AND date IS NOT NULL ORDER BY date DESC LIMIT 90`)
-      .bind(user, g1),
-  ])
-  const silinen = new Set((silR.results as Array<{ rid: string }>).map((r) => r.rid))
-  const rides = (haftaR.results as unknown as RideRow[]).filter((r) => !silinen.has(r.rid))
-  if (!rides.length) hata(404, 'bu hafta sürüş yok')
+  let sahipUid = user
+  let sahipKosul = user === BARIS_UID ? "(uid = ?1 OR uid IS NULL OR uid = '')" : 'uid = ?1'
+  const haftaSorgu = () => db.prepare(`SELECT rid, uid, date, ts, to_ts, ride_type, km, track_key FROM rides WHERE ${sahipKosul} AND date >= ?2 AND date <= ?3 ORDER BY ts`)
+    .bind(sahipUid, g0, g1)
+  const silR = await db.prepare('SELECT rid FROM deleted_rides').all<{ rid: string }>()
+  const silinen = new Set(silR.results.map((r) => r.rid))
+  let rides = ((await haftaSorgu().all<RideRow>()).results ?? []).filter((r) => !silinen.has(r.rid))
+  // ÖRNEK HAFTA: kendi kaydı hiç olmayan kullanıcı (Rotalar'da örnek rotaları gören — appreview dahil)
+  // boş hafta yerine örnek hesabın son aktif haftasını görür; inceleyici düğmeyi deneyebilsin.
+  let ornek = false
+  if (!rides.length && !(await kendiKaydiVar(db, user))) {
+    const son = await db.prepare('SELECT MAX(date) AS d FROM rides WHERE uid = ?1').bind(ORNEK_UID).first<{ d: string | null }>()
+    if (son?.d) {
+      ornek = true; sahipUid = ORNEK_UID; sahipKosul = 'uid = ?1'; g1 = son.d; g0 = gunKaydir(g1, -6)
+      rides = ((await haftaSorgu().all<RideRow>()).results ?? []).filter((r) => !silinen.has(r.rid))
+    }
+  }
+  if (!rides.length) hata(404, metin(c, 'Bu hafta kayıtlı sürüş yok.', 'No rides recorded this week.'))
+  const gunlerR = await db.prepare(`SELECT DISTINCT date FROM rides WHERE ${sahipKosul} AND date <= ?2 AND date IS NOT NULL ORDER BY date DESC LIMIT 90`)
+    .bind(sahipUid, g1).all<{ date: string }>()
 
   const gunler = Array.from({ length: 7 }, (_, i) => ({ gun: gunKaydir(g0, i), km: 0, n: 0, dk: 0 }))
   const idx = new Map(gunler.map((d, i) => [d.gun, i]))
@@ -182,16 +196,17 @@ g.get('/api/summary/kart', authUser, async (c) => {
     if (!enUzun || km > (Number(enUzun.km) || 0)) enUzun = r
   }
   // seri: g1'den (ya da g1 boşsa bir önceki günden) geriye kesintisiz aktif gün
-  const aktif = new Set((gunlerR.results as Array<{ date: string }>).map((r) => r.date))
+  const aktif = new Set(gunlerR.results.map((r) => r.date))
   let seri = 0
   let d = aktif.has(g1) ? g1 : gunKaydir(g1, -1)
   while (aktif.has(d) && seri < 365) { seri += 1; d = gunKaydir(d, -1) }
 
   const p = await profil(db, user)
+  const izP = ornek ? await profil(db, ORNEK_UID) : p
   let iz: Array<{ lat: number; lon: number }> | undefined
   let izKm: number | undefined
   if (enUzun && Number(enUzun.km) > 0) {
-    const ham = await izYukle(c.env, enUzun.track_key, p.tracker_id, Math.trunc(Number(enUzun.ts)), Math.trunc(Number(enUzun.to_ts)))
+    const ham = await izYukle(c.env, enUzun.track_key, izP.tracker_id, Math.trunc(Number(enUzun.ts)), Math.trunc(Number(enUzun.to_ts)))
     if (ham.length > 1) { iz = seyrelt(ham, 250); izKm = Number(enUzun.km) }
   }
   const veri = {
@@ -200,7 +215,7 @@ g.get('/api/summary/kart', authUser, async (c) => {
   }
   const r = await kartCiz(c.env, 'hafta', bicim(c), veri, c.req.query('svg') === '1')
   // bugünle biten hafta değişebilir (yeni sürüş) → kısa önbellek; geçmiş hafta sabit
-  const cache = g1 === trGun(now) ? 'private, max-age=600' : 'private, max-age=86400'
+  const cache = g1 === trGun(now) || ornek ? 'private, max-age=600' : 'private, max-age=86400'
   return yanit(r, `movelog-hafta-${g1}.${c.req.query('svg') === '1' ? 'svg' : 'png'}`, cache)
 })
 

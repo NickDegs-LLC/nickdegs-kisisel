@@ -15,6 +15,7 @@
 // ONARIM: kırık ayağın SAHİBİ bekçi hemen sıraya alınır (gorev_takvimi.next_run=0) — CF'de "servisi
 // yeniden başlat" karşılığı budur. Kuru modda yalnız 'YAPARDIM' yazılır.
 import type { GorevCtx } from '../takvim'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 import type { Env } from '../env'
 import { hexRasgele, kvJson, kvJsonYaz } from '../lib'
 import { motorOku } from '../../../ortak/src/maliyet'
@@ -101,7 +102,7 @@ export async function kos(c: GorevCtx): Promise<void> {
         not: 'atlandı (motor modal)' })
       const uc = MODAL_RUN[e.ad]
       if (!uc) continue
-      if (kuru(env)) {
+      if (kuru(env) || UCRETSIZ_MOD) {
         ayaklar.push({ ad: `modal-run:${e.ad}`, ok: true, ms: 0,
           not: 'KURU: Modal /run sonda atlandı' })
       } else {
@@ -118,7 +119,7 @@ export async function kos(c: GorevCtx): Promise<void> {
       }
       continue
     }
-    if (kuru(env) || !env.RUNPOD_API_KEY) {
+    if (kuru(env) || !env.RUNPOD_API_KEY || UCRETSIZ_MOD) {   // 03.11 ücretsiz mod: bulut sondası yok
       if (e.id) {
         ayaklar.push({ ad: `runpod-health:${e.ad}`, ok: true, ms: 0,
           not: `KURU: /health atlandı (${kuru(env) ? 'ORTAM=golge' : 'anahtar yok'})` })
