@@ -16,12 +16,15 @@
 // Bu, "bedava ama belki hiç" yerine "önce bedava dene, olmazsa üret" davranışıdır.
 import type { GorevCtx } from '../takvim'
 import { kvJson, kvJsonYaz, kvListe, renderKuyruk, simdi } from '../lib'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 
 const YAS_SN = 6 * 3600      // 6 saat: telefon bir gün içinde birkaç kez açılır; açılmadıysa üretmeyecek
 const TUR_TAVAN = 3          // tek turda en fazla 3 devir — ani maliyet patlaması olmasın
 
 export async function kos(c: GorevCtx): Promise<void> {
   const { env, log } = c
+  // 03.11 ÜCRETSİZ MOD: buluta devir YOK — iş telefonda kalır (gorev_takvimi 0016 ile de kapalı).
+  if (UCRETSIZ_MOD) { log('ücretsiz mod: buluta devir kapalı'); return }
   const simdiTs = simdi()
   const anahtarlar = await kvListe(env, 'yerelq:', 200)
   if (!anahtarlar.length) { log('yerel kuyruk boş'); return }

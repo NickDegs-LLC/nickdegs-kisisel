@@ -10,6 +10,9 @@
 
 export type Nokta = { lat: number; lon: number }
 export type Bicim = 'dikey' | 'kare'
+/** Arka plan karosu: kutu içindeki piksel konumu + base64 JPEG (index.ts HARITA'dan çeker). */
+export type Karo = { px: number; py: number; data: string }
+export type KaroPlani = { z: number; karolar: Array<{ x: number; y: number; px: number; py: number }> }
 
 export type SurusVeri = {
   dil: string
@@ -151,35 +154,92 @@ function sadelestir(p: XY[], tol: number): XY[] {
   return out
 }
 
-/** İzi kutuya sığdırır (en-boy korunur, ortalanır). Nokta yoksa null. */
-function izYerlestir(iz: Nokta[], k: Kutu, pad: number): { d: string; bas: XY; son: XY } | null {
-  const pts = iz.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+// ---------- Web Mercator (karolarla aynı projeksiyon) ----------
+const KARO = 256, Z_MIN = 3, Z_MAX = 16
+function merc(p: Nokta): XY {
+  const lat = Math.max(-85.05, Math.min(85.05, p.lat))
+  const f = Math.sin((lat * Math.PI) / 180)
+  return { x: (p.lon + 180) / 360, y: 0.5 - Math.log((1 + f) / (1 - f)) / (4 * Math.PI) }
+}
+
+type Yerlesim = { pts: XY[]; olcek: number; ox: number; oy: number; z: number }
+
+/** İzi kutuya sığdırır (en-boy korunur, ortalanır). Karo isteniyorsa ölçek karo zoom'una kilitlenir
+ *  (256·2^z) ki rota ile karolar üst üste otursun; istenmiyorsa sürekli ölçek. Nokta yoksa null. */
+function yerlesim(iz: Nokta[], k: Kutu, pad: number, karolu: boolean): Yerlesim | null {
+  const pts = iz.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon)).map(merc)
   if (!pts.length) return null
-  const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length
-  const kx = Math.cos((lat0 * Math.PI) / 180) || 1
-  const pr = pts.map((p) => ({ x: p.lon * kx, y: -p.lat }))
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  for (const q of pr) { if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x; if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y }
-  const dx = Math.max(maxX - minX, 1e-5), dy = Math.max(maxY - minY, 1e-5)
-  const olcek = Math.min((k.w - 2 * pad) / dx, (k.h - 2 * pad) / dy)
-  const ox = k.x + (k.w - dx * olcek) / 2, oy = k.y + (k.h - dy * olcek) / 2
-  const px = pr.map((q) => ({ x: ox + (q.x - minX) * olcek, y: oy + (q.y - minY) * olcek }))
-  const s = sadelestir(px, 1.2)
+  for (const q of pts) { if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x; if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y }
+  const dx = Math.max(maxX - minX, 1e-7), dy = Math.max(maxY - minY, 1e-7)
+  let olcek = Math.min((k.w - 2 * pad) / dx, (k.h - 2 * pad) / dy)
+  let z = 0
+  if (karolu) {
+    z = Math.max(Z_MIN, Math.min(Z_MAX, Math.floor(Math.log2(olcek / KARO))))
+    olcek = KARO * Math.pow(2, z)
+  }
+  const ox = k.x + (k.w - dx * olcek) / 2 - minX * olcek
+  const oy = k.y + (k.h - dy * olcek) / 2 - minY * olcek
+  return { pts: pts.map((q) => ({ x: ox + q.x * olcek, y: oy + q.y * olcek })), olcek, ox, oy, z }
+}
+
+/** Kutuyu kaplayan karolar (index.ts bunları HARITA'dan çeker). Projeksiyon rotayla AYNI yerleşim. */
+export function karoPlani(iz: Nokta[], k: Kutu, pad = 40): KaroPlani | null {
+  const y = yerlesim(iz, k, pad, true)
+  if (!y) return null
+  const n = Math.pow(2, y.z)
+  const x0 = Math.floor((k.x - y.ox) / KARO), x1 = Math.floor((k.x + k.w - y.ox) / KARO)
+  const y0 = Math.floor((k.y - y.oy) / KARO), y1 = Math.floor((k.y + k.h - y.oy) / KARO)
+  const karolar: KaroPlani['karolar'] = []
+  for (let tx = x0; tx <= x1; tx++) for (let ty = y0; ty <= y1; ty++) {
+    if (ty < 0 || ty >= n) continue
+    const wx = ((tx % n) + n) % n          // tarih çizgisi sarması
+    karolar.push({ x: wx, y: ty, px: y.ox + tx * KARO, py: y.oy + ty * KARO })
+  }
+  return { z: y.z, karolar }
+}
+
+export const SURUS_KUTU: Record<Bicim, Kutu> = {
+  dikey: { x: 90, y: 300, w: 900, h: 940 },
+  kare: { x: 90, y: 210, w: 900, h: 450 },
+}
+
+function izYerlestir(iz: Nokta[], k: Kutu, pad: number, karolu: boolean): { d: string; bas: XY; son: XY } | null {
+  const y = yerlesim(iz, k, pad, karolu)
+  if (!y) return null
+  const s = sadelestir(y.pts, 1.2)
   const f = (v: number) => (Math.round(v * 10) / 10).toString()
   let d = `M${f(s[0].x)} ${f(s[0].y)}`
   for (let i = 1; i < s.length; i++) d += `L${f(s[i].x)} ${f(s[i].y)}`
   return { d, bas: s[0], son: s[s.length - 1] }
 }
 
-function rotaSvg(iz: Nokta[], k: Kutu, kalin = 9): string {
-  const y = izYerlestir(iz, k, 40)
+let klipSayac = 0
+function rotaSvg(iz: Nokta[], k: Kutu, kalin = 9, karolar?: Karo[]): string {
+  const karolu = !!(karolar && karolar.length)
+  const y = izYerlestir(iz, k, 40, karolu)
   if (!y) return ''
+  let s = ''
+  if (karolu) {
+    // ARKA PLAN HARİTASI (Barış 03.11: "arkasına haritayı yerleştir"): uydu karoları kutuya
+    // kırpılır, üstüne hafif karartma + alt/üst solma gelir ki rota ve yazılar okunsun.
+    const id = `rk${++klipSayac}`
+    s += `<clipPath id="${id}"><rect x="${k.x}" y="${k.y}" width="${k.w}" height="${k.h}" rx="36"/></clipPath>`
+    s += `<g clip-path="url(#${id})">`
+    for (const t of karolar!) {
+      s += `<image x="${Math.round(t.px)}" y="${Math.round(t.py)}" width="${KARO}" height="${KARO}" preserveAspectRatio="none" href="data:image/jpeg;base64,${t.data}"/>`
+    }
+    s += `<rect x="${k.x}" y="${k.y}" width="${k.w}" height="${k.h}" fill="#05090e" fill-opacity="0.28"/>`
+    s += `<rect x="${k.x}" y="${k.y}" width="${k.w}" height="${k.h}" fill="url(#solma)"/>`
+    s += `</g>`
+    s += `<rect x="${k.x}" y="${k.y}" width="${k.w}" height="${k.h}" rx="36" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="2"/>`
+  }
   const tekNokta = y.d.indexOf('L') < 0
   const yol = tekNokta ? '' :
     `<path d="${y.d}" fill="none" stroke="${ACCENT}" stroke-opacity="0.35" stroke-width="${kalin * 3}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>` +
     `<path d="${y.d}" fill="none" stroke="${ACCENT}" stroke-width="${kalin}" stroke-linecap="round" stroke-linejoin="round"/>`
   const r = Math.max(8, Math.round(kalin * 1.5))
-  return yol +
+  return s + yol +
     `<circle cx="${y.bas.x}" cy="${y.bas.y}" r="${r}" fill="${BAS}" stroke="${BEYAZ}" stroke-width="3"/>` +
     `<circle cx="${y.son.x}" cy="${y.son.y}" r="${r}" fill="${SON}" stroke="${BEYAZ}" stroke-width="3"/>`
 }
@@ -191,6 +251,7 @@ function govdeBas(W: number, H: number): string {
     `<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${BG0}"/><stop offset="1" stop-color="${BG1}"/></linearGradient>` +
     `<radialGradient id="isik" cx="0.15" cy="0.1" r="0.8"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.14"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0"/></radialGradient>` +
     `<filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="12"/></filter>` +
+    `<linearGradient id="solma" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${BG0}" stop-opacity="0.55"/><stop offset="0.18" stop-color="${BG0}" stop-opacity="0"/><stop offset="0.82" stop-color="${BG1}" stop-opacity="0"/><stop offset="1" stop-color="${BG1}" stop-opacity="0.6"/></linearGradient>` +
     `</defs>` +
     `<rect width="${W}" height="${H}" fill="url(#bg)"/><rect width="${W}" height="${H}" fill="url(#isik)"/>`
 }
@@ -224,7 +285,7 @@ function istatistikSatiri(yE: number, yD: number, kolon: Array<[string, string]>
 }
 
 // ---------- SÜRÜŞ KARTI ----------
-export function surusKarti(v: SurusVeri, bicim: Bicim): string {
+export function surusKarti(v: SurusVeri, bicim: Bicim, karolar?: Karo[]): string {
   const e = etiket(v.dil), loc = e.loc
   const W = 1080, H = bicim === 'dikey' ? 1920 : 1080
   const turAd = e.tur[v.tur] ?? e.tur['']
@@ -237,13 +298,13 @@ export function surusKarti(v: SurusVeri, bicim: Bicim): string {
   let s = govdeBas(W, H)
   if (bicim === 'dikey') {
     s += baslik(150, 208, turAd, altSatir, 34, 36)
-    s += rotaSvg(v.iz, { x: 90, y: 300, w: 900, h: 940 })
+    s += rotaSvg(v.iz, SURUS_KUTU.dikey, 9, karolar)
     s += buyukKm(1440, kmStr(v.km, loc), 170, 60)
     s += istatistikSatiri(1565, 1640, kolon, 28, 60, W)
     s += altBilgi(W, 1760, 1842, v.kullanici, 44)
   } else {
     s += baslik(112, 162, turAd, altSatir, 28, 30)
-    s += rotaSvg(v.iz, { x: 90, y: 210, w: 900, h: 450 }, 8)
+    s += rotaSvg(v.iz, SURUS_KUTU.kare, 8, karolar)
     s += buyukKm(815, kmStr(v.km, loc), 130, 50)
     s += istatistikSatiri(905, 962, kolon, 24, 46, W)
     s += altBilgi(W, 1008, 1050, v.kullanici, 34)

@@ -13,6 +13,7 @@ import {
 } from '../lib'
 import { registerRide, renderDone } from '../ic'
 import { izSuz } from '../../../ortak/src/izsuzgec'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 // 🔴 TR günü ORTAK kaynaktan (22.09): geç gün hattının İKİ ucu (gps worker'ı + bu görev) artık
 // aynı tanımı okuyor. cron/src/lib.ts'te birebir aynı kopyalar DURUYOR (öteki görevler kullanıyor,
 // bu tur onların kapsamı dışıydı). Bu dosya tamamını ortak modülden alır: yalnız trGun'u ortaktan,
@@ -427,6 +428,13 @@ async function queueCloudVideo(
     } catch { return false }
   }
   const prem = !!prof.premium
+  // 03.11 ÜCRETSİZ MOD: bulut YOK — her mod, her kullanıcı TELEFON kuyruğuna. Uygulama açılınca
+  // üretir; 7 gün açılmazsa /api/local-renders süzer (eski davranış; bulut devri de yok).
+  if (UCRETSIZ_MOD) {
+    if (await yerelqYaz('ÜCRETSİZ MOD — bulut kalıcı kapalı, telefonda üretilecek')) return
+    log(`  → yerelq yazılamadı (KV), iş düştü: ${rideId}`)
+    return
+  }
   // 🔴 VARSAYILAN ARTIK BULUT (Barış 05.09: "Varsayılan olarak telefondan üretilmeyecek").
   // NEDEN: telefon render'ı görünmez WKWebView'da kare kare snapshot alıyor; uygulama ARKA PLANA
   // düşerse snapshot BOŞ/BEYAZ döner (WebRouteVideo.swift:24'ün kendi yorumu: "ekran hiyerarşisinde

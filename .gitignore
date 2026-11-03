@@ -20,3 +20,4 @@ shot.js
 # FCM yapilandirmasi — API anahtari icerir, ASLA commit edilmez (18.09 sizinti dersi)
 android-native/app/google-services.json
 android-native/.kotlin/
+sunucu/cf/.local/

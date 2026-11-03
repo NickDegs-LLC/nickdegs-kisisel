@@ -1,4 +1,5 @@
 import { izSuz } from '../../ortak/src/izsuzgec'
+import { UCRETSIZ_MOD } from '../../ortak/src/mod'
 import { aylikButceLimit, butcePushBaslik, butcePushGovde, modMaliyet, trGunu } from '../../ortak/src/maliyet'
 
 export type Env = {
@@ -291,6 +292,14 @@ export default {
       const rid = String(m.body?.ride_id ?? m.body?.vid ?? '?')
       // GÖLGE KORUMASI (2026-08-30, cron dolumu): 'golge:' önekli iş RunPod'a GİTMEZ — MUTLAK KURAL
       // (bakiye korunur; movelog-cron ORTAM=golge iken her işi bu önekle kuyruklar). KV izi bırak + ack.
+      // 03.11 ÜCRETSİZ MOD: bulut kalıcı kapalı — kuyruğa ne düşerse düşsün motora GİTMEZ (ack + iz).
+      if (UCRETSIZ_MOD) {
+        await env.KV.put(`dispatch:ucretsiz:${rid}`,
+          JSON.stringify({ t: simdi(), mode: m.body?.mode ?? null, kaynak: m.body?.kaynak ?? null }),
+          { expirationTtl: 86400 })
+        m.ack()
+        continue
+      }
       if (rid.startsWith('golge:') || env.ORTAM === 'golge') {
         await env.KV.put(`dispatch:golge:${rid}`,
           JSON.stringify({ t: simdi(), mode: m.body?.mode ?? null, kaynak: m.body?.kaynak ?? null }),
