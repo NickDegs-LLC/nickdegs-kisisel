@@ -187,7 +187,7 @@ struct RootView: View {
             if tracker.active, let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
             await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
-            await store.processLocalRenderQueue()      // bekleyen oto-videoları TELEFONDA üret (03.11.2026: tek üretim yolu, herkes)
+            await MainActor.run { store.kuyrukBaslat() }   // bekleyen oto-videoları TELEFONDA üret (iptal edilebilir görev; 03.11)
             #if DEBUG
             // QA (yalnız Debug/simülatör): -qaMotor3d <from> <to> -> web motoru 36 kareyle dener, Documents'a yazar
             let _qa = ProcessInfo.processInfo.arguments
@@ -212,7 +212,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, ph in
             if ph == .active {
                 GpsKuyruk.shared.bosalt()   // 🔴 bu satır Tracker'a HİÇ dokunmuyordu: öne gelince kuyruk boşalsın
-                Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() }   // her öne gelişte: 1 günlük pencereye yetiş
+                Task { await store.autoSaveNewVideos(); await MainActor.run { store.kuyrukBaslat() } }   // her öne gelişte: 1 günlük pencereye yetiş
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in

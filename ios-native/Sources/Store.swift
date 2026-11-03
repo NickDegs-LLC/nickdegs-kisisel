@@ -729,6 +729,28 @@ enum DavetLink {
         return true
     }
     @MainActor static func telefonKilidiBirak() { localQueueBusy = false }
+    // 03.11.2026 (Barış TestFlight 1.72: "Video üret"e basınca "zaten bir video üretiliyor" hatası):
+    // otomatik kuyruk görünmez biçimde render alırken elle üretim kilide takılıyordu. Kuyruk artık
+    // İPTAL EDİLEBİLİR bir görevde koşar; elle üretim önce kuyruğu iptal eder, sonra kilidi alır.
+    // İptal edilen iş yerelq'de kalır (done gönderilmez) → bir sonraki öne gelişte yeniden denenir.
+    @MainActor static var kuyrukGorevi: Task<Void, Never>?
+    @MainActor func kuyrukBaslat() {
+        if Self.kuyrukGorevi != nil { return }                    // zaten koşuyor
+        Self.kuyrukGorevi = Task { [weak self] in
+            await self?.processLocalRenderQueue()
+            await MainActor.run { Store.kuyrukGorevi = nil }
+        }
+    }
+    /// Kuyruk render'ını iptal eder ve kilit bırakılana kadar (en çok ~20 sn) bekler.
+    func kuyrukIptalEt() async {
+        let gorev = await MainActor.run { Store.kuyrukGorevi }
+        guard let gorev else { return }
+        gorev.cancel()
+        for _ in 0..<80 {
+            if await MainActor.run(body: { !Store.localQueueBusy }) { return }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
     /// TELEFONDA üretim sürüyor mu (1.63). UI "Hazırlanıyor…" yerine "Telefonunda üretiliyor…"
     /// yazsın diye: Barış 05.09 — "üret tuşuna basınca direkt 'üretiliyor' yazıyor, telefondan
     /// üretiliyorsa telefonunda üretiliyor diye yazacak." Kullanıcı uygulamayı kapatırsa üretimin

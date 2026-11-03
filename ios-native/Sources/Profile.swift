@@ -45,7 +45,6 @@ struct ProfileView: View {
     @State private var sumVid = SummaryVid()
     @State private var showSumVid = false
     @State private var sumQueued = false
-    @State private var groupPref = "both"   // grup sürüş video tercihi: both|group|solo
     // 05.09 — arkadaşlıktan çıkarma + davet akışı (ikisi de sunucuda vardı, istemcide yoktu)
     @State private var silinecekArkadas: Friend? = nil
     @State private var davetKod = ""
@@ -354,25 +353,7 @@ struct ProfileView: View {
                                "Summarizes your day so far; you'll get a notification when it's ready."))
                             .font(.caption2).foregroundStyle(.secondary).padding(.top, 2)
 
-                        // GRUP SÜRÜŞ (1.7): arkadaşla birlikte sürüşte video tercihi
-                        section(L("Grup sürüş","Group ride"))
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 6) {
-                                Label(L("Birlikte sürüş videosu","Ride-together video"), systemImage: "person.2.fill")
-                                    .font(.system(size: 16, weight: .medium))
-                                Spacer()
-                                Picker("", selection: Binding(
-                                    get: { groupPref },
-                                    set: { v in groupPref = v; Task { await store.setGroupVideoPref(v) } })) {
-                                    Text(L("Ortak + kendi videom","Joint + my own")).tag("both")
-                                    Text(L("Sadece ortak video","Joint video only")).tag("group")
-                                    Text(L("Sadece kendi videom","My own video only")).tag("solo")
-                                }.pickerStyle(.menu).tint(Brand.accent)
-                            }
-                            Text(L("Bir arkadaşınla birlikte sürünce ikinizin de yer aldığı TEK ortak video otomatik üretilir ve ikinize de gelir.",
-                                   "When you ride with a friend, ONE shared video featuring both of you is created automatically and sent to you both."))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }.padding(14).glassPanel(18)
+                        // 03.11.2026: GRUP SÜRÜŞ bölümü KALDIRILDI (ortak video bulut gerektiriyordu; bulut kapalı).
 
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
@@ -417,7 +398,6 @@ struct ProfileView: View {
         .task {
             prof = await store.profile(); await reloadFriends(); stats = await store.stats()
             let s = await store.summarySettings(); sumEnabled = s.enabled; sumHour = s.hour; sumVid = s.video
-            groupPref = await store.groupVideoPref()
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
                 if AppEnv.screen == "avatar" { showAvatar = true }

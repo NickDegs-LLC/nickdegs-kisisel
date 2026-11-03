@@ -402,7 +402,14 @@ struct GenerateSheet: View {
         // Öncesi: tek koruma `guard telefonIs == nil` idi (yalnız kendi çift dokunuşuna karşı);
         // otomatik kuyruk aynı anda ikinci bir render başlatabiliyor, ikisi de ana aktörü
         // paylaştığı için üretim kabaca yarı hıza düşüyordu.
-        guard await MainActor.run(body: { Store.telefonKilidiAl() }) else {
+        // 03.11: kilit otomatik kuyruktaysa kuyruğu iptal et (iş yerelq'de kalır) ve kilidi devral.
+        var kilit = await MainActor.run(body: { Store.telefonKilidiAl() })
+        if !kilit {
+            await MainActor.run { telefonAsama = L("bekleyen üretim durduruluyor…", "stopping the queued render…") }
+            await store.kuyrukIptalEt()
+            kilit = await MainActor.run(body: { Store.telefonKilidiAl() })
+        }
+        guard kilit else {
             await MainActor.run {
                 telefonNeden = L("telefonda zaten bir video üretiliyor — bitmesini bekle",
                                  "a video is already being made on your phone — please wait")
