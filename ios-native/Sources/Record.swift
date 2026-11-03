@@ -15,27 +15,22 @@ func rideLabel(_ t: String) -> String {
     }
 }
 
-// Gezi bitince video oluşturma: tip (değiştirilebilir) + mod + en-boy (premium gating)
+// Gezi bitince video oluşturma: tip (değiştirilebilir) + mod + en-boy. 03.11.2026: herkese açık, telefonda üretim.
 struct GenerateSheet: View {
     @EnvironmentObject var store: Store
-    @EnvironmentObject var iap: IAP
     @Environment(\.dismiss) var dismiss
     let from: Double
     let to: Double
     let rideId: String?                         // nil = yeni üretim, dolu = mevcut videoyu düzenle
     @State var type: String
-    @AppStorage("nd_premium") var premium = false
     @State private var mode: String
     @State private var aspect: String
     @State private var speed: String            // "fast"=Kısa / "medium"=Orta / "slow"=Uzun
     @AppStorage("nd_reel") private var reel = false   // Faz 3c: ~15-20sn dikey paylaşım teaser'ı (9:16 zorlar)
-    @State private var sending = false
     @State private var done = false
-    @State private var renderPct: Double = 0
     @State private var localErr = false
-    // TELEFONDA ÜRET (1.62, Barış 05.09): artık AYRI ve BİLEREK seçilen bir yol.
-    // Eskiden ana buton premium'da sessizce telefonda üretiyordu; kullanıcı nerede üretildiğini
-    // bilmiyordu ve uygulamadan çıkınca üretim beyaz kareler yazıyordu.
+    // TELEFONDA ÜRET: 03.11.2026'dan beri TEK üretim yolu (bulut kapandı). Tam ekran ilerleme
+    // katmanı kullanıcıya üretimin telefonda olduğunu ve ekranın açık kalması gerektiğini söyler.
     @State private var telefonAktif = false            // tam ekran üretim katmanı açık mı
     @State private var telefonPct: Double = 0
     /// 🔴 FİKS 05.09: yüzdeyi TÜKETİCİDE monotonlaştır. Motorlar 0.99 raporlayıp ardından sabit
@@ -46,9 +41,7 @@ struct GenerateSheet: View {
     @State private var telefonHata = false
     @State private var telefonNeden = ""
     @State private var telefonAsama = ""   // "kareler çiziliyor" / "kapanış sahnesi" / "yükleniyor"…      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
-    @State private var showPaywall = false
-    @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak (premium)
-    @AppStorage("nd_video_hak") private var videoHak = 0        // satın alınmış bulut video hakkı (3'lü/5'li paket)
+    @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak
     @State private var stock: [[String:String]] = []
     @State private var musicUploading = false
     @State private var note = ""
@@ -64,7 +57,9 @@ struct GenerateSheet: View {
          aspect: String = "9:16", speed: String = "medium", rideId: String? = nil) {   // varsayılan DİKEY (Barış 2026-08-26: "insanların ilgilendiği dikey")
         self.from = from; self.to = to; self.rideId = rideId
         _type = State(initialValue: type)
-        _mode = State(initialValue: mode)
+        // 03.11.2026: telefonda yalnız düz/kuşbakışı/3B üretilir. Eski kayıtlardan gelen bilinmeyen
+        // modlar (tactical/street/google3d…) düz moda düşer — telefon motoru onları tanımaz.
+        _mode = State(initialValue: ["flat", "flyover", "3d"].contains(mode) ? mode : "flat")
         _aspect = State(initialValue: aspect)
         _speed = State(initialValue: speed)
     }
@@ -87,60 +82,46 @@ struct GenerateSheet: View {
 
                     field(L("Süre","Length"))
                     }
-                    // Otonom = PREMIUM: süre tamamen rotaya göre, max 3dk (günde 1). Free seçince paywall.
+                    // Otonom: süre tamamen rotaya göre, max 3dk. 03.11.2026: herkese açık.
                     if mode != "tactical" {
-                    Picker("", selection: Binding(
-                        get: { speed },
-                        set: { v in if v == "auto" && !premium { showPaywall = true } else { speed = v } })) {
+                    Picker("", selection: $speed) {
                         Text(L("Kısa","Short")).tag("fast")
                         Text(L("Orta","Medium")).tag("medium")
                         Text(L("Uzun","Long")).tag("slow")
-                        Text(premium ? L("Otonom","Auto") : L("Otonom 🔒","Auto 🔒")).tag("auto")
+                        Text(L("Otonom","Auto")).tag("auto")
                     }.pickerStyle(.segmented)
                     Text(speed == "auto"
-                         ? L("Otonom: süre TAMAMEN rotaya göre ayarlanır (max 3 dk). Şehir yolculukları için ideal. Premium.",
-                             "Auto: length fully scales with your route (max 3 min). Great for city trips. Premium.")
+                         ? L("Otonom: süre TAMAMEN rotaya göre ayarlanır (max 3 dk). Şehir yolculukları için ideal.",
+                             "Auto: length fully scales with your route (max 3 min). Great for city trips.")
                          : L("Kısa ≈15sn, Orta ≈30sn, Uzun rotaya göre (max 60sn). Süre rota uzunluğuna göre ölçeklenir.",
                              "Short ≈15s, Medium ≈30s, Long scales with distance (max 60s)."))
                         .font(.caption2).foregroundStyle(speed == "auto" ? Brand.accent : .secondary)
                     }
 
-                    // KAMERA MESAFESİ (premium, her video): kameranın rotaya yakınlığı.
+                    // KAMERA MESAFESİ (her video): kameranın rotaya yakınlığı.
                     if mode != "tactical" {
                     field(L("Kamera mesafesi","Camera distance"))
-                    Picker("", selection: Binding(
-                        get: { premium ? camdist : "orta" },
-                        set: { v in if premium { camdist = v } else { showPaywall = true } })) {
+                    Picker("", selection: $camdist) {
                         Text(L("Yakın","Near")).tag("yakin")
                         Text(L("Orta","Medium")).tag("orta")
                         Text(L("Uzak","Far")).tag("uzak")
                     }.pickerStyle(.segmented)
                     }
-                    Text(premium
-                         ? L("Kameranın rotaya yakınlığı: Yakın daha yakın çekim, Uzak daha geniş kadraj.",
-                             "How close the camera follows: Near = tighter shot, Far = wider framing.")
-                         : L("Kamera mesafesi Premium ile seçilebilir.",
-                             "Camera distance is a Premium option."))
-                        .font(.caption2).foregroundStyle(premium ? .secondary : Brand.accent)
+                    Text(L("Kameranın rotaya yakınlığı: Yakın daha yakın çekim, Uzak daha geniş kadraj.",
+                           "How close the camera follows: Near = tighter shot, Far = wider framing."))
+                        .font(.caption2).foregroundStyle(.secondary)
 
                     field(L("Görünüm","Style"))
-                    modeRow("flat", L("Düz","Flat"), free: true)
-                    modeRow("flyover", L("Kuş bakışı (Flyover)","Bird's-eye (Flyover)"), free: false)
-                    modeRow("3d", L("3D · arazi kabartmalı","3D · terrain relief"), free: false)
+                    modeRow("flat", L("Düz","Flat"))
+                    modeRow("flyover", L("Kuş bakışı (Flyover)","Bird's-eye (Flyover)"))
+                    modeRow("3d", L("3D · arazi kabartmalı","3D · terrain relief"))
                     if mode != "tactical" {
                         field(L("En-boy","Aspect"))
                         Picker("", selection: $aspect) {
                             Text("16:9").tag("16:9"); Text("9:16").tag("9:16")
-                        }.pickerStyle(.segmented).disabled(reel)
-                        // REEL: kısa dikey paylaşım teaser'ı (~15-20sn, 9:16 zorlar)
-                        Toggle(isOn: $reel) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(L("Reel — kısa paylaşım klibi 🎬","Reel — short share clip 🎬")).font(.subheadline)
-                                Text(L("~15-20 sn dikey (9:16), sosyal medya için ideal. Uzun rotalarda hızlı teaser.",
-                                       "~15-20s vertical (9:16), great for social. A fast teaser on long routes."))
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }.tint(Brand.accent)
+                        }.pickerStyle(.segmented)
+                        // 03.11: REEL anahtarı KALDIRILDI — telefon motorları (LocalRouteVideo/WebRouteVideo)
+                        // reel üretmiyor; bulut yolu kapandığı için düğme işlevsizdi.
                     }
                     // (tactical aspect picker'ı yukarıdaki tactical bloğunda — 9:16/4:5, clamp'li; ayrı/çakışan UI YOK)
 
@@ -235,171 +216,52 @@ struct GenerateSheet: View {
                         } else {
                         Button(L("Yok","None")) { music = "" }
                         ForEach(stock, id: \.self) { s in
-                            Button(s["name"] ?? "") {
-                                if premium { music = "stock:\(s["id"] ?? "")" } else { showPaywall = true }
-                            }
+                            Button(s["name"] ?? "") { music = "stock:\(s["id"] ?? "")" }
                         }
-                        Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) {
-                            if premium { showAudioPicker = true } else { showPaywall = true }
-                        }
+                        Button(L("Kendi müziğin… (yükle)","Your own… (upload)")) { showAudioPicker = true }
                         }   // tactical/normal müzik listeleri
                     } label: {
                         HStack {
                             Image(systemName: "music.note")
                             Text(musicLabel).lineLimit(1).truncationMode(.tail)   // uzun şarkı adı satırı itmesin (her ekran boyutu)
-                            if !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
                             Spacer(); Image(systemName: "chevron.down").font(.caption2)
                         }.padding(.horizontal, 14).padding(.vertical, 12)
                     }.buttonStyle(.plain).glassPanel(14).tint(.primary)
 
-                    if !premium && videoHak <= 0 {
-                        Text(L("Rota kaydı ücretsiz. Videoya dökmek Premium: 1080p, filigransız, Flyover/3B, müzik.",
-                               "Route tracking is free. Turning it into a video is Premium: 1080p, no watermark, Flyover/3D, music."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-
-                    // ═══ VİDEO PAKETİ (2026-08-28, Barış) ═══
-                    // Ücretsiz katmanda video üretilmez. Kullanıcı ya Premium olur ya paket alır.
-                    // 5'li paketin birim fiyatı 3'lüden ucuz — teşvik burada görünür.
-                    if !premium {
-                        VStack(alignment: .leading, spacing: 8) {
-                            // 10.10: sayı çeviri anahtarının DIŞINDA (12 dil TRANS "Your video credits: " ile eşleşsin)
-                            Label(videoHak > 0
-                                  ? L("Video hakkın: ", "Your video credits: ") + "\(videoHak)"
-                                  : L("Video hakkın yok", "No video credits"),
-                                  systemImage: "film.stack")
-                                .font(.subheadline.weight(.semibold))
-                            if videoHak > 0 {
-                                // İLK VİDEO HEDİYE: yeni üye 1 hakla doğar — hak varken tüm modlar açık
-                                Text(L("Hakkın bu videoya yeter — Flyover ve 3B dahil.",
-                                       "Your credit covers this video — Flyover and 3D included."))
-                                    .font(.caption2).foregroundStyle(Brand.accent)
-                            }
-                            Text(L("Sürüşlerin Rotalar'da kayıtlı. Videoya dönüştürmek için paket al ya da Premium'a geç — Premium'da her sürüş otomatik videoya döner.",
-                                   "Your rides are saved in Routes. Buy a pack to turn them into videos, or go Premium — Premium turns every ride into a video automatically."))
-                                .font(.caption2).foregroundStyle(.secondary)
-                            HStack(spacing: 10) {
-                                if let p3 = iap.videoUclu {
-                                    Button { Task { if await iap.buyVideo(p3) { await store.syncPremium() } } }
-                                    label: { Text(L("3 video · \(p3.displayPrice)", "3 videos · \(p3.displayPrice)")) }
-                                        .buttonStyle(.glassy)
-                                }
-                                if let p5 = iap.videoBesli {
-                                    Button { Task { if await iap.buyVideo(p5) { await store.syncPremium() } } }
-                                    label: { Text(L("5 video · \(p5.displayPrice)", "5 videos · \(p5.displayPrice)")) }
-                                        .buttonStyle(.glassyProminent())
-                                }
-                            }
-                            if iap.boostWorking { ProgressView() }
-                            if let m = iap.boostMsg { Text(m).font(.caption2).foregroundStyle(.secondary) }
-                        }.padding(12).glassPanel(14)
-                    }
-
+                    // ═══ TEK "VİDEO ÜRET" DÜĞMESİ (Barış 03.11.2026) ═══
+                    // Move Log tamamen ÜCRETSİZ; abonelik/IAP ve bulut (sunucu GPU) üretimi kalıcı
+                    // KAPANDI. Video HER ZAMAN bu telefonda üretilir: düz/kuşbakışı LocalRouteVideo,
+                    // 3B WebRouteVideo. Bitince `uploadLocalVideo` ile sunucuya yüklenir, Videolarım'da
+                    // görünür. Yeniden üretimde (rideId dolu) de aynı yol — rotanın from/to'su burada var.
+                    // Uygulama ön planda kalmalı (WKWebView arka planda BOŞ kare döndürür): tam ekran
+                    // ilerleme katmanı + "çıkarsan iptal olur" uyarısı aşağıdaki fullScreenCover'da.
                     Button {
-                        // ═══ KATMAN KURALI (Barış 2026-08-28, nihai) ═══
-                        //   ÜCRETSİZ      -> VİDEO YOK. Sürüşler Rotalar'da görüntülenir, o kadar.
-                        //                    Video isterse: Premium olur VEYA video paketi satın alır.
-                        //                    ("Hem telefonda üretme verip hem video başına satın alım
-                        //                     koymak saçma oldu; bedavalardan video üretmeyi kaldır.")
-                        //   PREMIUM/ULTRA -> düz/kuşbakışı telefonda, 3B bulutta (ödediği konfor).
-                        //   VİDEO HAKKI   -> ücretsiz kullanıcı paket aldıysa video BULUTTA üretilir.
-                        if !premium && videoHak <= 0 { showPaywall = true; return }
-                        sending = true; localErr = false
-                        Task {
-                            // 1.62 (Barış 05.09: "Varsayılan olarak telefondan üretilmeyecek"):
-                            // bu buton ARTIK HER ZAMAN BULUTTA üretir. Telefonda üretmek isteyen
-                            // aşağıdaki ayrı "Telefonda üret" düğmesini kullanır — orada ne olduğunu
-                            // gösteren tam ekran ilerleme ve "çıkarsan iptal olur" uyarısı var.
-                            // BULUT render: sunucuya istek bırak -> Cloud Run render eder -> R2 -> bitince bildirim.
-                            // Telefon yorulmaz, uygulama kapatılabilir (sıfır cihaz yükü).
-                            // 18.09: taktik mod + kamera açısı kaldırıldı -> bu alanlar artık hep boş.
-                            let tacTh = ""
-                            let tacCs = ""
-                            let useReel = reel
-                            let ok = rideId == nil
-                                ? await store.generateRide(from: from, to: to, type: type, mode: mode,
-                                                           aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: "", theme: tacTh, callsign: tacCs, reel: useReel)
-                                : await store.regenerateRide(rideId!, type: type, mode: mode,
-                                                             aspect: aspect, premium: premium, speed: speed, music: music, line: lineColor, dot: resolvedDot, camdist: camdist, cam: "", theme: tacTh, callsign: tacCs, reel: useReel)
-                            sending = false; done = ok; localErr = !ok
-                            // 05.09: sunucunun AÇIKLAMASINI göster ("Üretilemedi" tek başına
-                            // hiçbir şey söylemiyordu — Barış: "niye üretilemedi ki?")
-                            if !ok && !store.sonUretimHatasi.isEmpty { note = store.sonUretimHatasi }
-                            // başarılı -> Videolarım'a geç + sheet kapat; video orada "Hazırlanıyor" kilitli görünür (bulut kelimesi YOK)
-                            if ok { store.jumpToVideos = true; try? await Task.sleep(for: .seconds(1.2)); dismiss() }
-                        }
+                        guard telefonIs == nil else { return }   // çift dokunuş -> ikinci üretim başlatma
+                        localErr = false
+                        telefonHata = false; telefonNeden = ""; telefonAsama = ""; telefonPct = 0.001; telefonAktif = true
+                        telefonIs = Task { await telefondaUret() }
                     } label: {
-                        // 2026-08-26 (Barış: "bulutta hazırlanıyor diye bir şey yok, komple kaldır"):
-                        // videolar TELEFONDA üretiliyor -> tüm metinler cihaz dilinde. Hazırlık aşaması
-                        // (motor sayfası + karo ön-ısıtma) da "Hazırlanıyor…" der, "kuyruk/bulut" YOK.
-                        if sending && renderPct > 0 { HStack(spacing: 8) { ProgressView(value: renderPct)
-                            Text(L("Üretiliyor… %","Rendering… %") + "\(Int(renderPct * 100))") } }
-                        else if sending { HStack(spacing: 8) { ProgressView()
-                            Text(L("Hazırlanıyor…", "Preparing…")) } }
-                        else if done { Label(L("Videon hazırlanıyor 🎬","Rendering your video"), systemImage: "checkmark.circle.fill") }
-                        else { Text(rideId == nil ? L("Video oluştur","Create video")
-                                                  : L("Yeniden oluştur","Regenerate")) }
-                    }.buttonStyle(.glassyProminent()).disabled(sending)
-
-                    // ═══ TELEFONDA ÜRET (ayrı yol) ═══
-                    // Premium + düz/kuşbakışı/3B. Bedava (GPU parası yok) ama uygulama ön planda
-                    // kalmalı: WKWebView arka planda BOŞ kare döndürüyor. O yüzden ayrı düğme,
-                    // tam ekran ilerleme ve açık uyarı — kullanıcı ne yaptığını bilerek seçsin.
-                    if premium && !sending && ["flat", "flyover", "3d"].contains(mode) {
-                        Button {
-                            guard telefonIs == nil else { return }   // çift dokunuş -> ikinci üretim başlatma
-                            telefonHata = false; telefonNeden = ""; telefonAsama = ""; telefonPct = 0.001; telefonAktif = true
-                            telefonIs = Task { await telefondaUret() }
-                        } label: {
-                            Label(L("Telefonda üret (bedava)", "Render on this phone (free)"),
-                                  systemImage: "iphone.gen3")
-                        }
-                        .buttonStyle(.glassy).disabled(telefonAktif || telefonIs != nil)
-                        Text(L("Telefonda üretim bedavadır ama ekranı açık tutman gerekir.",
-                               "On-device rendering is free but the screen must stay on."))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-
-                    // Günlük limit dolunca / proaktif: bugünün limitini 2x yapan boost (consumable IAP)
-                    if premium, let b = iap.boost {
-                        Button {
-                            Task { _ = await iap.buyBoost() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                if iap.boostWorking { ProgressView() }
-                                else { Image(systemName: "bolt.fill").foregroundStyle(.yellow) }
-                                Text(L("Bugünün limitini 2× yap","Double today's limit") + " — \(b.displayPrice)")
-                                Spacer()
-                                Image(systemName: "sparkles").font(.caption2)
-                            }.padding(.horizontal, 14).padding(.vertical, 12)
-                        }.buttonStyle(.plain).glassPanel(14).tint(.primary).disabled(iap.boostWorking)
-                        if let m = iap.boostMsg {
-                            Text(m).font(.caption2).foregroundStyle(Brand.accent)
-                        } else {
-                            Text(L("Günlük video limitin dolduysa anında 2 katına çıkar (sadece bugün).",
-                                   "If you hit today's limit, instantly double it (today only)."))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
+                        if done { Label(L("Videon hazır 🎬","Your video is ready 🎬"), systemImage: "checkmark.circle.fill") }
+                        else { Label(L("Video üret","Create video"), systemImage: "iphone.gen3") }
+                    }.buttonStyle(.glassyProminent()).disabled(telefonAktif || telefonIs != nil)
+                    Text(L("Video telefonunda üretilir; üretim bitene kadar ekranı açık tut.",
+                           "The video is made on your phone; keep the screen on until it's done."))
+                        .font(.caption2).foregroundStyle(.secondary)
 
                     if localErr {
                         Text(note.isEmpty ? L("Bu rotada konum verisi yok ya da istek başarısız.","No location data for this route or request failed.") : note)
                             .font(.caption2).foregroundStyle(.red)
                     }
                     if done {
-                        Text(L("Videon bulutta hazırlanıyor. Hazır olunca bildirim gelir; Rotalar ve Özet'te görünür.",
-                               "Your video is rendering in the cloud. You'll get a notification; it shows up in Routes and Summary."))
+                        Text(L("Videon hazır; Videolarım'da görünür.",
+                               "Your video is ready; it shows up in My Videos."))
                             .font(.caption2).foregroundStyle(Brand.accent)
                     }
-                    Text(L("Video bulut sunucularında oluşturulur — telefonun yorulmaz, uygulamayı kapatabilirsin.",
-                           "Rendered on our cloud servers — your phone stays free; you can close the app."))
-                        .font(.caption2).foregroundStyle(.secondary)
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .presentationDetents([.large])
-        .interactiveDismissDisabled(sending)   // render sırasında sheet kapatılamaz
-        .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
+        .interactiveDismissDisabled(telefonAktif)   // telefonda üretim sırasında sheet kapatılamaz
         // ═══ TELEFONDA ÜRETİM EKRANI (Barış 05.09: "yükleniyor ekranı olsun, sayfadan çıkarsan
         // iptal olur tarzında bir şey olsun") ═══
         // fullScreenCover: kullanıcı kazara kaydırıp kapatamasın (interactiveDismissDisabled).
@@ -428,8 +290,8 @@ struct GenerateSheet: View {
                         .padding(.horizontal, 32)
                     if telefonHata {
                         VStack(spacing: 4) {
-                            Text(L("Üretilemedi. Bulutta üretmeyi deneyebilirsin.",
-                                   "Couldn't render. You can try the cloud instead."))
+                            Text(L("Üretilemedi. Tekrar deneyebilirsin.",
+                                   "Couldn't render. Please try again."))
                                 .font(.footnote).foregroundStyle(.red)
                             if !telefonNeden.isEmpty {
                                 Text(telefonNeden)          // NEDEN — teşhis için şart
@@ -447,7 +309,7 @@ struct GenerateSheet: View {
             .onDisappear { telefonIptal() }   // katman kapandıysa üretim de kapanır
         }
         .task {
-            await store.syncPremium(); stock = await store.musicList(); userTracks = await store.musicLibrary()
+            stock = await store.musicList(); userTracks = await store.musicLibrary()
             // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
             // varsayılan "active" (son yüklenen) -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
             // 🔴 KALDIRILDI 05.09 (Barış: "garip bir müzik çalıyor, müzik seçmediğim halde").
@@ -526,8 +388,8 @@ struct GenerateSheet: View {
     }
 
     /// TELEFONDA ÜRET: düz/kuşbakışı LocalRouteVideo, 3B WebRouteVideo (bulutla aynı motor sayfası).
-    /// Başarılıysa video sunucuya yüklenir ve Videolarım'a geçilir; başarısızsa katmanda hata gösterilir
-    /// (kullanıcı buluta düşmeyi kendi seçer — sessizce para harcamayız).
+    /// Başarılıysa video sunucuya yüklenir ve Videolarım'a geçilir; başarısızsa katmanda hata gösterilir.
+    /// 03.11.2026: TEK üretim yolu (bulut kapandı) — yeni üretim de yeniden üretim de buradan geçer.
     func telefondaUret() async {
         // 🔴 FİKS 05.09 — EKRAN KİLİDİ: koruma yalnız WebRouteVideo (3B) içindeydi. Düz/kuşbakışı
         // yolunda YOKTU; kullanıcı ekrana dokunmazsa iOS otomatik kilit devreye giriyor,
@@ -576,7 +438,7 @@ struct GenerateSheet: View {
                                                onProgress: { p in Task { @MainActor in pctYaz(p) } })
         } else {
             var lopt = LocalRouteVideo.Opts()
-            lopt.mode = mode; lopt.aspect = aspect; lopt.premium = premium
+            lopt.mode = mode; lopt.aspect = aspect   // lopt.premium varsayılan true (1080p) — herkese
             lopt.line = lineColor; lopt.dot = resolvedDot; lopt.camdist = camdist
             lopt.musicURL = mURL
             video = await LocalRouteVideo.render(points: pts, opts: lopt,
@@ -611,14 +473,11 @@ struct GenerateSheet: View {
     func field(_ t: String) -> some View {
         Text(t.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
     }
-    func modeRow(_ id: String, _ label: String, free: Bool) -> some View {
+    func modeRow(_ id: String, _ label: String) -> some View {
         // Button + interaktif glassEffect dokunuşu yutuyordu → doğrudan tap-gesture + contentShape.
-        // 10.10 İLK VİDEO HEDİYE: video hakkı olan ücretsiz kullanıcıya Flyover/3B de açık — sunucu hak
-        // yolunda mod kısıtlamıyor; "aha" anı 3B'de yaşanır (düz haritayla değil). Android'de zaten kilit yok.
-        let acik = free || premium || videoHak > 0
-        return HStack {
+        // 03.11.2026: tüm modlar herkese açık (kilit yok).
+        HStack {
             Text(label)
-            if !acik { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
             Spacer()
             if mode == id { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
         }
@@ -626,7 +485,7 @@ struct GenerateSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel(14)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture { if acik { mode = id } else { showPaywall = true } }
+        .onTapGesture { mode = id }
     }
 }
 let TACTICAL_TRACKS: [String] = [

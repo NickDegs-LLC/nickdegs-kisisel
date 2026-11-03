@@ -20,7 +20,7 @@ final class PhoneWatchLink: NSObject, WCSessionDelegate {
             "token": d.string(forKey: "nd_token") ?? "",
             "devid": d.string(forKey: "nd_dev") ?? "",
             "ingest": d.string(forKey: "nd_ingest") ?? "https://gpsdata.nickdegs.com",
-            "premium": d.bool(forKey: "nd_premium"),
+            "premium": true,   // 03.11.2026: Move Log ücretsiz — saat tarafı her özelliği açık görsün
         ]
         try? WCSession.default.updateApplicationContext(ctx)
     }

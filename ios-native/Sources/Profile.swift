@@ -1,7 +1,6 @@
 import SwiftUI
 import PhotosUI
 import UIKit
-import StoreKit
 
 let EMOJIS = [
     "🙂","😎","😀","😍","🤩","😇","🤠","🥳","😴","🤓","🧐","🤔",
@@ -28,8 +27,7 @@ struct ProfileView: View {
     @EnvironmentObject var tracker: Tracker
     @AppStorage("nd_font") var fontId = "default"
     @AppStorage("nd_scheme") var scheme = "dark"
-    @AppStorage("nd_premium") var premium = false
-    @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (premium seçer; free=basit)
+    @AppStorage("nd_sensitivity") var sensitivity = "dengeli"   // algılama hassasiyeti (03.11.2026: herkes seçer)
     @State private var prof: Profile?
     @State private var friends: [Friend] = []
     @State private var incoming: [Friend] = []
@@ -39,7 +37,6 @@ struct ProfileView: View {
     @State private var showAddFriend = false
     @State private var showHandle = false
     @State private var showFeedback = false
-    @State private var showPaywall = false
     @State private var showDelete = false
     @State private var showRename = false
     @State private var newName = ""
@@ -102,33 +99,6 @@ struct ProfileView: View {
                             stat("\(stats?.totalRides ?? 0)", L("Rota","Routes"))
                             stat("\(friends.count)", L("Arkadaş","Friends"))
                         }
-
-                        // Premium/Ultra kartı (şık, gradyan; Ultra = altın)
-                        Button { showPaywall = true } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: premium ? "crown.fill" : "star.fill")
-                                    .font(.system(size: 23, weight: .semibold)).foregroundStyle(.white)
-                                    .frame(width: 50, height: 50).background(.white.opacity(0.22), in: Circle())
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(premium ? L("Premium üyesin","You're Premium")
-                                                 : L("Move Log Premium","Move Log Premium"))
-                                        .font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                                    Text(premium ? L("Otonom video açık · faydalarını gör","Autonomous video unlocked · see your perks")
-                                                 : L("Sürüşün kendiliğinden 3B videoya dönüşsün","Your ride becomes a 3D video, automatically"))
-                                        .font(.caption).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
-                                }
-                                Spacer()
-                                if premium {
-                                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.white)
-                                } else {
-                                    Image(systemName: "chevron.right").foregroundStyle(.white.opacity(0.8))
-                                }
-                            }
-                            .padding(16)
-                            .background(AnyShapeStyle(Brand.gradient), in: RoundedRectangle(cornerRadius: 22))
-                            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                            .shadow(color: Brand.accent.opacity(0.38), radius: 14, y: 6)
-                        }.buttonStyle(.plain).smoothAppear()
 
                         // Gelen arkadaşlık istekleri — onayla/reddet
                         if !incoming.isEmpty {
@@ -213,13 +183,12 @@ struct ProfileView: View {
                         section(L("Tipografi","Typography"))
                         ForEach(FONT_CHOICES) { f in
                             Button {
-                                if f.free || premium { fontId = f.id } else { showPaywall = true }
+                                fontId = f.id
                             } label: {
                                 HStack {
                                     Text(f.label).fontDesign(f.design)
                                     Spacer()
                                     if fontId == f.id { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
-                                    else if !f.free && !premium { Image(systemName: "lock.fill").foregroundStyle(.secondary) }
                                 }.padding(.horizontal, 16).padding(.vertical, 14).contentShape(Rectangle())
                             }.buttonStyle(.borderless).glassPanel(16)
                             .animation(.snappy(duration: 0.3), value: fontId)
@@ -310,50 +279,37 @@ struct ProfileView: View {
                         }
 
                         // ALGILAMA HASSASİYETİ: Traccar sinyal aralığını kullanıcı dostu gizler.
-                        // Free=basit (kilitli); premium Hassas/Dengeli/Basit seçer.
+                        // 03.11.2026: herkes Hassas/Dengeli/Basit seçer (kilit yok).
                         section(L("Algılama hassasiyeti","Detection sensitivity"))
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 6) {
                                 Label(L("Algılama hassasiyeti","Detection sensitivity"), systemImage: "dot.radiowaves.left.and.right")
                                     .font(.system(size: 16, weight: .medium))
-                                if !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
                                 Spacer()
                             }
                             Picker("", selection: Binding(
-                                get: { premium ? sensitivity : "basit" },
-                                set: { v in
-                                    if premium { sensitivity = v; tracker.applySensitivity(v) }
-                                    else { showPaywall = true }
-                                })) {
+                                get: { sensitivity },
+                                set: { v in sensitivity = v; tracker.applySensitivity(v) })) {
                                 Text(L("Hassas","High")).tag("hassas")
                                 Text(L("Dengeli","Balanced")).tag("dengeli")
                                 Text(L("Basit","Simple")).tag("basit")
-                            }.pickerStyle(.segmented).disabled(!premium)
-                            Text(sensDesc(premium ? sensitivity : "basit"))
+                            }.pickerStyle(.segmented)
+                            Text(sensDesc(sensitivity))
                                 .font(.caption2).foregroundStyle(.secondary)
-                            if !premium {
-                                Text(L("Hassas ve Dengeli için Premium gerekir — daha hassas algılama + daha akıcı video.",
-                                       "High & Balanced need Premium — finer detection + smoother video."))
-                                    .font(.caption2).foregroundStyle(Brand.accent)
-                            }
                         }.padding(14).glassPanel(18).tint(Brand.accent)
-                        .onTapGesture { if !premium { showPaywall = true } }
 
                         section(L("Günlük özet","Daily summary"))
                         VStack(spacing: 0) {
                             Toggle(isOn: Binding(
-                                get: { sumEnabled && premium },
+                                get: { sumEnabled },
                                 set: { on in
-                                    if premium {
-                                        sumEnabled = on
-                                        Task { await store.setSummarySettings(SummaryCfg(enabled: on, hour: sumHour, video: sumVid)) }
-                                    } else { showPaywall = true }
+                                    sumEnabled = on
+                                    Task { await store.setSummarySettings(SummaryCfg(enabled: on, hour: sumHour, video: sumVid)) }
                                 })) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 6) {
                                         Label(L("Günlük özet","Daily summary"), systemImage: "doc.text.magnifyingglass")
                                             .font(.system(size: 16, weight: .medium))
-                                        if !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
                                     }
                                     Text(L("Her gün seçtiğin saatte günün detaylı aktivite özeti.",
                                            "A detailed summary of your day at the time you choose."))
@@ -361,7 +317,7 @@ struct ProfileView: View {
                                 }
                             }.tint(Brand.accent)
 
-                            if premium && sumEnabled {
+                            if sumEnabled {
                                 Divider().padding(.vertical, 10)
                                 HStack {
                                     Label(L("Özet saati","Summary time"), systemImage: "clock")
@@ -385,12 +341,9 @@ struct ProfileView: View {
                                 }.tint(.primary)
                             }
                         }.padding(14).glassPanel(18)
-                        .onTapGesture { if !premium { showPaywall = true } }
 
                         Button {
-                            if premium {
-                                Task { if await store.summaryNow(premium: true) { sumQueued = true } }
-                            } else { showPaywall = true }
+                            Task { if await store.summaryNow(premium: true) { sumQueued = true } }
                         } label: {
                             Label(sumQueued ? L("Özet hazırlanıyor…","Preparing summary…")
                                             : L("Şimdi özet çıkar","Summarize now"),
@@ -407,14 +360,10 @@ struct ProfileView: View {
                             HStack(spacing: 6) {
                                 Label(L("Birlikte sürüş videosu","Ride-together video"), systemImage: "person.2.fill")
                                     .font(.system(size: 16, weight: .medium))
-                                if !premium { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
                                 Spacer()
                                 Picker("", selection: Binding(
                                     get: { groupPref },
-                                    set: { v in
-                                        if premium { groupPref = v; Task { await store.setGroupVideoPref(v) } }
-                                        else { showPaywall = true }
-                                    })) {
+                                    set: { v in groupPref = v; Task { await store.setGroupVideoPref(v) } })) {
                                     Text(L("Ortak + kendi videom","Joint + my own")).tag("both")
                                     Text(L("Sadece ortak video","Joint video only")).tag("group")
                                     Text(L("Sadece kendi videom","My own video only")).tag("solo")
@@ -424,7 +373,6 @@ struct ProfileView: View {
                                    "When you ride with a friend, ONE shared video featuring both of you is created automatically and sent to you both."))
                                 .font(.caption2).foregroundStyle(.secondary)
                         }.padding(14).glassPanel(18)
-                        .onTapGesture { if !premium { showPaywall = true } }
 
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
@@ -468,12 +416,10 @@ struct ProfileView: View {
         }
         .task {
             prof = await store.profile(); await reloadFriends(); stats = await store.stats()
-            if prof?.premium == true { UserDefaults.standard.set(true, forKey: "nd_gift"); premium = true }
             let s = await store.summarySettings(); sumEnabled = s.enabled; sumHour = s.hour; sumVid = s.video
             groupPref = await store.groupVideoPref()
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
-                if AppEnv.screen == "paywall" { showPaywall = true }
                 if AppEnv.screen == "avatar" { showAvatar = true }
             }
         }
@@ -521,7 +467,6 @@ struct ProfileView: View {
             Button(L("Vazgeç","Cancel"), role: .cancel) { davetGirisi = "" }
         }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
-        .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
                 Task { await store.setSummarySettings(SummaryCfg(enabled: sumEnabled, hour: sumHour, video: sumVid)) }
@@ -847,231 +792,6 @@ struct AddFriendSheet: View {
                 }
             }.buttonStyle(.glassy).fixedSize()
         }
-    }
-}
-
-struct PaywallSheet: View {
-    @Binding var premium: Bool
-    @EnvironmentObject var iap: IAP
-    @EnvironmentObject var store: Store
-    @Environment(\.dismiss) var dismiss
-    @State private var failed = false
-    @State private var triedLoad = false
-    @State private var code = ""
-    @State private var codeErr = false
-    @State private var redeeming = false
-
-    struct Perk: Identifiable { let id = UUID(); let icon: String; let title: String; let sub: String }
-    var perks: [Perk] {[
-        .init(icon: "video.fill", title: L("3B flyover videolar","3D flyover videos"),
-              sub: L("Arazi yüksekliğiyle sinematik rota videoları","Cinematic 3D terrain route videos")),
-        .init(icon: "drop.fill", title: L("Filigransız & 1080p","No watermark & 1080p"),
-              sub: L("Yüksek çözünürlük, logo yok","High resolution, no logo")),
-        .init(icon: "music.note", title: L("Videoya müzik","Music on videos"),
-              sub: L("Kendi müziğini ekle","Add your own soundtrack")),
-        .init(icon: "camera.fill", title: L("Anı fotoğrafları","Memory photos"),
-              sub: L("Rota üzerine fotoğraf yerleştir","Pin photos along the route")),
-        .init(icon: "bolt.fill", title: L("En hızlı an & özet sahneleri","Peak moment & recap"),
-              sub: L("Zirve hız etiketi, giriş & kapanış","Top-speed label, intro & outro")),
-        .init(icon: "wand.and.stars", title: L("Otonom video — ürünün kalbi","Autonomous video — the core"),
-              sub: L("Sürüşün bitince 3B videosu kendiliğinden hazır","Your ride becomes a 3D video by itself")),
-        .init(icon: "doc.text.magnifyingglass", title: L("Günlük özet","Daily summary"),
-              sub: L("Saat ayarı + anında özet","Custom time + on-demand")),
-        // 16.09: "Uydu haritası" perk'i KALDIRILDI — uydu görünümü canlı konum haritasının
-        // özelliğiydi, harita sekmesiyle birlikte çıktı.
-    ]}
-
-    var body: some View {
-        ZStack {
-            AuroraBackground()
-            ScrollView {
-                VStack(spacing: 14) {
-                    Image(systemName: premium ? "crown.fill" : "star.fill").font(.system(size: 34))
-                        .foregroundStyle(AnyShapeStyle(Brand.gradient))
-                        .frame(width: 72, height: 72).glassPanel(36)
-                    if premium {
-                        Text(L("Premium üyesin ✨","You're Premium ✨")).font(.title2.bold())
-                        Text(L("Şu an tüm bu özelliklerin keyfini çıkarıyorsun:","You're currently enjoying all of these:"))
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    } else {
-                        Text("Move Log Premium").font(.title2.bold())
-                        Text(L("Rotalarını bambaşka bir seviyeye taşı.","Take your routes to a whole new level."))
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
-
-                    VStack(spacing: 9) { ForEach(perks) { perkRow($0) } }.padding(.vertical, 4)
-
-                    if premium {
-                        Text(L("Premium aktif","Premium active"))
-                            .font(.caption.bold()).foregroundStyle(.white)
-                            .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(AnyShapeStyle(Brand.gradient), in: Capsule())
-                            .padding(.top, 2)
-
-                        // Günlük 2x Boost (consumable) — premium üyeye, rotasız erişilebilir satın alma
-                        if let b = iap.boost {
-                            Button {
-                                Task { _ = await iap.buyBoost() }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "bolt.fill").foregroundStyle(.yellow)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(L("Günlük 2× Boost","Daily 2× Boost")).font(.subheadline.weight(.semibold))
-                                        Text(L("Bugünün video limitini 2 katına çıkar","Double today's video limit"))
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if iap.boostWorking { ProgressView() } else { Text(b.displayPrice).font(.subheadline.bold()) }
-                                }.padding(.horizontal, 14).padding(.vertical, 12)
-                            }.buttonStyle(.plain).glassPanel(14).tint(.primary).disabled(iap.boostWorking).padding(.top, 6)
-                            if let m = iap.boostMsg {
-                                Text(m).font(.caption2).foregroundStyle(Brand.accent)
-                            }
-                        }
-
-                        Link(L("Aboneliği yönet","Manage subscription"),
-                             destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
-                            .font(.footnote).tint(Brand.accent).padding(.top, 6)
-                        Button(L("Kapat","Close")) { dismiss() }.foregroundStyle(.secondary).padding(.top, 4)
-                    } else {
-                        if let y = iap.yearly { planButton(y, period: L("yıl","yr"), badge: L("EN AVANTAJLI","BEST VALUE")) }
-                        if let m = iap.monthly { planButton(m, period: L("ay","mo"), badge: nil) }
-                        if iap.monthly == nil, iap.yearly == nil {
-                            if AppEnv.demo {
-                                staticRow(L("Premium Yıllık","Premium Yearly"), "$29.99", L("yıl","yr"), L("EN AVANTAJLI","BEST VALUE"))
-                                staticRow(L("Premium Aylık","Premium Monthly"), "$4.99", L("ay","mo"), nil)
-                            } else if triedLoad {
-                                Button(L("Planları yükle","Load plans")) { Task { await iap.load() } }.buttonStyle(.glassy)
-                                Text(L("Bağlantını kontrol et.","Check your connection.")).font(.caption2).foregroundStyle(.secondary)
-                            } else {
-                                ProgressView().padding(.vertical, 8)
-                            }
-                        }
-                        Button(L("Satın alımları geri yükle","Restore purchases")) {
-                            Task { await iap.restore(); premium = iap.purchased; if iap.purchased { dismiss() } }
-                        }.font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
-
-                        // Hediye kodu
-                        VStack(spacing: 8) {
-                            Label(L("Hediye kodun mu var?","Have a gift code?"), systemImage: "gift.fill")
-                                .font(.system(size: 14, weight: .medium)).foregroundStyle(Brand.gradient)
-                            // APPLE RESMİ KOD EKRANI (2026-08-26, Barış: "Apple'ın resmi kodunu gir").
-                            // App Store Connect'te tanımlı Teklif Kodu / Promosyon Kodu buradan kullanılır.
-                            // ⚠️ Kendi sunucu kodumuzla premium açan alan KALDIRILDI: App Store dışı bir
-                            // mekanizmayla ücretli özellik açmak App Review 3.1.1 riskiydi. Artık abonelik
-                            // gerçekten StoreKit üzerinden başlar (yenilenir, iptal edilir, Aile Paylaşımı çalışır).
-                            Button {
-                                redeeming = true
-                                Task {
-                                    await iap.redeemOfferCode()
-                                    redeeming = false
-                                    await iap.load(); await store.syncPremium()
-                                    premium = iap.purchased || premium
-                                }
-                            } label: {
-                                if redeeming { ProgressView() }
-                                else { Text(L("Kodu kullan","Redeem code")) }
-                            }.buttonStyle(.glassy).disabled(redeeming)
-                            Text(L("App Store hediye/teklif kodunu buraya girebilirsin.",
-                                   "Redeem your App Store gift or offer code."))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }.padding(14).glassPanel(16).padding(.top, 8)
-                        if let e = iap.lastError {
-                            Text(e).font(.footnote).foregroundStyle(.red)
-                                .multilineTextAlignment(.center).padding(.horizontal, 8)
-                        } else if failed {
-                            Text(L("Satın alma tamamlanmadı.","Purchase didn’t complete."))
-                                .font(.footnote).foregroundStyle(.red)
-                        }
-                        if let m = iap.loadMsg {
-                            Text(m).font(.caption2).foregroundStyle(.orange)
-                                .multilineTextAlignment(.center).padding(.horizontal, 8)
-                        }
-                        Text(L("Abonelik otomatik yenilenir; dönem sonundan en az 24 saat önce iptal etmezsen ücretlendirilirsin. Ayarlar’dan istediğin zaman iptal edebilirsin.",
-                               "Subscription auto-renews unless canceled at least 24h before the period ends. Manage or cancel anytime in Settings."))
-                            .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.top, 6)
-                        HStack(spacing: 18) {
-                            Link(L("Kullanım Şartları","Terms of Use"), destination: URL(string: "https://app.nickdegs.com/terms.html")!)
-                            Link(L("Gizlilik","Privacy"), destination: URL(string: "https://app.nickdegs.com/privacy.html")!)
-                        }.font(.caption2).tint(Brand.accent)
-                        Button(L("Belki sonra","Maybe later")) { dismiss() }.foregroundStyle(.secondary).padding(.top, 2)
-                    }
-                }.padding(26)
-            }
-        }
-        .presentationDetents([.large])
-        .task { if iap.monthly == nil && iap.yearly == nil { await iap.load() }; triedLoad = true }
-    }
-
-    func perkRow(_ p: Perk) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: p.icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(Brand.gradient)
-                .frame(width: 38, height: 38).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(p.title).font(.system(size: 15, weight: .semibold))
-                Text(p.sub).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-            }
-            Spacer()
-            if premium { Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.accent) }
-        }.frame(maxWidth: .infinity).padding(12).glassPanel(16)
-    }
-
-    func staticRow(_ name: String, _ price: String, _ period: String, _ badge: String?) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.system(size: 16, weight: .semibold))
-                Text("\(price) / \(period)").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if let badge {
-                Text(badge).font(.caption2.bold()).foregroundStyle(.white)
-                    .padding(.horizontal, 9).padding(.vertical, 5).background(Brand.gradient, in: Capsule())
-            }
-        }.frame(maxWidth: .infinity).padding(16).glassPanel(20)
-    }
-
-    func planButton(_ p: Product, period: String, badge: String?) -> some View {
-        // ÜCRETSİZ DENEME rozeti: StoreKit intro offer'dan canlı okunur (yıllıkta 7 gün FREE_TRIAL var,
-        // ASC'den kaldırılırsa rozet kendiliğinden kaybolur — app güncellemesi gerekmez).
-        let trial: String? = {
-            guard let intro = p.subscription?.introductoryOffer, intro.paymentMode == .freeTrial else { return nil }
-            let v = intro.period.value
-            let unit: String
-            switch intro.period.unit {
-            case .day:   unit = v == 7 ? L("7 gün","7 days") : "\(v) " + L("gün","days")
-            case .week:  unit = v == 1 ? L("7 gün","7 days") : "\(v) " + L("hafta","weeks")
-            case .month: unit = "\(v) " + L("ay","mo")
-            default:     unit = "\(v)"
-            }
-            return unit
-        }()
-        return Button {
-            // 17.09 gece (Cursor e2e-2 #1): başarısızlıkta `premium`'a DOKUNMA — `apply` yerel bayrağı rapordan önce
-            // açıyor, `premium = iap.purchased` yazınca görünüm "Premium aktif" dalına geçip lastError'ı gizliyordu.
-            Task { let ok = await iap.buy(p); if ok { premium = iap.purchased; dismiss() } else { failed = true } }
-        } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(p.displayName).font(.system(size: 16, weight: .semibold))
-                    if let trial {
-                        Text(trial + " " + L("ücretsiz dene, sonra","free trial, then") + " \(p.displayPrice) / \(period)")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    } else {
-                        Text("\(p.displayPrice) / \(period)").font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if iap.working { ProgressView() }
-                else if trial != nil {
-                    Text(L("ÜCRETSİZ DENE","FREE TRIAL")).font(.caption2.bold()).foregroundStyle(.white)
-                        .padding(.horizontal, 9).padding(.vertical, 5).background(Brand.gradient, in: Capsule())
-                } else if let badge {
-                    Text(badge).font(.caption2.bold()).foregroundStyle(.white)
-                        .padding(.horizontal, 9).padding(.vertical, 5).background(Brand.gradient, in: Capsule())
-                }
-            }.frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain).padding(16).glassPanel(20).disabled(iap.working)
     }
 }
 

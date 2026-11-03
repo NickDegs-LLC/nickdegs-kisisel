@@ -555,47 +555,8 @@ enum DavetLink {
     func profile() async -> Profile? {
         if AppEnv.demo { return Profile(username: "me", name: Demo.user, avatar: Avatar()) }
         return try? dec().decode(Profile.self, from: await req("/api/profile")) }
-    // Sunucu-taraflı premium'u cihaza senkronla (yalnızca Profil değil her yerden tetiklenir).
-    func syncPremium() async {
-        guard let d = try? await req("/api/profile") else { return }
-        // GÜVENLİ: free_tactical'ı HAM JSON'dan oku — Profile struct'ına DOKUNMA (profil decode'u asla bozulmaz)
-        if let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] {
-            UserDefaults.standard.set((o["free_tactical"] as? Bool) ?? false, forKey: "nd_free_tactical")
-            // SOKAK HAKKI (2026-08-27): satın alınmış hak + Ultra'nın bu ayki hediyesi duruyor mu
-            UserDefaults.standard.set((o["sokak_hak"] as? Int) ?? 0, forKey: "nd_sokak_hak")
-            UserDefaults.standard.set((o["video_hak"] as? Int) ?? 0, forKey: "nd_video_hak")
-            UserDefaults.standard.set((o["sokak_hediye"] as? Bool) ?? false, forKey: "nd_sokak_hediye")
-        }
-        // 🔴 FİKS 05.09 — PREMIUM DÜŞMÜYORDU. Eski satır: `guard ..., p.premium else { return }`
-        // yani sunucu "premium değil" dediğinde HİÇBİR ŞEY yapılmıyor, `nd_gift` mandalı açık
-        // kalıyordu. `setPurchased(v)` de `v || gift` hesapladığı için StoreKit aboneliği bitse
-        // bile uygulama premium görünmeye devam ediyordu: sunucu tarafında abonelik düşürülse
-        // dahi kullanıcıda hiçbir şey değişmezdi. Sunucu ARTIK tek doğruluk kaynağı.
-        // ⚠️ Ağ/decode hatasında DOKUNMA — çevrimdışıyken premium kapanmasın.
-        guard let p = try? dec().decode(Profile.self, from: d) else { return }
-        if p.premium == true {
-            UserDefaults.standard.set(true, forKey: "nd_gift")     // hediye/sunucu premium
-            UserDefaults.standard.set(true, forKey: "nd_premium")
-            if p.ultra == true {   // sunucu/admin Ultra (eski sürüm uyumu; 19.09: sunucu sabit false döner)
-                UserDefaults.standard.set(true, forKey: "nd_gift_ultra")
-                UserDefaults.standard.set(true, forKey: "nd_ultra")
-            }
-        } else {
-            // Sunucu premium'u DÜŞÜRDÜ (abonelik bitti/iptal edildi). Yerel mandalı temizle.
-            // `nd_premium`/`nd_ultra` KAPATILMAZ: StoreKit'te hâlâ geçerli bir abonelik olabilir
-            // (sunucu bildirimi gecikmiş olabilir). IAP.refresh() açılışta `owned || gift`
-            // hesabını yeniden yapar; gift artık false olduğu için sonuç DOĞRU olur ve
-            // gerçekten aboneliği bitmiş kullanıcıda premium kapanır.
-            // Bildirim YALNIZ gerçekten değişince: `syncPremium` sık çağrılıyor ve ücretsiz
-            // kullanıcıda her seferinde StoreKit taraması tetiklemek boşuna iş olurdu.
-            let onceGift = UserDefaults.standard.bool(forKey: "nd_gift")
-                || UserDefaults.standard.bool(forKey: "nd_gift_ultra")
-            UserDefaults.standard.set(false, forKey: "nd_gift")
-            UserDefaults.standard.set(false, forKey: "nd_gift_ultra")
-            if onceGift { NotificationCenter.default.post(name: .ndPremiumDegisti, object: nil) }
-        }
-        if p.ultra != true { UserDefaults.standard.set(false, forKey: "nd_gift_ultra") }
-    }
+    // 03.11.2026: syncPremium() KALDIRILDI — Move Log tamamen ücretsiz, abonelik/IAP yok;
+    // sunucu /api/profile herkese premium=true döner, istemcide premium kapısı kalmadı.
     /// 🔴 FİKS 05.09: sunucudaki `DELETE /api/friends/{uname}` (grup3) HİÇBİR istemciden
     /// çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU (uçtan uca tarama bulgusu).
     @discardableResult
@@ -793,17 +754,14 @@ enum DavetLink {
             Self.telefonKilidiBirak()
             self.telefondaUretiliyor = false
         }
-        // Cihazda üretim PREMIUM'a özel (Barış 2026-08-28 nihai: ücretsiz katmanda video YOK;
-        // kullanıcı ya Premium olur ya video paketi alır — paketle üretim BULUTTA yapılır).
-        guard let prof = await profile(), prof.premium == true else { return }
+        // 03.11.2026 (Barış): Move Log tamamen ÜCRETSİZ — premium şartı kalktı, herkes telefonda üretir.
+        // Bulut üretimi kalıcı kapandı; sunucu /api/rides/generate dahil her işi bu kuyruğa yazar.
         let jobs = await localRenders()
         for j in jobs.prefix(2) {
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
                   let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }
             let mode = (j["mode"] as? String) ?? "flyover"
-            // 3B de CİHAZDA üretilebilir (Barış 2026-08-28, YEDEK YOL): sunucu bulut kapalıyken
-            // (bakiye bitti/dispatch gitmedi) 3B işi bu kuyruğa yazıyor; harita+rota sunucudan
-            // gelir, video telefonda üretilir. Premium kontrolü yukarıda YAPILDI.
+            // 3B de CİHAZDA üretilir: harita+rota sunucudan gelir, video telefonda üretilir.
             guard ["flat", "flyover", "3d"].contains(mode) else { continue }
             let pts = await track(from: frm, to: to)
             guard pts.count >= 3 else { await localRenderDone(from: frm); continue }
@@ -864,29 +822,8 @@ enum DavetLink {
         _ = try? await req("/api/rides/photo", method: "POST",
                            body: ["session": session, "data": dataURL, "lat": lat, "lon": lon, "ts": Date().timeIntervalSince1970])
     }
-    func generateRide(from: Double, to: Double, type: String, mode: String, aspect: String, premium: Bool, speed: String = "medium", music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "", theme: String = "", callsign: String = "", reel: Bool = false) async -> Bool {
-        let body: [String:Any] = ["from": from, "to": to, "type": type, "mode": mode,
-                                  "aspect": aspect, "speed": speed, "premium": premium, "music": music,
-                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam,
-                                  "theme": theme, "callsign": callsign, "reel": reel]
-        // 🔴 FİKS 05.09: yalnız Bool dönüyordu → sunucunun 402/429/503 için yazdığı AÇIKLAYICI
-        // Türkçe metinler (ör. "Bu ayki üretim payını doldurdun", "Sokak videosu hakkın kalmadı",
-        // Traccar/bakım 503'leri) kullanıcıya HİÇ ulaşmıyor, ekranda sabit "Üretilemedi" yazıyordu.
-        // Barış'ın "niye üretilemedi ki?" sorusunun sebebi buydu. Sebep artık `sonUretimHatasi`de.
-        sonUretimHatasi = ""
-        guard let (d, kod) = try? await reqKod("/api/rides/generate", method: "POST", body: body) else {
-            sonUretimHatasi = L("sunucuya ulaşılamadı (bağlantı?)", "couldn't reach the server (network?)")
-            return false
-        }
-        let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
-        if kod == 200, ((o?["ok"] as? Bool) ?? false) { return true }
-        sonUretimHatasi = (o?["detail"] as? String) ?? (o?["error"] as? String)
-            ?? L("sunucu \(kod) döndü", "server returned \(kod)")
-        return false
-    }
-    /// Üretim hatasının sunucudan gelen AÇIKLAMASI (generateRide/regenerateRide sonrası okunur).
-    @Published var sonUretimHatasi = ""
-
+    // 03.11.2026: generateRide() KALDIRILDI — bulut üretimi kalıcı kapandı; video yalnız telefonda
+    // üretilir (Record.swift GenerateSheet.telefondaUret → uploadLocalVideo).
     /// `req` ile aynı ama HTTP durum kodunu da döndürür (hata metnini gösterebilmek için).
     private func reqKod(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> (Data, Int) {
         var r = URLRequest(url: URL(string: API + path)!)
@@ -987,23 +924,7 @@ enum DavetLink {
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return false }
         return (o["ok"] as? Bool) ?? false
     }
-    // Mevcut bir rota videosunu yeni ayarlarla baştan üret (Rotalar > Düzenle).
-    func regenerateRide(_ id: String, type: String, mode: String, aspect: String, premium: Bool, speed: String, music: String = "", line: String = "", dot: String = "", camdist: String = "orta", cam: String = "", theme: String = "", callsign: String = "", reel: Bool = false) async -> Bool {
-        let body: [String:Any] = ["type": type, "mode": mode, "aspect": aspect,
-                                  "speed": speed, "premium": premium, "music": music,
-                                  "line": line, "dot": dot, "camdist": camdist, "cam": cam,
-                                  "theme": theme, "callsign": callsign, "reel": reel]
-        sonUretimHatasi = ""
-        guard let (d, kod) = try? await reqKod("/api/rides/\(id)/regenerate", method: "POST", body: body) else {
-            sonUretimHatasi = L("sunucuya ulaşılamadı (bağlantı?)", "couldn't reach the server (network?)")
-            return false
-        }
-        let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
-        if kod == 200, ((o?["ok"] as? Bool) ?? false) { return true }
-        sonUretimHatasi = (o?["detail"] as? String) ?? (o?["error"] as? String)
-            ?? L("sunucu \(kod) döndü", "server returned \(kod)")
-        return false
-    }
+    // 03.11.2026: regenerateRide() KALDIRILDI — yeniden üretim de telefonda (GenerateSheet.telefondaUret).
     // Uygulama içi duyuru (admin panelinden)
     // 16.09 (Barış: "Move log yenilendi bildirimini komple kökünden kapat. Artık yayında
     // uygulama zaten."): uygulama içi duyuru bandı TAMAMEN KAPALI — yalnız çekim modunda değil,
@@ -1011,17 +932,7 @@ enum DavetLink {
     // burası istemcideki ikinci emniyet. Geri açmak için: alttaki gövdeyi eski hâline döndür.
     func announcement() async -> Announcement? { nil }
 
-    // Hediye kodu → premium (sunucu doğrular)
-    @discardableResult
-    func redeem(_ code: String) async -> Bool {
-        guard let d = try? await req("/api/redeem", method: "POST", body: ["code": code]),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              (o["ok"] as? Bool) == true else { return false }
-        UserDefaults.standard.set(true, forKey: "nd_gift")
-        UserDefaults.standard.set(true, forKey: "nd_premium")
-        return true
-    }
-    // Günlük özet ayarları (premium) + gün özeti VİDEOSU render seçenekleri (rotalar gibi)
+    // Günlük özet ayarları + gün özeti VİDEOSU render seçenekleri (rotalar gibi)
     func summarySettings() async -> SummaryCfg {
         guard let d = try? await req("/api/summary/settings"),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any] else { return SummaryCfg() }
@@ -1170,7 +1081,7 @@ enum DavetLink {
     // PAYLAŞILABİLİR KART (26.10): sunucu rota/haftalık özet kartını PNG olarak üretir
     // (f=dikey 1080×1920 · f=kare 1080×1080). `path` API köküne göre: "/api/rides/<id>/kart?f=dikey"
     // veya "/api/summary/kart?gun=YYYY-MM-DD&f=kare". 200 + çözülebilir görüntü değilse hata FIRLATIR;
-    // sunucunun {"detail": "..."} metni hata mesajı olur (generateRide'daki `sonUretimHatasi` kalıbı).
+    // sunucunun {"detail": "..."} metni hata mesajı olur (eski generateRide hata-metni kalıbı).
     // `reqKod` üzerinden gider → Authorization + X-Device-Id + Accept-Language aynı, 401'de logout aynı.
     func kartIndir(path: String) async throws -> Data {
         let (d, kod) = try await reqKod(path)

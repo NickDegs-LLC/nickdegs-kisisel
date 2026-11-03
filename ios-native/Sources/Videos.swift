@@ -118,8 +118,8 @@ struct VideosView: View {
                             VStack(spacing: 10) {
                                 Image(systemName: "film.stack").font(.system(size: 40)).foregroundStyle(.secondary)
                                 Text(L("Henüz video yok", "No videos yet")).font(.headline)
-                                Text(L("Bir rota sür; videon bulutta otomatik oluşturulup burada listelenir. Dilediğini galerine kaydedebilir veya silebilirsin.",
-                                       "Ride a route; your video is auto-rendered in the cloud and listed here. Save any to Photos or delete it."))
+                                Text(L("Bir rota sür; videon telefonunda oluşturulup burada listelenir. Dilediğini galerine kaydedebilir veya silebilirsin.",
+                                       "Ride a route; your video is made on your phone and listed here. Save any to Photos or delete it."))
                                     .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                             }.padding(.top, 70).padding(.horizontal, 26)
                         }

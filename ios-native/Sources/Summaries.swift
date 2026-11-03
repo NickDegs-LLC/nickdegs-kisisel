@@ -4,7 +4,6 @@ import AVKit
 // Özet sekmesi: günlük + aralık özetleri listelenir; kullanıcı tarih/saat aralığı seçip özet çıkarabilir.
 struct SummariesView: View {
     @EnvironmentObject var store: Store
-    @AppStorage("nd_premium") var premium = false
     @State private var items: [ActivitySummary] = []
     @State private var showRange = false
     @State private var busy = false
@@ -76,7 +75,7 @@ struct SummariesView: View {
                                     }
                                     // Özet videosunu istediğin ayarlarla yeniden üret (rotalar gibi)
                                     if s.from != nil && s.to != nil {
-                                        Button { if premium { genSummary = s } else { note = L("Bu özellik Premium'a özel.", "This feature is Premium.") } } label: {
+                                        Button { genSummary = s } label: {
                                             Image(systemName: "slider.horizontal.3").font(.system(size: 15, weight: .semibold))
                                                 .foregroundStyle(Brand.accent).frame(width: 40, height: 40)
                                                 .background(.thinMaterial, in: Circle())
@@ -156,7 +155,7 @@ struct SummariesView: View {
 
     func genToday() async {
         busy = true; note = L("Hazırlanıyor…", "Preparing…")
-        _ = await store.summaryNow(premium: premium)
+        _ = await store.summaryNow(premium: true)   // 03.11.2026: herkes (sunucu da herkese premium=true)
         try? await Task.sleep(for: .seconds(2)); items = await store.activities()
         busy = false; note = nil
     }

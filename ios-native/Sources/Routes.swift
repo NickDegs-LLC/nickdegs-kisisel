@@ -43,11 +43,9 @@ struct RoutesView: View {
     @State private var savedId: String? = nil
     @State private var pendingDelete: Ride?
     @State private var pollTask: Task<Void, Never>? = nil   // render/yeni rota varken otomatik yenile
-    @AppStorage("nd_premium") private var premium = false
     @AppStorage("nd_route_sort") private var sortMode = "date"   // "date"=rota tarihi | "added"=son eklenen (kullanıcı seçer)
     @State private var showImporter = false   // GPX/TCX dosya seçici
     @State private var uploading = false
-    @State private var showPaywall = false
     @State private var uploadErr: String?
     @State private var kartId: String? = nil          // kartı indirilen rota (düğmede ProgressView)
     @State private var paylasKart: PaylasimKarti?     // indirilen kart -> paylaşım sayfası
@@ -277,9 +275,9 @@ struct RoutesView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — premium
+                    // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — 03.11.2026: herkese açık
                     Button {
-                        if premium { showImporter = true } else { showPaywall = true }
+                        showImporter = true
                     } label: {
                         if uploading { ProgressView() }
                         else { Image(systemName: "tray.and.arrow.up").font(.system(size: 16, weight: .semibold)) }
@@ -314,7 +312,6 @@ struct RoutesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
         .sheet(item: $paylasKart) { k in
             PaylasimSayfasi(ogeler: [k.url]) { paylasKart = nil }
                 .presentationDetents([.medium, .large])
