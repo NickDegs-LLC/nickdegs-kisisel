@@ -6,6 +6,31 @@ import UniformTypeIdentifiers
 // .sheet(item:) için: player hazır olmadan sheet açılmasın (ilk dokunuşta kara ekran bug'ı).
 struct PlayerBox: Identifiable { let id = UUID(); let player: AVPlayer }
 
+// PAYLAŞILABİLİR KART (26.10): sunucunun ürettiği PNG geçici dosyaya yazılır, paylaşım sayfası
+// dosya URL'iyle açılır → alıcıda/Dosyalar'da adı "movelog-<id>.png" görünür; sayfa zaten
+// "Görüntüyü Kaydet" sunduğu için ayrıca galeriye kaydetme yok. Rotalar + Özet ortak kullanır.
+struct PaylasimKarti: Identifiable { let id = UUID(); let url: URL }
+
+func kartDosyasi(_ data: Data, ad: String) throws -> URL {
+    let temiz = ad.replacingOccurrences(of: "/", with: "-")
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("movelog-\(temiz).png")
+    try data.write(to: url, options: .atomic)
+    return url
+}
+
+// iOS paylaşım sayfası (UIActivityViewController) SwiftUI sarmalayıcısı. Bir eylem bitince veya
+// "Kapat"a basılınca `bitince` çağrılır → çağıran `.sheet(item:)` bağını nil'ler (boş sheet kalmasın).
+struct PaylasimSayfasi: UIViewControllerRepresentable {
+    let ogeler: [Any]
+    var bitince: () -> Void = {}
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let vc = UIActivityViewController(activityItems: ogeler, applicationActivities: nil)
+        vc.completionWithItemsHandler = { _, _, _, _ in bitince() }
+        return vc
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
 struct RoutesView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var tracker: Tracker
@@ -18,12 +43,12 @@ struct RoutesView: View {
     @State private var savedId: String? = nil
     @State private var pendingDelete: Ride?
     @State private var pollTask: Task<Void, Never>? = nil   // render/yeni rota varken otomatik yenile
-    @AppStorage("nd_premium") private var premium = false
     @AppStorage("nd_route_sort") private var sortMode = "date"   // "date"=rota tarihi | "added"=son eklenen (kullanıcı seçer)
     @State private var showImporter = false   // GPX/TCX dosya seçici
     @State private var uploading = false
-    @State private var showPaywall = false
     @State private var uploadErr: String?
+    @State private var kartId: String? = nil          // kartı indirilen rota (düğmede ProgressView)
+    @State private var paylasKart: PaylasimKarti?     // indirilen kart -> paylaşım sayfası
 
     // Listeyi tazele: yeni (oto-algılanan) sürüşler + biten render'lar hemen görünsün.
     func reload() async {
@@ -160,6 +185,8 @@ struct RoutesView: View {
                                     }
                                 }
                                 Spacer()
+                                // 26.10: işlem düğmeleri tek grupta (8 pt aralık) — 4. düğme (kart) satıra sığsın
+                                HStack(spacing: 8) {
                                 if r.sample == true && r.novideo == true {
                                     EmptyView()   // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
                                 } else if r.novideo == true || r.failed == true {
@@ -192,6 +219,29 @@ struct RoutesView: View {
                                         }.font(.system(size: 16, weight: .semibold)).frame(width: 42, height: 42).glassPanel(21)
                                     }.buttonStyle(.borderless).contentShape(Rectangle()).disabled(savingId == r.id)
                                 }
+                                // Kartı paylaş (26.10): kısa bas = Story (9:16) dikey kart; uzun bas = biçim seç.
+                                // Örnek (sample) rotada da VAR: sunucu /kart ucunda appreview rotalarına izin verir
+                                // (inceleyici paylaşımı deneyebilsin) — sil/tip menüsünden farklı.
+                                Group {
+                                    Menu {
+                                        Button { kartPaylas(r, bicim: "dikey") } label: {
+                                            Label(L("Story (9:16)", "Story (9:16)"), systemImage: "rectangle.portrait")
+                                        }
+                                        Button { kartPaylas(r, bicim: "kare") } label: {
+                                            Label(L("Kare (1:1)", "Square (1:1)"), systemImage: "square")
+                                        }
+                                    } label: {
+                                        Group {
+                                            if kartId == r.id { ProgressView() }
+                                            else { Image(systemName: "square.and.arrow.up").foregroundStyle(Brand.accent) }
+                                        }.font(.system(size: 16, weight: .semibold)).frame(width: 42, height: 42).glassPanel(21)
+                                    } primaryAction: {
+                                        kartPaylas(r, bicim: "dikey")
+                                    }
+                                    .contentShape(Rectangle()).disabled(kartId != nil)
+                                    .accessibilityLabel(L("Kartı paylaş", "Share card"))
+                                }
+                                }   // HStack(spacing: 8) — işlem düğmeleri
                             }
                             .padding(14).glassPanel(20).smoothAppear()
                             .contextMenu {   // uzun bas → sil (10.10: örnek içerikte yok — sunucu 404 veriyordu)
@@ -225,9 +275,9 @@ struct RoutesView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — premium
+                    // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — 03.11.2026: herkese açık
                     Button {
-                        if premium { showImporter = true } else { showPaywall = true }
+                        showImporter = true
                     } label: {
                         if uploading { ProgressView() }
                         else { Image(systemName: "tray.and.arrow.up").font(.system(size: 16, weight: .semibold)) }
@@ -262,7 +312,12 @@ struct RoutesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showPaywall) { PaywallSheet(premium: $premium) }
+        .sheet(item: $paylasKart) { k in
+            PaylasimSayfasi(ogeler: [k.url]) { paylasKart = nil }
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+        }
+        // uploadErr uyarısı kart hatalarını da gösterir (tek alert, aynı kalıp)
         .alert(uploadErr ?? "", isPresented: Binding(get: { uploadErr != nil }, set: { if !$0 { uploadErr = nil } })) {
             Button("OK") { uploadErr = nil }
         }
@@ -305,6 +360,21 @@ struct RoutesView: View {
             let p = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             p.automaticallyWaitsToMinimizeStalling = true
             await MainActor.run { playerBox = PlayerBox(player: p) }
+        }
+    }
+
+    // Rota kartını indir (dikey|kare) -> geçici PNG -> paylaşım sayfası. Hata: sunucu metni uyarıda.
+    func kartPaylas(_ r: Ride, bicim f: String) {
+        guard kartId == nil else { return }
+        kartId = r.id
+        Task {
+            defer { kartId = nil }
+            do {
+                let d = try await store.kartIndir(path: "/api/rides/\(r.id)/kart?f=\(f)")
+                paylasKart = PaylasimKarti(url: try kartDosyasi(d, ad: r.id))
+            } catch {
+                uploadErr = error.localizedDescription
+            }
         }
     }
 

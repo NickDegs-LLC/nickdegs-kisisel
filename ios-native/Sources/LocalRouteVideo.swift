@@ -20,7 +20,7 @@ enum LocalRouteVideo {
     struct Opts {
         var mode = "flyover"          // flat | flyover | 3d
         var aspect = "16:9"
-        var premium = true            // true = 1080p (video üretimi zaten Premium kapılı)
+        var premium = true            // true = 1080p (03.11.2026: herkes 1080p — Move Log ücretsiz)
         var line = "#00E5FF"          // hex | "none" (çizgisiz) | "glass"/"clear" (buzlu beyaz)
         var dot = "#FF3B30"           // hex
         var camdist = "orta"          // yakin | orta | uzak

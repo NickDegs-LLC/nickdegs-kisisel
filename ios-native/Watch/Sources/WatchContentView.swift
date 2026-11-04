@@ -115,8 +115,8 @@ struct WatchContentView: View {
                     workout.requestVideo(link: link) { ok in videoState = ok ? 1 : 2 }
                 } label: { Label(WL("Video oluştur","Create video"), systemImage: "video.fill") }
                 if videoState == 2 {
-                    Text(WL("Olmadı — telefondan dene (Premium gerekebilir).",
-                            "Failed — try from phone (may need Premium)."))
+                    Text(WL("Olmadı — telefondan dene.",
+                            "Failed — try from phone."))
                         .font(.caption2).foregroundStyle(.orange).multilineTextAlignment(.center)
                 }
             }

@@ -24,10 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import com.nickdegs.movelog.data.Billing
 import com.nickdegs.movelog.data.Convo
 import com.nickdegs.movelog.data.Store
-import com.nickdegs.movelog.data.VIDEO_SKULARI
 import com.nickdegs.movelog.ui.L
 import com.nickdegs.movelog.ui.theme.Brand
 
@@ -36,13 +34,11 @@ import com.nickdegs.movelog.ui.theme.Brand
 fun ProfileScreen(store: Store) {
     val scope = rememberCoroutineScope()
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    var showPaywall by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf(false) }
     var addFriend by remember { mutableStateOf(false) }
     var davetGiris by remember { mutableStateOf(false) }
     var davetGirisi by remember { mutableStateOf("") }
     var friends by remember { mutableStateOf<List<Convo>>(emptyList()) }
-    var boostMsg by remember { mutableStateOf<String?>(null) }
     var sens by remember { mutableStateOf(store.sensitivity) }
     var sumOn by remember { mutableStateOf(true) }
     var sumHour by remember { mutableStateOf(21) }
@@ -52,21 +48,6 @@ fun ProfileScreen(store: Store) {
     var showDelete by remember { mutableStateOf(false) }
     var showAvatar by remember { mutableStateOf(false) }
     fun saveSummary() { scope.launch { store.setSummarySettings(com.nickdegs.movelog.data.SummaryCfg(sumOn, sumHour, sumVid)) } }
-    val billing = remember {
-        // Tüketilebilir: doğrulama BİTMEDEN consume edilmez (bitti(ok) çağrısı Billing içinde tüketir).
-        // 17.09 gece (Cursor e2e #5): Profil örneği de restore()'da aboneliği doğrulayıp ack'lesin.
-        Billing(ctx, onPurchase = { t, bitti -> scope.launch { bitti(store.verifyGooglePurchase(t)) } },
-                onConsumable = { t, sku, bitti ->
-            scope.launch {
-                val ok = store.verifyGoogleBoost(t, sku)
-                bitti(ok)
-                if (ok) boostMsg = when {
-                    sku in VIDEO_SKULARI -> L("Video hakkın eklendi 🎬", "Video credits added 🎬")
-                    else -> L("Bugünkü limitin 2 katına çıktı 🚀", "Today's limit doubled 🚀")
-                }
-            }
-        })
-    }
     LaunchedEffect(Unit) {
         store.loadProfile(); friends = store.friends()
         val s = store.summarySettings(); sumOn = s.enabled; sumHour = s.hour; sumVid = s.video
@@ -102,60 +83,18 @@ fun ProfileScreen(store: Store) {
                 color = Color(0xFF9AA4B2), fontSize = 12.sp)
         }
 
-        // Premium kartı
+        // 03.11.2026: Premium kartı, Günlük 2× Boost ve tek seferlik video paketleri KALDIRILDI —
+        // Move Log tamamen ücretsiz (abonelik/IAP yok). Tek satırlık bilgi kartı kalıyor.
         item {
-            Surface(color = Brand.card, shape = RoundedCornerShape(22.dp),
-                modifier = Modifier.fillMaxWidth().clickable { if (!store.premium) showPaywall = true }) {
+            Surface(color = Brand.card, shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Star, null, tint = Brand.accent)
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text(if (store.premium) L("Premium üyesin", "You're Premium")
-                             else L("Move Log Premium", "Move Log Premium"), color = Color.White, fontWeight = FontWeight.Bold)
-                        Text(if (store.premium) L("Tüm özellikler açık", "All features unlocked")
-                             else L("3B videolar, filigransız, müzik", "3D videos, no watermark, music"),
+                        Text(L("Move Log ücretsiz", "Move Log is free"), color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(L("Tüm özellikler açık — videolar telefonunda üretilir", "All features unlocked — videos are created on your phone"),
                             color = Color(0xFF9AA4B2), fontSize = 13.sp)
                     }
-                }
-            }
-        }
-
-        // Günlük 2× Boost (consumable) — premium üyeye, ürün Play'de yüklüyse
-        if (store.premium && billing.boost != null) {
-            item {
-                Surface(color = Brand.card, shape = RoundedCornerShape(22.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { (ctx as? android.app.Activity)?.let { billing.buyBoost(it) } }) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Bolt, null, tint = Brand.accent)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(L("Günlük 2× Boost", "Daily 2× Boost"), color = Color.White, fontWeight = FontWeight.Bold)
-                            Text(boostMsg ?: L("Bugünkü video limitini ikiye katla", "Double today's video limit"),
-                                color = Color(0xFF9AA4B2), fontSize = 13.sp)
-                        }
-                        Text(billing.boostPrice(), color = Brand.accent, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        // Tek seferlik paketler (1.61) — abonelik istemeyene. Play'de olmayan sku kart üretmez.
-        // 18.09: sokak (Street View) paketleri kaldırıldı — yalnız video paketleri kaldı.
-        items(VIDEO_SKULARI.filter { billing.paketler.containsKey(it) }) { sku ->
-            val adet = when (sku) { "video_uclu" -> 3; "video_besli" -> 5; else -> 3 }
-            Surface(color = Brand.card, shape = RoundedCornerShape(22.dp),
-                modifier = Modifier.fillMaxWidth().clickable {
-                    (ctx as? android.app.Activity)?.let { billing.buyPaket(it, sku) } }) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Movie, null, tint = Brand.accent)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(L("$adet video paketi", "$adet video pack"),
-                            color = Color.White, fontWeight = FontWeight.Bold)
-                        Text(L("Aboneliksiz, tek seferlik", "One-time, no subscription"),
-                            color = Color(0xFF9AA4B2), fontSize = 13.sp)
-                    }
-                    Text(billing.paketFiyati(sku), color = Brand.accent, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -216,7 +155,7 @@ fun ProfileScreen(store: Store) {
             }
         }
 
-        // Algılama hassasiyeti (premium)
+        // Algılama hassasiyeti (03.11: herkese açık)
         item {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(L("Algılama hassasiyeti", "Detection sensitivity"), color = Color(0xFF9AA4B2),
@@ -226,17 +165,15 @@ fun ProfileScreen(store: Store) {
                     opts.forEachIndexed { i, (id, label) ->
                         SegmentedButton(
                             selected = sens == id,
-                            onClick = { if (store.premium || id == "basit") { sens = id; store.sensitivity = id } else showPaywall = true },
+                            onClick = { sens = id; store.sensitivity = id },
                             shape = SegmentedButtonDefaults.itemShape(i, opts.size)
                         ) { Text(label) }
                     }
                 }
-                if (!store.premium) Text(L("Hassas ve Dengeli için Premium gerekir.", "High and Balanced require Premium."),
-                    color = Color(0xFF9AA4B2), fontSize = 12.sp)
             }
         }
 
-        // Günlük özet (premium)
+        // Günlük özet
         item {
             Surface(color = Brand.card, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -423,12 +360,6 @@ fun ProfileScreen(store: Store) {
             } })
     }
 
-    if (showPaywall) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showPaywall = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) { PaywallScreen(store) { showPaywall = false } }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

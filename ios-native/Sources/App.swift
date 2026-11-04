@@ -4,7 +4,6 @@ import SwiftUI
 struct MoveLogApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var store = Store()
-    @StateObject private var iap = IAP()
     @StateObject private var cloud = CloudSync()
     @StateObject private var tracker = Tracker.shared
     @AppStorage("nd_font") var fontId = "default"
@@ -48,7 +47,6 @@ struct MoveLogApp: App {
                 if ph == .active && store.gate != .valid { Task { await store.validate() } }
             }
             .environmentObject(store)
-            .environmentObject(iap)
             .environmentObject(cloud)
             .environmentObject(tracker)
             .tint(Brand.accent)
@@ -127,10 +125,9 @@ struct AuthGateView: View {
 
 struct RootView: View {
     // QA (yalnız Debug/simülatör): -qaVideoSheet <from> <to> -> "Video oluştur" ekranını
-    // doğrudan açar; ücretsiz katmanda video paketi satın alma paneli görünür.
+    // doğrudan açar.
     // App Store inceleme görselleri bu yolla çekilir. Release'e ETKİSİ YOK (#if DEBUG).
     @State private var qaVideoSheet: (Double, Double)? = nil
-    @EnvironmentObject var iap: IAP
     @EnvironmentObject var store: Store
     @EnvironmentObject var tracker: Tracker
     @Environment(\.scenePhase) private var scenePhase
@@ -139,7 +136,7 @@ struct RootView: View {
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
         // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","paywall","avatar": return 3; default: return 0 }
+        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar": return 3; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {
@@ -176,13 +173,12 @@ struct RootView: View {
                                     set: { if !$0 { qaVideoSheet = nil } })) {
             if let q = qaVideoSheet {
                 GenerateSheet(from: q.0, to: q.1, type: "moto")
-                    .environmentObject(store).environmentObject(iap)
+                    .environmentObject(store)
             }
         }
         .task {
             GpsKuyruk.shared.bosalt()   // açılış: çevrimdışı birikmiş konumlar varsa hemen gitsin
             if store.me.isEmpty { let p = await store.profile(); store.me = p?.username ?? "" }
-            await store.syncPremium()                 // premium'u açılışta cihaza yansıt (kilitler kalksın)
             await store.registerPush()
             await store.refreshTokenIfNeeded()         // 05.09: 30 günde bir zorla çıkışı önler
             await store.beacon()                       // canlı-takip: son batarya/konum (arkadaşlar görsün)
@@ -191,7 +187,7 @@ struct RootView: View {
             if tracker.active, let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
             await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
-            await store.processLocalRenderQueue()      // 1.61: bekleyen oto-videoları TELEFONDA üret (bulut maliyeti sıfır)
+            await MainActor.run { store.kuyrukBaslat() }   // bekleyen oto-videoları TELEFONDA üret (iptal edilebilir görev; 03.11)
             #if DEBUG
             // QA (yalnız Debug/simülatör): -qaMotor3d <from> <to> -> web motoru 36 kareyle dener, Documents'a yazar
             let _qa = ProcessInfo.processInfo.arguments
@@ -216,7 +212,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, ph in
             if ph == .active {
                 GpsKuyruk.shared.bosalt()   // 🔴 bu satır Tracker'a HİÇ dokunmuyordu: öne gelince kuyruk boşalsın
-                Task { await store.autoSaveNewVideos(); await store.processLocalRenderQueue() }   // her öne gelişte: 1 günlük pencereye yetiş
+                Task { await store.autoSaveNewVideos(); await MainActor.run { store.kuyrukBaslat() } }   // her öne gelişte: 1 günlük pencereye yetiş
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in

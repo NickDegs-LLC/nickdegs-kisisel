@@ -102,7 +102,7 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var bgSession: Any?             // iOS17+ CLBackgroundActivitySession: app'i arka planda DİRİ tutar
                                             // (yoksa iOS runloop'u askıya alıp "belli süre sonra kapanıyor")
 
-    // ALGILAMA HASSASİYETİ -> (distanceFilter metre, heartbeat sn). Free=basit; premium 3'ünden seçer.
+    // ALGILAMA HASSASİYETİ -> (distanceFilter metre, heartbeat sn). 03.11.2026: herkes 3'ünden seçer.
     static func sensParams(_ s: String) -> (Double, TimeInterval) {
         switch s {
         case "hassas":  return (5, 5)     // en hassas: 5 sn'de bir, en yoğun iz
@@ -110,13 +110,11 @@ final class Tracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         default:        return (30, 45)   // basit: ~45 sn, performanslı/pil dostu, daha kaba algılama
         }
     }
-    // Etkin hassasiyet: free HER ZAMAN basit; premium seçimini (default dengeli) kullanır.
+    // Etkin hassasiyet: kullanıcının seçimi (default dengeli). 03.11.2026: premium kapısı kalktı.
     func currentSensitivity() -> String {
-        let prem = UserDefaults.standard.bool(forKey: "nd_premium")
-        let stored = UserDefaults.standard.string(forKey: "nd_sensitivity") ?? "dengeli"
-        return prem ? stored : "basit"
+        UserDefaults.standard.string(forKey: "nd_sensitivity") ?? "dengeli"
     }
-    // Ayarlardan değişince canlı uygula (premium).
+    // Ayarlardan değişince canlı uygula.
     func applySensitivity(_ s: String) {
         UserDefaults.standard.set(s, forKey: "nd_sensitivity")
         let (df, hb) = Tracker.sensParams(currentSensitivity())

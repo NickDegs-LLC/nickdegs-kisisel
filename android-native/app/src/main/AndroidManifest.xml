@@ -75,6 +75,18 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- PAYLAŞILABİLİR KART (26.10): sunucunun ürettiği PNG kartı başka uygulamalara (Instagram
+             Story, WhatsApp...) vermek için. Yalnız cacheDir/kartlar/ açılır (res/xml/kart_paths.xml);
+             authority Store.kartPaylas'taki packageName + ".kartlar" ile AYNI olmalı. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.kartlar"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/kart_paths" />
+        </provider>
         <!-- Wear OS (Samsung saat) köprüsü: saatin kimlik isteğine cevap verir -->
         <service
             android:name=".PhoneWearService"

@@ -4,13 +4,14 @@ import AVKit
 // Özet sekmesi: günlük + aralık özetleri listelenir; kullanıcı tarih/saat aralığı seçip özet çıkarabilir.
 struct SummariesView: View {
     @EnvironmentObject var store: Store
-    @AppStorage("nd_premium") var premium = false
     @State private var items: [ActivitySummary] = []
     @State private var showRange = false
     @State private var busy = false
     @State private var note: String?
     @State private var playerBox: PlayerBox?
     @State private var genSummary: ActivitySummary?   // özet videosunu seçeneklerle yeniden üret
+    @State private var kartBusy = false               // haftalık kart indiriliyor
+    @State private var paylasKart: PaylasimKarti?     // indirilen kart -> paylaşım sayfası (Routes.swift)
 
     var body: some View {
         NavigationStack {
@@ -27,6 +28,23 @@ struct SummariesView: View {
                                 Label(L("Tarih aralığı", "Date range"), systemImage: "calendar")
                                     .font(.system(size: 14, weight: .semibold)).frame(maxWidth: .infinity)
                             }.buttonStyle(.glassyProminent()).disabled(busy)
+                        }
+                        // HAFTALIK KART (26.10): bugünle biten 7 günün paylaşılabilir PNG kartı.
+                        // Kısa bas = Story (9:16); uzun bas = biçim seç (Rotalar'daki kart düğmesiyle aynı).
+                        Button { Task { await haftalikKart("dikey") } } label: {
+                            HStack(spacing: 8) {
+                                if kartBusy { ProgressView().tint(.white) }
+                                else { Image(systemName: "square.and.arrow.up") }
+                                Text(L("Haftalık kartı paylaş", "Share weekly card"))
+                            }.font(.system(size: 14, weight: .semibold)).frame(maxWidth: .infinity)
+                        }.buttonStyle(.glassyProminent()).disabled(busy || kartBusy)
+                        .contextMenu {
+                            Button { Task { await haftalikKart("dikey") } } label: {
+                                Label(L("Story (9:16)", "Story (9:16)"), systemImage: "rectangle.portrait")
+                            }
+                            Button { Task { await haftalikKart("kare") } } label: {
+                                Label(L("Kare (1:1)", "Square (1:1)"), systemImage: "square")
+                            }
                         }
                         if let note { Text(note).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
 
@@ -57,7 +75,7 @@ struct SummariesView: View {
                                     }
                                     // Özet videosunu istediğin ayarlarla yeniden üret (rotalar gibi)
                                     if s.from != nil && s.to != nil {
-                                        Button { if premium { genSummary = s } else { note = L("Bu özellik Premium'a özel.", "This feature is Premium.") } } label: {
+                                        Button { genSummary = s } label: {
                                             Image(systemName: "slider.horizontal.3").font(.system(size: 15, weight: .semibold))
                                                 .foregroundStyle(Brand.accent).frame(width: 40, height: 40)
                                                 .background(.thinMaterial, in: Circle())
@@ -86,6 +104,11 @@ struct SummariesView: View {
             GenerateSheet(from: s.from ?? 0, to: s.to ?? 0, type: "moto",
                           mode: "flyover", aspect: "9:16", speed: "medium", rideId: nil)
         }
+        .sheet(item: $paylasKart) { k in
+            PaylasimSayfasi(ogeler: [k.url]) { paylasKart = nil }
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+        }
         .sheet(item: $playerBox) { box in
             VideoPlayer(player: box.player).ignoresSafeArea()
                 .onAppear { box.player.play() }.onDisappear { box.player.pause() }
@@ -108,9 +131,31 @@ struct SummariesView: View {
         }
     }
 
+    // Haftalık kartı indir -> geçici PNG -> paylaşım sayfası. `gun` GÖNDERİLMEZ: sunucu kendi TR
+    // gününü kullanır (rides.date TR günü; cihaz saat dilimi farklıysa gün kaymasın). Cihaz tarihi
+    // yalnız dosya adı için. Hata (ör. 404 "bu hafta sürüş yok") sunucu metniyle `note` satırında.
+    func haftalikKart(_ f: String) async {
+        guard !kartBusy else { return }
+        kartBusy = true
+        defer { kartBusy = false }
+        let df = DateFormatter()
+        df.calendar = Calendar(identifier: .gregorian)
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = .current
+        df.dateFormat = "yyyy-MM-dd"
+        let gun = df.string(from: Date())
+        do {
+            let d = try await store.kartIndir(path: "/api/summary/kart?f=\(f)")
+            paylasKart = PaylasimKarti(url: try kartDosyasi(d, ad: "hafta-\(gun)"))
+            note = nil
+        } catch {
+            note = error.localizedDescription
+        }
+    }
+
     func genToday() async {
         busy = true; note = L("Hazırlanıyor…", "Preparing…")
-        _ = await store.summaryNow(premium: premium)
+        _ = await store.summaryNow(premium: true)   // 03.11.2026: herkes (sunucu da herkese premium=true)
         try? await Task.sleep(for: .seconds(2)); items = await store.activities()
         busy = false; note = nil
     }

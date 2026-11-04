@@ -30,6 +30,10 @@ fun SummariesScreen(store: Store) {
     var yenileniyor by remember { mutableStateOf(false) }   // aşağı çek-tazele göstergesi
     var playUrl by remember { mutableStateOf<String?>(null) }
     var genFor by remember { mutableStateOf<Summary?>(null) }
+    // HAFTALIK KART (26.10): sunucu bu haftanın özet kartını PNG çizer -> paylaşım menüsü
+    var kartIndiriliyor by remember { mutableStateOf(false) }
+    var kartMenu by remember { mutableStateOf(false) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     suspend fun reload() { items = store.summaries() }
     LaunchedEffect(Unit) { reload() }
 
@@ -44,6 +48,43 @@ fun SummariesScreen(store: Store) {
         ) {
             if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
             else { Icon(Icons.Filled.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text(L("Bugünü özetle", "Summarize today")) }
+        }
+        Spacer(Modifier.height(8.dp))
+        // HAFTALIK KART PAYLAŞ (26.10): /api/summary/kart — gun GÖNDERİLMEZ, sunucu kendi TR gününü
+        // kullanır (rides.date de TR günü; cihaz saat dilimi farklıysa gün kaymasın). Dosya adı için
+        // cihazın günü yeter. 404 = bu hafta sürüş yok -> sunucunun açıklaması Toast'ta görünür.
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { kartMenu = true },
+                enabled = !kartIndiriliyor,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (kartIndiriliyor) CircularProgressIndicator(Modifier.size(18.dp), color = Brand.accent, strokeWidth = 2.dp)
+                else {
+                    Icon(Icons.Filled.Share, null, tint = Brand.accent); Spacer(Modifier.width(8.dp))
+                    Text(L("Haftalık kartı paylaş", "Share weekly card"), color = Brand.accent)
+                }
+            }
+            DropdownMenu(expanded = kartMenu, onDismissRequest = { kartMenu = false }) {
+                listOf("dikey" to L("Story (9:16)", "Story (9:16)"), "kare" to L("Kare (1:1)", "Square (1:1)"))
+                    .forEach { (f, etiket) ->
+                        DropdownMenuItem(text = { Text(etiket) }, onClick = {
+                            kartMenu = false
+                            kartIndiriliyor = true
+                            scope.launch {
+                                try {
+                                    val gun = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+                                    store.kartPaylas(ctx, "/api/summary/kart?f=$f", "movelog-hafta-$gun.png")
+                                } catch (e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                    android.widget.Toast.makeText(ctx,
+                                        e.message ?: L("Kart paylaşılamadı", "Couldn't share the card"),
+                                        android.widget.Toast.LENGTH_SHORT).show()
+                                } finally { kartIndiriliyor = false }
+                            }
+                        })
+                    }
+            }
         }
         Spacer(Modifier.height(14.dp))
         // AŞAĞI ÇEK-TAZELE (1.62): bu ekranda hiç yoktu (Barış: "aşağı kaydırsam da yenilenmiyor").
