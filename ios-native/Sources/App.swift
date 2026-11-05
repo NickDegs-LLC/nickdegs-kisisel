@@ -34,7 +34,7 @@ struct MoveLogApp: App {
                 if store.gate == .checking { store.gate = .offline }
             }
             .task {
-                Destek.dinle()   // 05.11: yarım kalmış bahşiş işlemlerini bitir
+                Pro.baslat(store)   // 05.11: Pro işlemlerini dinle + hakkı sunucuyla eşitle
                 if store.gate == .checking { await store.validate() }
                 // 18.09: ConvoyVoice / PttEngine kaldırıldı (sesli iletişim çıktı).
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
@@ -137,7 +137,7 @@ struct RootView: View {
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
         // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar": return 3; case "social": return 4; default: return 0 }
+        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar","pro": return 3; case "social": return 4; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {
@@ -161,7 +161,7 @@ struct RootView: View {
             // Profil'e (artık tag 3) gider; bilinmeyen rota sessizce yok sayılır.
             switch p.first {
             case "videos": sel = 1
-            case "friends", "wave", "clubs": sel = 4   // 05.11: arkadaşlık/kulüp bildirimleri Sosyal'e
+            case "friends", "wave", "clubs", "pro": sel = 4   // "pro": ortak sürüş bildirimi → Sosyal (Pro kartı orada)   // 05.11: arkadaşlık/kulüp bildirimleri Sosyal'e
             case "profile": sel = 3
             default: break
             }

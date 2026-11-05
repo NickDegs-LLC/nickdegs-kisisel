@@ -65,6 +65,12 @@ fun MoveLogApp(store: Store) {
     LaunchedEffect(store.auth) {
         if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) { store.sendBeacon(); store.registerFcm() }
     }
+    // 05.11.2026: Pro eşitleme — açılışta mevcut Play satın alımı sunucuya sessizce yeniden bildirilir
+    // (yarım kalan onay / yeni hesap / yeniden kurulum). ProSatis init'te geriYukle(sessiz) yapar.
+    val proCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(store.auth) {
+        if (store.auth == com.nickdegs.movelog.data.AuthState.VALID) com.nickdegs.movelog.data.ProSatis(proCtx, store)
+    }
     // 17.09 ASIL FIKS (olculdu): uygulama CHECKING'de asili kalinca ON PLANA DONUS hicbir seyi
     // tetiklemiyordu. LaunchedEffect(Unit) yalniz BIR KEZ kosar; asagidaki ON_RESUME dinleyicisi ise
     // erken return'lerin ALTINDA kayitlaniyor, yani ancak auth==VALID iken. Arka plandaki konum

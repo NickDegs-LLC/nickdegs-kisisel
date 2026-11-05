@@ -271,6 +271,8 @@ private fun IdeaBoxView(store: Store, onBack: () -> Unit) {
 private fun GroupVideoView(store: Store, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var pref by remember { mutableStateOf("both") }
+    var showPro by remember { mutableStateOf(false) }
+    if (showPro) ProDialog(store) { showPro = false }
     LaunchedEffect(Unit) { pref = store.groupVideoPref() }
     val opts = listOf(
         "both" to L("Ortak + kendi videom", "Shared + my own"),
@@ -284,6 +286,18 @@ private fun GroupVideoView(store: Store, onBack: () -> Unit) {
                 color = sub, fontSize = 13.sp)
             Text(L("Bir arkadaşınla sürünce hangi videolar üretilsin?", "When you ride with a friend, which videos are made?"),
                 color = sub, fontSize = 13.sp)
+            // 05.11.2026: ortak videolar Move Log Pro ile (tek seferlik)
+            if (!store.pro) Card(onClick = { showPro = true }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Lock, null, tint = Brand.accent)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(L("Ortak videolar Pro ile", "Joint videos with Pro"), color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(L("Tek seferlik satın alma, abonelik yok", "One-time purchase, no subscription"), color = sub, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.ChevronRight, null, tint = sub)
+                }
+            }
             opts.forEach { (key, label) ->
                 Card(onClick = { pref = key; scope.launch { store.setGroupVideoPref(key) } }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -347,7 +361,7 @@ private fun ClubsView(store: Store, onOpen: (String) -> Unit, onBack: () -> Unit
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(c.name, color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text(L("${c.memberCount} üye", "${c.memberCount} members"), color = sub, fontSize = 12.sp)
+                            Text(L("{n} üye", "{n} members").replace("{n}", "${c.memberCount}"), color = sub, fontSize = 12.sp)
                         }
                         Icon(Icons.Filled.ChevronRight, null, tint = sub)
                     }

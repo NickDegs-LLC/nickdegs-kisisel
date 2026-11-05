@@ -201,7 +201,7 @@ object YerelVideo {
             val detay = runCatching { JSONObject(txt).optString("detail", "") }.getOrDefault("")
             return hata(detay.ifEmpty {
                 if (kod == 0) L("Sunucuya ulaşılamadı (bağlantı?)", "Couldn't reach the server (network?)")
-                else L("Sunucu $kod döndü", "Server returned $kod")
+                else L("Sunucu {n} döndü", "Server returned {n}").replace("{n}", "$kod")
             })
         }
         val o = runCatching { JSONObject(txt) }.getOrNull()
@@ -459,7 +459,7 @@ object YerelVideo {
             val tamam = withContext(encThread) { k.bitir() }
             kod = null
             if (!tamam || kareNo <= frames / 2)
-                return hata(L("Video tamamlanamadı ($kareNo/$frames kare)", "Video couldn't be completed ($kareNo/$frames frames)"))
+                return hata(L("Video tamamlanamadı ({n} kare)", "Video couldn't be completed ({n} frames)").replace("{n}", "$kareNo/$frames"))
             basarili = true
             return cikti
         } finally {

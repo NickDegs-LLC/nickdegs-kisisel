@@ -245,6 +245,7 @@ async function profileOf(env: Env, db: D1Database, u: string): Promise<Record<st
     handle: pyTruthy(p?.handle) ? String(p!.handle) : '',
     avatar: pyTruthy(avatar) ? avatar : { type: 'initials' },
     premium: !!Number(p?.premium ?? 0),
+    pro: !!Number((p as Record<string, unknown> | null)?.pro ?? 0),   // 05.11.2026: Move Log Pro (tek seferlik)
     sv_off: svOff,                                     // /opt/movelog/data/sv-kapali → KV bayrağı
     video_hak: Math.trunc(Number(p?.video_hak ?? 0) || 0),
     // ⚠️ SABİT false — 19.09'da GERİ KONDU. iOS `Profile` struct'ında `ultra` ZORUNLU alan;
@@ -1138,6 +1139,13 @@ g.post('/api/iap/apple/bildirim', async (c) => {
       await kaydet({ uid, pid, karar, bitis: dur.bitis })
       return c.json({ ok: true })
     }
+    // 05.11.2026: Move Log Pro İADE / Aile Paylaşımı geri alma → Pro kapanır
+    if (pid === PRO_APPLE && (tip === 'REFUND' || tip === 'REVOKE')) {
+      await db.prepare('UPDATE users SET pro = 0, updated_at = ?1 WHERE uid = ?2').bind(ts, uid).run()
+      await kaydet({ uid, pid, karar: 'iade:pro-kapandi' })
+      await adminq(c.env, `💸 Move Log PRO iade: ${ad} · Pro kapatıldı`)
+      return c.json({ ok: true })
+    }
     if (tuketilebilirMi(pid) && (tip === 'REFUND' || tip === 'REVOKE')) {
       // 🔴 FİKS 17.09 — İADE EDİLEN HAK GERİ ALINIYOR. Öncesi: yalnız adminq notu → kullanıcı
       // parasını geri alıp sokak/video hakkını KULLANMAYA devam ediyordu. MAX(0,…) ile negatife düşmez.
@@ -1239,6 +1247,13 @@ g.post('/api/iap/google/bildirim', async (c) => {
           .bind(oid2 || '-', tok || '-').first<{ uid: string; pid: string }>()
         : null
       const sku2 = pyStr(islem?.pid)
+      // 05.11.2026: Move Log Pro iadesi → Pro kapanır
+      if (sku2 === PRO_GOOGLE && islem?.uid) {
+        await db.prepare('UPDATE users SET pro = 0, updated_at = ?1 WHERE uid = ?2').bind(simdi(), islem.uid).run()
+        await kaydet({ tip: 'voided', alt_tip: oid2 || null, uid: islem.uid, pid: tok || null, karar: 'iade:pro-kapandi' })
+        await adminq(c.env, `💸 Move Log PRO iade (Google): ${islem.uid} · Pro kapatıldı`)
+        return c.json({ ok: true })
+      }
       const geri = ANDROID_VIDEO_IDS[sku2] ?? 0
       const kolon = 'video_hak'
       const sahip = uid || pyStr(islem?.uid)
@@ -1704,6 +1719,62 @@ g.get('/api/routes/shared', authUser, async (c) => {
     ridden: !!r.ridden_at,   // işaretleyen uç GRUP 3: POST /api/internal/register-ride
   }))
   return c.json({ routes })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 05.11.2026 MOVE LOG PRO — TEK SEFERLİK (abonelik YOK). Açtığı: ortak sürüş videoları.
+//   POST /api/pro/apple  {jws}    — StoreKit 2 imzalı işlem (zincir Apple Root G3'e pinli)
+//   POST /api/pro/google {token}  — Play purchases.products "pro"
+// Sahiplik: aynı işlem (originalTransactionId / orderId) başka Move Log hesabına bağlıysa 409.
+// İdempotent: aynı işlem aynı hesaptan tekrar gelirse yalnız pro=1 teyit edilir.
+// ═══════════════════════════════════════════════════════════════════════════════════════
+const PRO_APPLE = 'com.nickdegs.kisisel.pro'
+const PRO_GOOGLE = 'pro'
+
+async function proVer(env: Env, user: string, tid: string, pid: string, platform: string): Promise<void> {
+  const db = env.DB
+  const eski = await db.prepare('SELECT uid FROM iap_transactions WHERE tid = ?1').bind(tid).first<{ uid: string }>()
+  if (eski && eski.uid !== user) hata(409, 'bu satin alma baska hesaba ait')
+  await kullaniciGarantile(db, user)
+  const ts = simdi()
+  const islem = [db.prepare('UPDATE users SET pro = 1, pro_at = COALESCE(pro_at, ?1), updated_at = ?1 WHERE uid = ?2').bind(ts, user)]
+  if (!eski) islem.unshift(db.prepare('INSERT INTO iap_transactions (tid, uid, pid, ts, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, ?4)')
+    .bind(tid, user, pid, ts))
+  await db.batch(islem)
+  if (!eski) {
+    const prof = await getUser(db, user)
+    const ad = pyTruthy(prof?.name) ? String(prof!.name) : user.slice(0, 10)
+    await adminq(env, `💰 Move Log PRO (tek seferlik)\n${ad} · ${platform}\nİşlem: ${tid}`)
+  }
+}
+
+g.post('/api/pro/apple', authUser, async (c) => {
+  const body = await bodyAl(c)
+  const p = await storekitJwsDogrula(pyStr(body.jws))
+  if (!p || p.bundleId !== IAP_BUNDLE_ID) hata(400, 'geçersiz veya doğrulanamayan işlem')
+  if (p.productId !== PRO_APPLE) hata(400, 'bilinmeyen ürün')
+  if (p.revocationDate) hata(400, 'işlem iade edilmiş')
+  const tid = pyStr(p.originalTransactionId ?? p.transactionId)
+  if (!tid) hata(400, 'işlem kimliği yok')
+  await proVer(c.env, c.get('user'), tid, PRO_APPLE, 'iOS')
+  return c.json({ ok: true, pro: true })
+})
+
+g.post('/api/pro/google', authUser, async (c) => {
+  const body = await bodyAl(c)
+  const tok = pyStr(body.token)
+  if (!tok) hata(400, 'eksik satın alma')
+  const at = await saErisimToken(c.env, 'androidpublisher')
+  if (!at) hata(503, 'doğrulama servisi hazır değil')
+  const r = await fetch(
+    `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${ANDROID_PKG}/purchases/products/${PRO_GOOGLE}/tokens/${encodeURIComponent(tok)}`,
+    { headers: { Authorization: 'Bearer ' + at } })
+  if (r.status !== 200) hata(400, 'satın alma doğrulanamadı')
+  const d = (await r.json()) as Record<string, unknown>
+  if (d.purchaseState !== 0) hata(400, 'satın alma tamamlanmadı')
+  const tid = d.orderId === undefined ? tok : pyStr(d.orderId)
+  await proVer(c.env, c.get('user'), tid, PRO_GOOGLE, 'Android')
+  return c.json({ ok: true, pro: true })
 })
 
 export default g

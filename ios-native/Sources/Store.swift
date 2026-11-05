@@ -97,6 +97,7 @@ struct Profile: Codable {
     var avatar: Avatar
     var premium: Bool? = false
     var ultra: Bool? = false
+    var pro: Bool? = false   // 05.11.2026: Move Log Pro (tek seferlik)
 }
 struct Announcement: Identifiable { var title: String; var body: String; var url: String; var ts: Int; var id: Int { ts } }
 struct ActivitySummary: Codable, Identifiable, Hashable { var date: String; var summary: String; var videoId: String? = nil; var from: Double? = nil; var to: Double? = nil; var id: String { date } }
@@ -190,6 +191,7 @@ enum DavetLink {
     @Published var telefondaUretiliyor = false   // 1.63: cihazda üretim sürerken UI dürüst metin gösterir
     @Published var gate: AuthGate = .checking   // açılış doğrulama durumu
     @Published var davetSonuc = ""              // arkadaş daveti kabul sonucu (alert)
+    @Published var pro = UserDefaults.standard.bool(forKey: "nd_pro")   // 05.11: Move Log Pro (sunucu onaylı)
     @Published var davetYenile = 0              // kabul sonrası Profil arkadaş listesini tazelesin
     var loggedIn: Bool { !token.isEmpty || (AppEnv.demo && AppEnv.screen != "hero") }
     init() {
@@ -544,7 +546,7 @@ enum DavetLink {
         let c = UNMutableNotificationContent()
         c.title = "Move Log"
         c.body = n == 1 ? L("Videon galerine kaydedildi 🎬", "Your video was saved to your gallery 🎬")
-                        : L("\(n) video galerine kaydedildi 🎬", "\(n) videos saved to your gallery 🎬")
+                        : L("{n} video galerine kaydedildi 🎬", "{n} videos saved to your gallery 🎬").replacingOccurrences(of: "{n}", with: "\(n)")
         c.sound = .default
         let req = UNNotificationRequest(identifier: "nd_gallery_saved", content: c, trigger: nil)
         UNUserNotificationCenter.current().add(req)
@@ -553,9 +555,20 @@ enum DavetLink {
         if AppEnv.demo { return DemoData.positions }
         return (try? dec().decode([String:[Position]].self, from: await req("/api/gps/live"))["positions"]) ?? []
     }
+    /// 05.11.2026: StoreKit 2 imzalı Pro işlemini sunucuya bildir. Başarıda pro=true.
+    func proBildir(_ jws: String) async -> Bool {
+        guard let d = try? await req("/api/pro/apple", method: "POST", body: ["jws": jws]),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
+              (o["pro"] as? Bool) == true else { return false }
+        await MainActor.run { self.pro = true; UserDefaults.standard.set(true, forKey: "nd_pro") }
+        return true
+    }
     func profile() async -> Profile? {
         if AppEnv.demo { return Profile(username: "me", name: Demo.user, avatar: Avatar()) }
-        return try? dec().decode(Profile.self, from: await req("/api/profile")) }
+        let p = try? dec().decode(Profile.self, from: await req("/api/profile"))
+        // 05.11: Pro durumunun tek doğrusu sunucu (iade/hesap değişimi dahil)
+        if let p { await MainActor.run { self.pro = p.pro ?? false; UserDefaults.standard.set(self.pro, forKey: "nd_pro") } }
+        return p }
     // 03.11.2026: syncPremium() KALDIRILDI — Move Log tamamen ücretsiz, abonelik/IAP yok;
     // sunucu /api/profile herkese premium=true döner, istemcide premium kapısı kalmadı.
     /// 🔴 FİKS 05.09: sunucudaki `DELETE /api/friends/{uname}` (grup3) HİÇBİR istemciden
@@ -1122,7 +1135,7 @@ enum DavetLink {
         case 502, 503:
             throw KartHatasi(kod: kod, mesaj: L("Kart şu an üretilemedi, biraz sonra tekrar dene.", "Couldn't create the card right now, try again later."))
         default:
-            throw KartHatasi(kod: kod, mesaj: L("sunucu \(kod) döndü", "server returned \(kod)"))
+            throw KartHatasi(kod: kod, mesaj: L("sunucu {n} döndü", "server returned {n}").replacingOccurrences(of: "{n}", with: "\(kod)"))
         }
     }
 }

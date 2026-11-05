@@ -37,7 +37,7 @@ struct ProfileView: View {
     @State private var showAddFriend = false
     @State private var showHandle = false
     @State private var showFeedback = false
-    @State private var showDestek = false
+    @State private var showPro = false
     @State private var showDelete = false
     @State private var showRename = false
     @State private var newName = ""
@@ -146,8 +146,8 @@ struct ProfileView: View {
                                              + "  ·  \(tracker.sentCount)/\(tracker.recvCount) " + L("nokta","points"))
                                             .font(.caption2).foregroundStyle(.secondary)
                                     } else if tracker.recvCount > 0 {
-                                        Text(L("GPS alınıyor (\(tracker.recvCount)) ama gönderilemiyor",
-                                               "GPS received (\(tracker.recvCount)) but not sending")
+                                        Text(L("GPS alınıyor ({n}) ama gönderilemiyor",
+                                               "GPS received ({n}) but not sending").replacingOccurrences(of: "{n}", with: "\(tracker.recvCount)")
                                              + (tracker.lastError.map { " — " + $0 } ?? ""))
                                             .font(.caption2).foregroundStyle(.orange)
                                     } else {
@@ -305,14 +305,14 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
-                        // 05.11.2026: DESTEK OL — isteğe bağlı bahşiş (Destek.swift), hiçbir şey açmaz
-                        Button { showDestek = true } label: {
+                        // 05.11.2026: MOVE LOG PRO — tek seferlik; ortak sürüş videolarını açar (Pro.swift)
+                        Button { showPro = true } label: {
                             HStack(spacing: 12) {
-                                Text("☕").font(.system(size: 26))
+                                Text("🏍️").font(.system(size: 26))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Destek ol","Support us")).font(.system(size: 16, weight: .semibold))
-                                    Text(L("Move Log ücretsiz — istersen geliştiriciye kahve ısmarla",
-                                           "Move Log is free — buy the developer a coffee if you like"))
+                                    Text("Move Log Pro").font(.system(size: 16, weight: .semibold))
+                                    Text(store.pro ? L("Aktif — ortak sürüş videoları açık","Active — joint ride videos unlocked")
+                                                   : L("Tek seferlik · arkadaş ve kulüple ortak videolar","One-time · joint videos with friends and clubs"))
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -336,7 +336,7 @@ struct ProfileView: View {
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
                 if AppEnv.screen == "avatar" { showAvatar = true }
-                if AppEnv.screen == "destek" { showDestek = true }   // 05.11: IAP inceleme görüntüsü
+                if AppEnv.screen == "pro" { showPro = true }   // 05.11: IAP inceleme görüntüsü
             }
         }
         .onChange(of: store.davetYenile) { _, _ in
@@ -345,7 +345,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
-        .sheet(isPresented: $showDestek) { DestekSheet() }
+        .sheet(isPresented: $showPro) { ProSheet() }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

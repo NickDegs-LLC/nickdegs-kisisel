@@ -427,8 +427,8 @@ struct GenerateSheet: View {
         }
         let pts = await store.track(from: from, to: to)
         if pts.count < 3 {
-            await MainActor.run { telefonNeden = L("bu sürüşte yeterli GPS noktası yok (\(pts.count))",
-                                                   "not enough GPS points in this ride (\(pts.count))")
+            await MainActor.run { telefonNeden = L("bu sürüşte yeterli GPS noktası yok ({n})",
+                                                   "not enough GPS points in this ride ({n})").replacingOccurrences(of: "{n}", with: "\(pts.count)")
                                   telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil }
             return
         }

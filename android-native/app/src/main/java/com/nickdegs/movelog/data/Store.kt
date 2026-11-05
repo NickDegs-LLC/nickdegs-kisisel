@@ -88,6 +88,8 @@ class Store(app: Application) : AndroidViewModel(app) {
     // uyum için duruyor ama HER ZAMAN true: sunucu da /api/profile'da herkese premium=true döner.
     // (Eski "nd_ultra" / "nd_free_tactical" / video_hak tercihleri öksüz kalır, zararsız.)
     var premium by mutableStateOf(true)
+    // 05.11.2026: Move Log Pro (tek seferlik) — sunucu onaylı; ortak sürüş videolarını açar
+    var pro by mutableStateOf(false)
         private set
     var loginError by mutableStateOf(false)
 
@@ -283,7 +285,16 @@ class Store(app: Application) : AndroidViewModel(app) {
         displayName = o.optString("name", displayName)
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
+        pro = o.optBoolean("pro", false)
         persistPremium(true)
+    }
+
+    /** 05.11.2026: Play satın alma jetonunu sunucuya doğrulat (/api/pro/google). Başarıda pro=true. */
+    suspend fun proBildir(purchaseToken: String): Boolean {
+        val d = req("/api/pro/google", "POST", JSONObject().put("token", purchaseToken)) ?: return false
+        val ok = runCatching { JSONObject(d).optBoolean("pro", false) }.getOrDefault(false)
+        if (ok) pro = true
+        return ok
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -469,7 +480,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 when (code) {
                     404 -> L("Bu kart için kayıtlı iz yok.", "No recorded track for this card.")
                     502, 503 -> L("Kart şu an üretilemedi, biraz sonra tekrar dene.", "Couldn't create the card right now, try again shortly.")
-                    else -> L("Kart indirilemedi ($code).", "Couldn't download the card ($code).")
+                    else -> L("Kart indirilemedi ({n}).", "Couldn't download the card ({n}).").replace("{n}", "$code")
                 }
             })
         } finally { c.disconnect() }

@@ -189,7 +189,7 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                             // FIX 05.09: sunucunun kendi açıklamasını göster (400/429/503...).
                             hataMetni = store.sonUretimHatasi.ifEmpty {
                                 if (kod == 0) L("Sunucuya ulaşılamadı (bağlantı?)", "Couldn't reach the server (network?)")
-                                else L("Video oluşturulamadı (sunucu $kod)", "Couldn't create the video (server $kod)")
+                                else L("Video oluşturulamadı (sunucu {n})", "Couldn't create the video (server {n})").replace("{n}", "$kod")
                             }
                             return@launch
                         }

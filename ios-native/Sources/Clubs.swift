@@ -1,9 +1,6 @@
 import SwiftUI
 
-struct Club: Codable, Identifiable, Hashable {
-    var id: String; var name: String; var owner: String; var memberCount: Int; var created: Int
-    var code: String? = nil; var members: [Friend]? = nil
-}
+// Club modeli Store.swift:110'da (1.8'den kalma, silinmemiş).
 
 extension Store {
     func clubs() async -> [Club] {

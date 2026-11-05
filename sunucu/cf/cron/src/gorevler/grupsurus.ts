@@ -8,6 +8,28 @@ import {
   hav, jsonParse, kvJson, kvJsonYaz, pushBekleyen, renderKuyruk, trGun, trGunAralik, gorunenAd,
 } from '../lib'
 
+// 05.11.2026 — Pro'su olmayan sürücüye ortak sürüş bildirimi (12 dil)
+const PRO_T: Record<string, string> = {
+  en: 'You rode together! 🏍️🏍️', tr: 'Birlikte sürdünüz! 🏍️🏍️', de: 'Ihr seid zusammen gefahren! 🏍️🏍️',
+  fr: 'Vous avez roulé ensemble ! 🏍️🏍️', es: '¡Habéis rodado juntos! 🏍️🏍️', it: 'Avete guidato insieme! 🏍️🏍️',
+  pt: 'Vocês pilotaram juntos! 🏍️🏍️', ru: 'Вы прокатились вместе! 🏍️🏍️', ja: '一緒に走りましたね！🏍️🏍️',
+  zh: '你们一起骑行了！🏍️🏍️', ko: '함께 라이딩했네요! 🏍️🏍️', ar: 'لقد قدتم معًا! 🏍️🏍️',
+}
+const PRO_B: Record<string, string> = {
+  en: 'You rode with {f}. Get Move Log Pro once and your joint 3D ride video is made on your phone.',
+  tr: '{f} ile birlikte sürdün. Move Log Pro\'yu bir kez al, ortak 3D sürüş videonuz telefonunda hazırlansın.',
+  de: 'Du bist mit {f} gefahren. Hol dir einmalig Move Log Pro und euer gemeinsames 3D-Video entsteht auf deinem Handy.',
+  fr: 'Tu as roulé avec {f}. Prends Move Log Pro une fois et votre vidéo 3D commune est créée sur ton téléphone.',
+  es: 'Rodaste con {f}. Consigue Move Log Pro una sola vez y vuestro vídeo 3D conjunto se crea en tu teléfono.',
+  it: 'Hai guidato con {f}. Prendi Move Log Pro una volta sola e il vostro video 3D comune nasce sul tuo telefono.',
+  pt: 'Você pilotou com {f}. Compre o Move Log Pro uma vez e o vídeo 3D conjunto é feito no seu celular.',
+  ru: 'Вы ехали с {f}. Купите Move Log Pro один раз — и общее 3D-видео создастся на вашем телефоне.',
+  ja: '{f}さんと一緒に走りました。Move Log Proを一度購入すると、共同3D動画がスマホで作られます。',
+  zh: '你和{f}一起骑行了。一次性购买 Move Log Pro，你们的 3D 合拍视频就会在手机上生成。',
+  ko: '{f}님과 함께 달렸어요. Move Log Pro를 한 번만 구매하면 공동 3D 영상이 휴대폰에서 만들어져요.',
+  ar: 'قدتَ مع {f}. اشترِ Move Log Pro مرة واحدة ويُنشأ فيديو الرحلة المشترك ثلاثي الأبعاد على هاتفك.',
+}
+
 const GRID = 30, NEAR_M = 300, MIN_DUR = 600, MIN_KM = 2.0, MERGE_GAP = 300, SETTLE = 600, MOVE_KMH = 7
 
 type Nokta = { t: number; lat: number; lon: number; alt: number; spd: number }
@@ -93,8 +115,8 @@ export async function kos(c: GorevCtx): Promise<void> {
   const aktifSet = new Set(aktif.results.map((r) => r.device))
   if (!aktifSet.size) { log('bugün aktif cihaz yok'); return }
   const users = await env.DB.prepare(
-    'SELECT uid, name, handle, lang, premium, tracker_id, prefs_json FROM users WHERE tracker_id IS NOT NULL')
-    .all<{ uid: string; name: string | null; handle: string | null; lang: string | null; premium: number | null; tracker_id: string; prefs_json: string | null }>()
+    'SELECT uid, name, handle, lang, premium, pro, tracker_id, prefs_json FROM users WHERE tracker_id IS NOT NULL')
+    .all<{ uid: string; name: string | null; handle: string | null; lang: string | null; premium: number | null; pro: number | null; tracker_id: string; prefs_json: string | null }>()
   const userDev = new Map<string, string>()
   const prof = new Map<string, (typeof users.results)[number]>()
   for (const u of users.results) {
@@ -267,6 +289,18 @@ export async function kos(c: GorevCtx): Promise<void> {
       for (const u of gusers) {
         const pr = jsonParse<Record<string, unknown>>(prof.get(u)?.prefs_json ?? null, {})
         if (pr.group_video === 'solo') continue
+        // 05.11.2026 MOVE LOG PRO: ortak video YALNIZ Pro sahibine. Pro'su olmayana o gün o grup için
+        // TEK bildirim: "X ile birlikte sürdün — Pro ile ortak videonuz hazır".
+        if (!Number(prof.get(u)?.pro ?? 0)) {
+          const upk = `pro_up_${gun}_${u}_${gusers.join('+')}`
+          if (!(upk in sent)) {
+            const others = gusers.filter((x) => x !== u).map((x) => names.get(x)).join(', ')
+            const lng = prof.get(u)?.lang || 'en'
+            await pushBekleyen(env, { user: u, title: PRO_T[lng] || PRO_T.en, body: (PRO_B[lng] || PRO_B.en).replace('{f}', others), route: 'pro' })
+            sent[upk] = now; changed = true
+          }
+          continue
+        }
         const lst = await kvJson<Record<string, unknown>[]>(env, `yerelq:${u}`, [])
         // `from`+1: aynı anda başlayan kendi sürüş işiyle (from anahtarı) çakışmasın
         const frm = Math.trunc(st) + 1
