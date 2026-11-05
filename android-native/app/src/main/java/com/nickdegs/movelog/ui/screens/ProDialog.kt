@@ -65,6 +65,14 @@ fun ProDialog(store: Store, onClose: () -> Unit) {
                         "Purchase received but the server couldn't be reached; it completes automatically next time you open the app."), color = Color(0xFFFF6B6B), fontSize = 12.sp)
                     else -> Text(L("Satın alma tamamlanamadı.", "The purchase couldn't be completed."), color = Color(0xFFFF6B6B), fontSize = 12.sp)
                 }
+                // 05.11.2026 (mağaza incelemesi): satın alma ekranında Gizlilik + Kullanım Şartları bağlantıları
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    fun ac(u: String) = ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
+                    TextButton(onClick = { ac("https://realvirtuality.app/movelog/privacy.html") }) {
+                        Text(L("Gizlilik Politikası", "Privacy Policy"), fontSize = 12.sp, color = Brand.accent) }
+                    TextButton(onClick = { ac("https://realvirtuality.app/movelog/terms.html") }) {
+                        Text(L("Kullanım Şartları", "Terms of Use"), fontSize = 12.sp, color = Brand.accent) }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text(L("Kapat", "Close")) } },

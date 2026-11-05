@@ -101,6 +101,11 @@ struct ProSheet: View {
                         Button(L("Satın alımları geri yükle","Restore purchases")) { Task { await geriYukle() } }
                             .font(.footnote.weight(.semibold)).frame(maxWidth: .infinity).disabled(meshgul)
                     }
+                    // 05.11.2026 (Apple inceleme): satın alma ekranında Gizlilik + Kullanım Şartları bağlantıları
+                    HStack(spacing: 18) {
+                        Link(L("Gizlilik Politikası","Privacy Policy"), destination: URL(string: "https://realvirtuality.app/movelog/privacy.html")!)
+                        Link(L("Kullanım Şartları","Terms of Use"), destination: URL(string: "https://realvirtuality.app/movelog/terms.html")!)
+                    }.font(.footnote).frame(maxWidth: .infinity)
                     Button(L("Kapat","Close")) { dismiss() }
                         .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 4)
                 }.padding(20)
