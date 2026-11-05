@@ -37,6 +37,7 @@ struct ProfileView: View {
     @State private var showAddFriend = false
     @State private var showHandle = false
     @State private var showFeedback = false
+    @State private var showDestek = false
     @State private var showDelete = false
     @State private var showRename = false
     @State private var newName = ""
@@ -385,6 +386,21 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
+                        // 05.11.2026: DESTEK OL — isteğe bağlı bahşiş (Destek.swift), hiçbir şey açmaz
+                        Button { showDestek = true } label: {
+                            HStack(spacing: 12) {
+                                Text("☕").font(.system(size: 26))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(L("Destek ol","Support us")).font(.system(size: 16, weight: .semibold))
+                                    Text(L("Move Log ücretsiz — istersen geliştiriciye kahve ısmarla",
+                                           "Move Log is free — buy the developer a coffee if you like"))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }.padding(14).contentShape(Rectangle())
+                        }.buttonStyle(.plain).glassPanel(18)
+
                         Button(L("Çıkış","Sign out")) { store.logout() }
                             .buttonStyle(.glassy).padding(.top, 8).tint(.red)
 
@@ -410,6 +426,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
+        .sheet(isPresented: $showDestek) { DestekSheet() }
         .confirmationDialog(
             L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
             isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),

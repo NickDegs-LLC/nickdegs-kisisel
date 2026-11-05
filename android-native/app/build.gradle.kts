@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.75"   // 03.11: ÜCRETSİZ (IAP/abonelik kalktı) + video telefonda (YerelVideo) + kart/uydu harita (1.74 yayınlanmadı)
+        versionName = "1.76"   // 05.11: "Destek ol" bahşiş (3 tüketilebilir). 1.75: ücretsiz + video telefonda + kartlar
     }
 
     signingConfigs {
@@ -83,7 +83,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)
     // 16.09: osmdroid (OpenStreetMap) KALDIRILDI — canlı konum haritası uygulamadan çıkınca
     // kütüphane hiçbir yerden kullanılmaz hâle geldi, APK'yı boşuna büyütüyordu.
-    // 03.11.2026: com.android.billingclient:billing-ktx KALDIRILDI — Move Log ücretsiz, IAP/abonelik yok
+    // 05.11.2026: billing-ktx YALNIZ "Destek ol" bahşişi için geri geldi (hiçbir özellik açmaz). Play zorunluluğu 8.0.0+
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
     // (Billing.kt + PaywallScreen.kt silindi; BILLING izni bu bağımlılığın manifestinden geliyordu, o da gitti).
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)
     // 18.09: io.livekit:livekit-android KALDIRILDI — canlı interkom/telsiz uygulamadan çıktı,

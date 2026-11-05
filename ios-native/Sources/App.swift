@@ -34,6 +34,7 @@ struct MoveLogApp: App {
                 if store.gate == .checking { store.gate = .offline }
             }
             .task {
+                Destek.dinle()   // 05.11: yarım kalmış bahşiş işlemlerini bitir
                 if store.gate == .checking { await store.validate() }
                 // 18.09: ConvoyVoice / PttEngine kaldırıldı (sesli iletişim çıktı).
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
