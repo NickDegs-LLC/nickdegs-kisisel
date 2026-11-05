@@ -132,7 +132,7 @@ fun MoveLogApp(store: Store) {
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
         // 18.09: "Sohbet" sekmesi kaldırıldı; "Topluluk" -> "Arkadaşlar" (yalnız arkadaş ekleme +
         // ikili sürüş videosu tercihi kalıyor). "Friends" anahtarı Strings.kt'de ZATEN var -> 12 dil hazır.
-        Tab(L("Arkadaşlar", "Friends"), Icons.Filled.Groups),
+        Tab(L("Sosyal", "Social"), Icons.Filled.Groups),   // 05.11: arkadaşlar + kulüpler + ortak sürüş
         Tab(L("Profil", "Profile"), Icons.Filled.Person),
     )
 

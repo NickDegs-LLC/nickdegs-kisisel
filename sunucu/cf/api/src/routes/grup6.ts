@@ -1562,6 +1562,9 @@ g.get('/api/local-renders', authUser, async (c) => {
   // 7 günden eski iş bayat — filtrelenir ama DEPOYA GERİ YAZILMAZ (main.py:2182-2183 birebir)
   const kesim = Date.now() / 1000 - 7 * 86400
   lst = lst.filter((x) => Number(nesne(x).ts ?? 0) > kesim)
+  // 05.11.2026 ORTAK SÜRÜŞ: `grup` işleri yalnız ?grup=1 diyen (iOS 1.73+ / Android 1.76+) istemciye
+  // verilir. Eski sürüm bu işi eş sürücüsüz, sıradan 3D video olarak üretirdi (yanlış/çift video).
+  if (c.req.query('grup') !== '1') lst = lst.filter((x) => !nesne(x).grup)
   return c.json({ pending: lst })
 })
 

@@ -100,86 +100,7 @@ struct ProfileView: View {
                             stat("\(friends.count)", L("Arkadaş","Friends"))
                         }
 
-                        // Gelen arkadaşlık istekleri — onayla/reddet
-                        if !incoming.isEmpty {
-                            section(L("Arkadaşlık istekleri","Friend requests"))
-                            ForEach(incoming) { f in
-                                HStack(spacing: 12) {
-                                    AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold))
-                                        if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
-                                    }
-                                    Spacer()
-                                    Button {
-                                        Task { await store.respondFriend(f.username, accept: true); await reloadFriends() }
-                                    } label: {
-                                        Image(systemName: "checkmark").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
-                                            .frame(width: 38, height: 38).background(Brand.accent, in: Circle())
-                                    }.buttonStyle(.plain)
-                                    Button {
-                                        Task { await store.respondFriend(f.username, accept: false); await reloadFriends() }
-                                    } label: {
-                                        Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(.secondary)
-                                            .frame(width: 38, height: 38).background(.white.opacity(0.08), in: Circle())
-                                    }.buttonStyle(.plain)
-                                }.padding(12).glassPanel(18).smoothAppear()
-                            }
-                        }
-
-                        // 🔴 FİKS 05.09: /api/invite ve /api/invite/accept uçları sunucuda VARDI ama
-                        // istemcide HİÇ kullanılmıyordu (ne link üretimi ne kabul) → davet akışı ölüydü.
-                        section(L("Davet","Invite"))
-                        HStack(spacing: 10) {
-                            Button {
-                                Task {
-                                    davetKod = await store.invite()
-                                    if !davetKod.isEmpty { davetPaylas = true }
-                                }
-                            } label: {
-                                Label(L("Davet linki oluştur","Create invite link"), systemImage: "link")
-                                    .font(.system(size: 14, weight: .semibold))
-                            }.buttonStyle(.borderless)
-                            Spacer()
-                            Button(L("Kodum var","I have a code")) { davetGirisAcik = true }
-                                .font(.system(size: 14, weight: .semibold))
-                        }.padding(12).glassPanel(18)
-
-                        section(L("Arkadaşlar","Friends"))
-                        ForEach(friends) { f in
-                            HStack(spacing: 12) {
-                                AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold))
-                                    if let h = f.handle, !h.isEmpty { Text("@\(h)").font(.caption).foregroundStyle(.secondary) }
-                                }
-                                Spacer()
-                                // 16.09: telsiz (bas-konuş) + canlı telsiz butonları TELSİZ sekmesine taşındı,
-                                // canlı takip tamamen kaldırıldı. Burada arkadaş YÖNETİMİ kalır (ekle/çıkar).
-                            }.padding(12).glassPanel(18).smoothAppear()
-                            // 🔴 FİKS 05.09: sunucudaki DELETE /api/friends/{uname} hiçbir yerden
-                            // çağrılmıyordu — arkadaşlıktan çıkarma özelliği fiilen YOKTU.
-                            .contextMenu {
-                                Button(role: .destructive) { silinecekArkadas = f } label: {
-                                    Label(L("Arkadaşlıktan çıkar","Remove friend"), systemImage: "person.badge.minus")
-                                }
-                            }
-                        }
-                        ForEach(outgoing) { f in
-                            HStack(spacing: 12) {
-                                AvatarView(name: f.name ?? f.username, avatar: f.avatar, size: 44).opacity(0.6)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(f.name ?? f.username).font(.system(size: 16, weight: .semibold)).foregroundStyle(.secondary)
-                                    Text(L("İstek gönderildi — onay bekleniyor","Request sent — awaiting approval")).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "hourglass").foregroundStyle(.secondary)
-                            }.padding(12).glassPanel(18).smoothAppear()
-                        }
-                        Button { showAddFriend = true } label: {
-                            Label(L("Arkadaş ekle","Add friend"), systemImage: "person.badge.plus")
-                        }.buttonStyle(.glassy)
-
+                        // 05.11.2026: arkadaşlar / davet / kulüpler / grup sürüş → SOSYAL sekmesi (Social.swift)
                         section(L("Tipografi","Typography"))
                         ForEach(FONT_CHOICES) { f in
                             Button {
@@ -354,8 +275,6 @@ struct ProfileView: View {
                                "Summarizes your day so far; you'll get a notification when it's ready."))
                             .font(.caption2).foregroundStyle(.secondary).padding(.top, 2)
 
-                        // 03.11.2026: GRUP SÜRÜŞ bölümü KALDIRILDI (ortak video bulut gerektiriyordu; bulut kapalı).
-
                         section(L("Görünüm","Appearance"))
                         Picker("", selection: $scheme) {
                             Text(L("Açık","Light")).tag("light")
@@ -417,52 +336,16 @@ struct ProfileView: View {
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
                 if AppEnv.screen == "avatar" { showAvatar = true }
+                if AppEnv.screen == "destek" { showDestek = true }   // 05.11: IAP inceleme görüntüsü
             }
         }
         .onChange(of: store.davetYenile) { _, _ in
             Task { await reloadFriends() }
         }
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
-        .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
         .sheet(isPresented: $showDestek) { DestekSheet() }
-        .confirmationDialog(
-            L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
-            isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button(L("Arkadaşlıktan çıkar","Remove friend"), role: .destructive) {
-                if let f = silinecekArkadas {
-                    Task { await store.removeFriend(f.username); await reloadFriends() }
-                }
-                silinecekArkadas = nil
-            }
-            Button(L("Vazgeç","Cancel"), role: .cancel) { silinecekArkadas = nil }
-        } message: {
-            Text(silinecekArkadas.map { $0.name ?? $0.username } ?? "")
-        }
-        .sheet(isPresented: $davetPaylas) {
-            if #available(iOS 16.0, *) {
-                ShareLink(item: davetKod) { Text(L("Davet linkini paylaş","Share invite link")) }
-                    .presentationDetents([.medium])
-            }
-        }
-        .alert(L("Davet kodu","Invite code"), isPresented: $davetGirisAcik) {
-            TextField(L("Kodu yapıştır","Paste the code"), text: $davetGirisi)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-            Button(L("Kabul et","Accept")) {
-                let kod = DavetLink.ayikla(davetGirisi)
-                davetGirisi = ""
-                Task {
-                    let ok = await store.acceptInvite(kod)
-                    store.davetSonuc = ok ? L("Arkadaş eklendi 🤝","Friend added 🤝")
-                                          : L("Kod geçersiz veya süresi dolmuş.","Invalid or expired code.")
-                    if ok { store.davetYenile += 1; await reloadFriends() }
-                }
-            }
-            Button(L("Vazgeç","Cancel"), role: .cancel) { davetGirisi = "" }
-        }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

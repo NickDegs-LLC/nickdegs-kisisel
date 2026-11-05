@@ -30,6 +30,7 @@ enum WebRouteVideo {
     static func render(from: Double, to: Double, type: String, speed: String,
                        aspect: String, camdist: String, line: String, dot: String,
                        token: String, musicURL: URL?, qaKareTavan: Int? = nil,
+                       grup: String? = nil,   // 05.11: ortak sürüş anahtarı (sunucu eş izlerini ekler)
                        onAsama: @escaping (String) -> Void = { _ in },
                        onProgress: @escaping (Double) -> Void) async -> URL? {
         sonHata = ""
@@ -41,7 +42,7 @@ enum WebRouteVideo {
         onAsama("harita hazırlanıyor")
         // 1) motor sayfasını al (bulutla aynı spec; sunucu sadece CPU-saniyesi harcar)
         guard let meta = await sayfaAl(from: from, to: to, type: type, speed: speed,
-                                       aspect: aspect, camdist: camdist, line: line, dot: dot, token: token)
+                                       aspect: aspect, camdist: camdist, line: line, dot: dot, token: token, grup: grup)
         else { return sonHata.isEmpty ? bitir("motor sayfası alınamadı (sunucu /api/motor3d)") : nil }
 
         // 2) görünmez WKWebView (ekran hiyerarşisinde olmalı — yoksa snapshot boş döner)
@@ -254,14 +255,16 @@ enum WebRouteVideo {
         return ort > 240 && (enCok - enAz) < 8        // hem çok parlak hem düz => boş kare
     }
     private static func sayfaAl(from: Double, to: Double, type: String, speed: String, aspect: String,
-                                camdist: String, line: String, dot: String, token: String) async -> Meta? {
+                                camdist: String, line: String, dot: String, token: String, grup: String? = nil) async -> Meta? {
         var rq = URLRequest(url: URL(string: API + "/api/motor3d")!)
         rq.httpMethod = "POST"; rq.timeoutInterval = 190
         rq.setValue("application/json", forHTTPHeaderField: "Content-Type")
         rq.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
-        rq.httpBody = try? JSONSerialization.data(withJSONObject: [
+        var govde: [String: Any] = [
             "from": from, "to": to, "type": type, "speed": speed, "aspect": aspect,
-            "camdist": camdist, "line": line, "dot": dot])
+            "camdist": camdist, "line": line, "dot": dot]
+        if let grup, !grup.isEmpty { govde["grup"] = grup }
+        rq.httpBody = try? JSONSerialization.data(withJSONObject: govde)
         guard let (d, resp) = try? await URLSession.shared.data(for: rq) else {
             sonHata = "sunucuya ulaşılamadı (bağlantı?)"
             return nil

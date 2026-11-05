@@ -456,12 +456,12 @@ g.post('/api/videos/upload', authUser, async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare(
       `INSERT INTO videos (rid, uid, r2_key, date, ts, to_ts, ride_type, mode, speed, aspect, size, done_at, is_group, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?12, ?12)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?12, ?12)
        ON CONFLICT(rid) DO UPDATE SET uid=?2, r2_key=?3, date=?4, ts=?5, to_ts=?6, ride_type=?7,
-         mode=?8, speed=?9, aspect=?10, size=?11, done_at=?12, updated_at=?12`)
+         mode=?8, speed=?9, aspect=?10, size=?11, done_at=?12, is_group=?13, updated_at=?12`)
       .bind(rid, user, `videos/${rid}.mp4`, day, ts, to,
         q.type ?? 'moto', q.mode ?? 'flyover', q.speed ?? 'medium', q.aspect ?? '9:16',
-        buf.length, now),
+        buf.length, now, q.grup === '1' ? 1 : 0),   // 05.11: telefonda üretilen ORTAK sürüş videosu
     // silinmiş geziyi yeniden üretti → tekrar görünür (main.py:1236-1238)
     c.env.DB.prepare('DELETE FROM deleted_rides WHERE rid = ?1').bind(rid),
     // 🔴 FİKS 05.09: telefon işi buluttaki "Hazırlanıyor" kilidini AÇMIYORDU. Yerel kuyruğun

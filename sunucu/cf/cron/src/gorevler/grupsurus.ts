@@ -3,6 +3,7 @@
 // <=NEAR_M(300m) yakın + hareketli koşuları bul, çiftleri N-kişilik kümelere birleştir;
 // en az biri Premium/Ultra ise ortak 3D iş RENDER_Q'ya (golge: önekli), hepsi free ise günde 1 upsell.
 import type { GorevCtx } from '../takvim'
+import { UCRETSIZ_MOD } from '../../../ortak/src/mod'
 import {
   hav, jsonParse, kvJson, kvJsonYaz, pushBekleyen, renderKuyruk, trGun, trGunAralik, gorunenAd,
 } from '../lib'
@@ -100,14 +101,19 @@ export async function kos(c: GorevCtx): Promise<void> {
     prof.set(u.uid, u)
     if (aktifSet.has(u.tracker_id)) userDev.set(u.uid, u.tracker_id)
   }
-  // arkadaş + kulüp çiftleri
+  // 05.11.2026 (Barış): YALNIZ TANIDIKLAR = kabul edilmiş arkadaş (friends; bekleyen istekler
+  // friend_requests'te) VEYA aynı kulübün üyesi. Rastgele / tanımadığın biri hiçbir zaman eşleşmez.
   const pairs = new Set<string>()
+  const arkadas = new Set<string>()          // TÜM tanıdık çiftleri (arkadaş + kulüp; aktiflik şartsız) — küme denetimi
   const fr = await env.DB.prepare('SELECT uid, friend_uid FROM friends').all<{ uid: string; friend_uid: string }>()
   for (const f of fr.results) {
+    if (f.uid !== f.friend_uid) arkadas.add([f.uid, f.friend_uid].sort().join('|'))
     if (f.uid !== f.friend_uid && userDev.has(f.uid) && userDev.has(f.friend_uid)) {
       pairs.add([f.uid, f.friend_uid].sort().join('|'))
     }
   }
+  // 05.11.2026 (Barış: "kulüp de ekleyelim"): AYNI KULÜPTEKİLER de tanıdık sayılır. Kulübe yalnız
+  // davet KODUYLA girilir (/api/clubs/join) → yine rastgele biri değil.
   const cm = await env.DB.prepare('SELECT cid, uid FROM club_members').all<{ cid: string; uid: string }>()
   const clubUyeler = new Map<string, string[]>()
   for (const r of cm.results) {
@@ -115,10 +121,18 @@ export async function kos(c: GorevCtx): Promise<void> {
     clubUyeler.get(r.cid)!.push(r.uid)
   }
   for (const mem of clubUyeler.values()) {
-    const akt = mem.filter((u) => userDev.has(u))
-    for (let i = 0; i < akt.length; i++) for (let j = i + 1; j < akt.length; j++) {
-      pairs.add([akt[i], akt[j]].sort().join('|'))
+    for (let i = 0; i < mem.length; i++) for (let j = i + 1; j < mem.length; j++) {
+      const k = [mem[i], mem[j]].sort().join('|')
+      arkadas.add(k)
+      if (userDev.has(mem[i]) && userDev.has(mem[j])) pairs.add(k)
     }
+  }
+  const hepsiArkadas = (uyeler: Iterable<string>): boolean => {
+    const a = [...uyeler]
+    for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) {
+      if (!arkadas.has([a[i], a[j]].sort().join('|'))) return false
+    }
+    return true
   }
   if (!pairs.size) { log('bugün aktif arkadaş çifti yok'); return }
   log(`aday çift: ${pairs.size}`)
@@ -162,7 +176,10 @@ export async function kos(c: GorevCtx): Promise<void> {
       for (let j = i + 1; j < cands.length; j++) {
         const a = cands[i], b = cands[j]
         const kesisim = [...a.members].some((x) => b.members.has(x))
-        if (kesisim && Math.min(a.en, b.en) - Math.max(a.st, b.st) >= 300) {
+        // 05.11: birleşen kümede HERKES birbirinin arkadaşı olmalı (A–B, B–C arkadaş ama A–C değilse
+        // ayrı videolar kalır; A'nın videosunda tanımadığı C görünmez)
+        if (kesisim && Math.min(a.en, b.en) - Math.max(a.st, b.st) >= 300 &&
+            hepsiArkadas(new Set([...a.members, ...b.members]))) {
           for (const x of b.members) a.members.add(x)
           a.st = Math.min(a.st, b.st); a.en = Math.max(a.en, b.en); a.km = Math.max(a.km, b.km)
           cands.splice(j, 1); merged = true; break dis
@@ -181,7 +198,7 @@ export async function kos(c: GorevCtx): Promise<void> {
     const names = new Map(members.map((u) => [u, gorunenAd(prof.get(u)).trim() || 'Rider']))
     const tiers = new Map(members.map((u) => [u, prof.get(u)?.premium ? 1 : 0]))
     log(`BİRLİKTE SÜRÜŞ (${members.length} kişi): ${members.map((u) => names.get(u)).join(' + ')} ${km.toFixed(1)}km`)
-    if (![...tiers.values()].some((t) => t > 0)) {
+    if (!UCRETSIZ_MOD && ![...tiers.values()].some((t) => t > 0)) {
       // hepsi free: günde 1 upsell
       const upk = `up_${gun}_${members.join('+')}`
       if (!(upk in sent)) {
@@ -239,6 +256,31 @@ export async function kos(c: GorevCtx): Promise<void> {
     // 🔴 18.09 Barış: chase (takip) kamerası artık TÜM grup videolarında — ek maliyet yok,
     // aynı render, farklı kamera açısı. Eskiden Ultra'lı üye varsa açılıyordu.
     job.cam = 'chase'
+    if (UCRETSIZ_MOD) {
+      // 05.11.2026 ORTAK SÜRÜŞ TELEFONDA: bulut YOK. Her üyenin telefon kuyruğuna (yerelq) bir 3D iş
+      // yazılır; iş `grup` anahtarını taşır, /api/motor3d bu anahtarla KV'deki üye listesini okuyup
+      // (istekte bulunan üye mi diye bakarak) diğer sürücülerin izlerini sunucuda ekler.
+      // Her telefon KENDİ izini öne alır (kamera kendini takip eder), diğerleri eş sürücü olur.
+      const gkey = `${gun}_${Math.trunc(st)}_${gusers.join('+')}`.slice(0, 200)
+      await kvJsonYaz(env, `grupvid:${gkey}`, { users: gusers, from: Math.trunc(st), to: Math.trunc(en), ts: now }, 14 * 86400)
+      let yazilan = 0
+      for (const u of gusers) {
+        const pr = jsonParse<Record<string, unknown>>(prof.get(u)?.prefs_json ?? null, {})
+        if (pr.group_video === 'solo') continue
+        const lst = await kvJson<Record<string, unknown>[]>(env, `yerelq:${u}`, [])
+        // `from`+1: aynı anda başlayan kendi sürüş işiyle (from anahtarı) çakışmasın
+        const frm = Math.trunc(st) + 1
+        if (lst.some((x) => x.grup === gkey || Math.trunc(Number(x.from ?? 0)) === frm)) continue
+        lst.push({ from: frm, to: Math.trunc(en), type: 'moto', mode: '3d', speed: 'medium', aspect: '16:9',
+          line: (pr.video_line as string) || '#00e5ff', dot: (pr.video_dot as string) || '#ff3b30',
+          ride_id: rid, ts: now, grup: gkey })
+        await kvJsonYaz(env, `yerelq:${u}`, lst.slice(-10))
+        yazilan++
+      }
+      log(`  -> TELEFON kuyruğu ortak video: ${gkey} • ${yazilan}/${gusers.length} üye`)
+      sent[`${pfx}${kod}`] = now; changed = true
+      continue
+    }
     const kid = await renderKuyruk(env, job, 'grupsurus')
     log(`  -> KUYRUK grup videosu: ${kid} • ${gusers.length} sürücü`)
     sent[`${pfx}${kod}`] = now; changed = true

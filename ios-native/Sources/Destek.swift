@@ -51,6 +51,16 @@ struct DestekSheet: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     if yukleniyor {
                         ProgressView().frame(maxWidth: .infinity).padding(.top, 20)
+                    } else if urunler.isEmpty && AppEnv.demo {
+                        // Yalnız DEMO/ekran görüntüsü modu (simülatörde mağaza yok): gerçek satırların görünümü
+                        ForEach(Array([("Small coffee","$0.99"),("Coffee & snack","$2.99"),("Fuel for the ride","$9.99")].enumerated()), id: \.offset) { i, u in
+                            HStack(spacing: 12) {
+                                Text(Destek.emoji[i]).font(.system(size: 26))
+                                Text(u.0).font(.system(size: 16, weight: .semibold))
+                                Spacer()
+                                Text(u.1).font(.system(size: 16, weight: .bold)).foregroundStyle(Brand.accent)
+                            }.padding(14).glassPanel(18)
+                        }
                     } else if urunler.isEmpty {
                         Text(L("Şu an mağazaya ulaşılamıyor, biraz sonra tekrar dene.",
                                "Can't reach the store right now, try again later."))

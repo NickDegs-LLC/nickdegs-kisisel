@@ -316,7 +316,8 @@ enum DavetLink {
         return data
     }
 
-    private func req(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> Data {
+    // 05.11: private → internal (Clubs.swift extension kullanıyor)
+    func req(_ path: String, method: String = "GET", body: [String:Any]? = nil) async throws -> Data {
         var r = URLRequest(url: URL(string: API + path)!)
         r.httpMethod = method
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -705,7 +706,7 @@ enum DavetLink {
     }
     // 1.61 OTO-VİDEO CİHAZDA: sunucunun "telefon üretsin" kuyruğu (bulut GPU maliyeti SIFIR).
     func localRenders() async -> [[String:Any]] {
-        guard let d = try? await req("/api/local-renders"),
+        guard let d = try? await req("/api/local-renders?grup=1"),   // 05.11: ortak sürüş işlerini de al
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
               let p = o["pending"] as? [[String:Any]] else { return [] }
         return p
@@ -782,7 +783,9 @@ enum DavetLink {
         for j in jobs.prefix(2) {
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
                   let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }
-            let mode = (j["mode"] as? String) ?? "flyover"
+            // 05.11.2026 ORTAK SÜRÜŞ: `grup` taşıyan iş yalnız 3D motorda üretilir (eşler o motorda çizilir)
+            let grup = j["grup"] as? String
+            let mode = grup != nil ? "3d" : ((j["mode"] as? String) ?? "flyover")
             // 3B de CİHAZDA üretilir: harita+rota sunucudan gelir, video telefonda üretilir.
             guard ["flat", "flyover", "3d"].contains(mode) else { continue }
             let pts = await track(from: frm, to: to)
@@ -802,7 +805,7 @@ enum DavetLink {
                                                    aspect: asp, camdist: (j["camdist"] as? String) ?? "orta",
                                                    line: (j["line"] as? String) ?? "#00E5FF",
                                                    dot: (j["dot"] as? String) ?? "#FF3B30",
-                                                   token: token, musicURL: mURL, onProgress: { _ in })
+                                                   token: token, musicURL: mURL, grup: grup, onProgress: { _ in })
             } else {
                 var o = LocalRouteVideo.Opts()
                 o.mode = mode; o.aspect = asp
@@ -812,7 +815,7 @@ enum DavetLink {
                 video = await LocalRouteVideo.render(points: pts, opts: o, onProgress: { _ in })
             }
             guard let v = video else { continue }
-            if await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz) {
+            if await uploadLocalVideo(v, ts: frm, to: to, mode: mode, aspect: asp, type: tip, speed: hiz, grup: grup != nil) {
                 await localRenderDone(from: frm)
             }
         }
@@ -894,7 +897,7 @@ enum DavetLink {
     }
     // CİHAZDA üretilen videoyu backend'e yükle -> R2 + Videolarım'da normal video gibi görünür
     func uploadLocalVideo(_ url: URL, ts: Double, to: Double, mode: String, aspect: String, type: String,
-                          speed: String, onProgress: @escaping (Double) -> Void = { _ in }) async -> Bool {
+                          speed: String, grup: Bool = false, onProgress: @escaping (Double) -> Void = { _ in }) async -> Bool {
         // 🔴 FİKS 05.09 — üç sorun birden:
         //  1) `Data(contentsOf:)` 26,8 MB'ı tamamen RAM'e alıyordu, URLSession ikinci kopyayı
         //     çıkarıyordu (~54 MB anlık zirve). Artık DOSYADAN akıtılıyor (fromFile).
@@ -905,6 +908,7 @@ enum DavetLink {
         comp.queryItems = [.init(name: "ts", value: String(Int(ts))), .init(name: "to", value: String(Int(to))),
                            .init(name: "mode", value: mode), .init(name: "aspect", value: aspect),
                            .init(name: "type", value: type), .init(name: "speed", value: speed)]
+        if grup { comp.queryItems?.append(.init(name: "grup", value: "1")) }
         guard let u = comp.url else { return false }
         var rq = URLRequest(url: u); rq.httpMethod = "POST"; rq.timeoutInterval = 600
         rq.setValue("video/mp4", forHTTPHeaderField: "Content-Type")

@@ -16,6 +16,7 @@ import grup7 from './routes/grup7'
 import grup8 from './routes/grup8'
 import motor3d from './routes/motor3d'
    // POST /api/motor3d — telefonda video üretme sayfası (harita-proxy.py:397 portu)
+import kulup from './routes/kulup'   // 05.11.2026: /api/clubs geri geldi (ortak sürüş için kulüp)
 import kart from './routes/kart'         // GET /api/rides/:id/kart + /api/summary/kart — paylaşılabilir PNG kartlar (26.10)
 
 const app = new Hono<AppEnv>()
@@ -28,7 +29,7 @@ app.notFound(() => hataYanit(404, 'Not Found'))   // FastAPI varsayılan 404 gö
 
 // Gruplar önce mount edilir — grup7 gerçek GET /health'i doldurunca (sözleşme #1) o kazanır,
 // aşağıdaki çekirdek /health yalnız yedek (fallback) olarak kalır.
-for (const g of [grup1, grup2, grup3, grup4, grup5, grup6, grup7, grup8, motor3d, kart]) app.route('/', g)
+for (const g of [grup1, grup2, grup3, grup4, grup5, grup6, grup7, grup8, motor3d, kart, kulup]) app.route('/', g)
 
 // çekirdek sağlık ucu: D1 ping
 app.get('/health', async (c) => {
