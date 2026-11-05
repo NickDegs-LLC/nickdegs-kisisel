@@ -69,7 +69,7 @@ g.post('/api/motor3d', authUser, async (c) => {
     try {
       const kayit = await c.env.KV.get<{ users: string[]; from: number; to: number }>(`grupvid:${grup}`, 'json')
       // 05.11: eşler yalnız PRO sahibine (cron da yalnız Pro'ya iş yazar; bu ikinci kilit)
-      if (kayit && Array.isArray(kayit.users) && kayit.users.includes(user) && Number((prof as Record<string, unknown> | null)?.pro ?? 0)) {
+      if (kayit && Array.isArray(kayit.users) && kayit.users.includes(user)) {   // 05.11 (2. tur): Pro kilidi kaldırıldı — komple ücretsiz
         const RENK = [['#FF9F0A', '#FFD60A'], ['#BF5AF2', '#FF7AB6'], ['#30D158', '#A3FF6B'], ['#FF453A', '#FFB4A9']]
         const esler = kayit.users.filter((u) => u !== user).slice(0, 4)
         girdi.mates = []

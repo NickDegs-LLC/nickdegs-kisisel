@@ -30,6 +30,9 @@ const PRO_B: Record<string, string> = {
   ar: 'قدتَ مع {f}. اشترِ Move Log Pro مرة واحدة ويُنشأ فيديو الرحلة المشترك ثلاثي الأبعاد على هاتفك.',
 }
 
+/** Ortak video Pro'ya bağlı mı? 05.11.2026: HAYIR (uygulama komple ücretsiz). Açmak için true. */
+const ORTAK_PRO = false
+
 const GRID = 30, NEAR_M = 300, MIN_DUR = 600, MIN_KM = 2.0, MERGE_GAP = 300, SETTLE = 600, MOVE_KMH = 7
 
 type Nokta = { t: number; lat: number; lon: number; alt: number; spd: number }
@@ -291,7 +294,8 @@ export async function kos(c: GorevCtx): Promise<void> {
         if (pr.group_video === 'solo') continue
         // 05.11.2026 MOVE LOG PRO: ortak video YALNIZ Pro sahibine. Pro'su olmayana o gün o grup için
         // TEK bildirim: "X ile birlikte sürdün — Pro ile ortak videonuz hazır".
-        if (!Number(prof.get(u)?.pro ?? 0)) {
+        // 05.11.2026 (2. tur, Barış: "komple ücretsiz"): Pro kilidi KAPALI (ORTAK_PRO=false) — herkese gider.
+        if (ORTAK_PRO && !Number(prof.get(u)?.pro ?? 0)) {
           const upk = `pro_up_${gun}_${u}_${gusers.join('+')}`
           if (!(upk in sent)) {
             const others = gusers.filter((x) => x !== u).map((x) => names.get(x)).join(', ')

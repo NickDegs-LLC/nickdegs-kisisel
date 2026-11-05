@@ -14,7 +14,6 @@ struct SocialView: View {
     @State private var showClubs = false
     @State private var secilenKulup: Club? = nil
     @State private var groupPref = "both"   // both|group|solo
-    @State private var showPro = false
     @State private var silinecekArkadas: Friend? = nil
     @State private var davetKod = ""
     @State private var davetPaylas = false
@@ -151,21 +150,6 @@ struct SocialView: View {
                                    "When you ride with friends or club members, a joint 3D video featuring all of you is made on your phone. Only people you know are detected."))
                                 .font(.caption2).foregroundStyle(.secondary)
                         }.padding(14).glassPanel(18)
-                        // 05.11.2026: ortak videolar Move Log Pro ile (tek seferlik)
-                        if !store.pro {
-                            Button { showPro = true } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "lock.fill").foregroundStyle(Brand.accent)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(L("Ortak videolar Pro ile","Joint videos with Pro")).font(.system(size: 15, weight: .semibold))
-                                        Text(L("Tek seferlik satın alma, abonelik yok","One-time purchase, no subscription"))
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                                }.padding(14).contentShape(Rectangle())
-                            }.buttonStyle(.plain).glassPanel(18)
-                        }
 
                     }.padding(16)
                 }
@@ -180,7 +164,6 @@ struct SocialView: View {
         .onChange(of: store.davetYenile) { _, _ in Task { await reloadFriends() } }
         .sheet(isPresented: $showAddFriend) { AddFriendSheet(myHandle: prof?.handle ?? "", onDone: { Task { await reloadFriends() } }) }
         .sheet(isPresented: $showClubs, onDismiss: { Task { clubs = await store.clubs() } }) { ClubsSheet() }
-        .sheet(isPresented: $showPro) { ProSheet() }
         .confirmationDialog(
             L("Arkadaşlıktan çıkarılsın mı?","Remove this friend?"),
             isPresented: Binding(get: { silinecekArkadas != nil }, set: { if !$0 { silinecekArkadas = nil } }),
