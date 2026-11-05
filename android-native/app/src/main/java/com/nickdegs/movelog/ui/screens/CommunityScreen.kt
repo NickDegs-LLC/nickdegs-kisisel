@@ -45,6 +45,8 @@ private sealed class Route {
     object Username : Route()
     object IdeaBox : Route()
     object GroupVideo : Route()
+    object Clubs : Route()                          // 05.11.2026: kulüpler geri geldi (ortak sürüş)
+    data class ClubDetail(val id: String) : Route()
 }
 
 @Composable
@@ -56,6 +58,8 @@ fun CommunityScreen(store: Store) {
         is Route.Username -> UsernameView(store) { route = Route.Hub }
         is Route.IdeaBox -> IdeaBoxView(store) { route = Route.Hub }
         is Route.GroupVideo -> GroupVideoView(store) { route = Route.Hub }
+        is Route.Clubs -> ClubsView(store, onOpen = { route = Route.ClubDetail(it) }) { route = Route.Hub }
+        is Route.ClubDetail -> ClubDetailView(store, r.id) { route = Route.Clubs }
     }
 }
 
@@ -82,12 +86,13 @@ private data class HubItem(val icon: ImageVector, val title: String, val desc: S
 private fun HubView(store: Store, nav: (Route) -> Unit) {
     val hubItems = listOf(
         HubItem(Icons.Filled.Group, L("Arkadaşlar", "Friends"), L("Bul, ekle, istekleri yönet", "Find, add, manage requests"), Route.Friends),
+        HubItem(Icons.Filled.Groups, L("Kulüpler", "Clubs"), L("Kulüp kur ya da davet koduyla katıl", "Create a club or join with an invite code"), Route.Clubs),
         HubItem(Icons.Filled.AlternateEmail, L("Kullanıcı Adı", "Username"), L("@adını belirle, seni bulsunlar", "Set your @handle so friends find you"), Route.Username),
         HubItem(Icons.Filled.Movie, L("Grup Videosu", "Group Video"), L("Ortak sürüş videosu tercihi", "Shared ride video preference"), Route.GroupVideo),
         HubItem(Icons.Filled.Lightbulb, L("Fikir Kutusu", "Idea Box"), L("Fikrin doğrudan geliştiriciye", "Your idea straight to the developer"), Route.IdeaBox),
     )
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
-        Bar(L("Sürüş Dünyan", "Your Riding World"), null)
+        Bar(L("Sosyal", "Social"), null)
         LazyColumn(Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 24.dp)) {
             items(hubItems) { it ->
@@ -274,6 +279,9 @@ private fun GroupVideoView(store: Store, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Brand.bg)) {
         Bar(L("Grup Videosu", "Group Video"), onBack)
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(L("Arkadaşların ya da kulüp üyelerinle birlikte sürünce hepinizin yer aldığı ortak 3D video telefonunda üretilir. Yalnız tanıdıkların algılanır.",
+                   "When you ride with friends or club members, a joint 3D video featuring all of you is made on your phone. Only people you know are detected."),
+                color = sub, fontSize = 13.sp)
             Text(L("Bir arkadaşınla sürünce hangi videolar üretilsin?", "When you ride with a friend, which videos are made?"),
                 color = sub, fontSize = 13.sp)
             opts.forEach { (key, label) ->
@@ -287,3 +295,112 @@ private fun GroupVideoView(store: Store, onBack: () -> Unit) {
         }
     }
 }
+
+// ---------------- KULÜPLER (05.11.2026 — e761d42^ birebir, telsiz/interkom çıkarıldı) ----------------
+@Composable
+private fun ClubsView(store: Store, onOpen: (String) -> Unit, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var clubs by remember { mutableStateOf<List<Club>>(emptyList()) }
+    var name by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    suspend fun reload() { clubs = store.clubs() }
+    LaunchedEffect(Unit) { reload() }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(L("Kulüpler", "Clubs"), onBack)
+        Column(Modifier.padding(14.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card {
+                Text(L("Kulüp kur", "Create a club"), color = Color.White, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
+                    label = { Text(L("Kulüp adı", "Club name")) }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    scope.launch { if (name.isNotBlank()) { store.createClub(name.trim()); name = ""; reload() } }
+                }, colors = ButtonDefaults.buttonColors(containerColor = Brand.accent), modifier = Modifier.fillMaxWidth()) {
+                    Text(L("Oluştur", "Create"))
+                }
+            }
+            Card {
+                Text(L("Davet koduyla katıl", "Join with invite code"), color = Color.White, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = code, onValueChange = { code = it.uppercase() }, singleLine = true,
+                    label = { Text(L("Kod", "Code")) }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = {
+                    scope.launch {
+                        val c = store.joinClub(code.trim())
+                        msg = if (c != null) L("Katıldın!", "Joined!") else L("Kod geçersiz", "Invalid code")
+                        code = ""; reload()
+                    }
+                }, colors = ButtonDefaults.buttonColors(containerColor = Brand.accent2), modifier = Modifier.fillMaxWidth()) {
+                    Text(L("Katıl", "Join"))
+                }
+                if (msg.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(msg, color = sub, fontSize = 13.sp) }
+            }
+            Text(L("Kulüplerin", "Your clubs"), color = Color.White, fontWeight = FontWeight.Bold)
+            if (clubs.isEmpty()) Text(L("Henüz kulüp yok.", "No clubs yet."), color = sub, fontSize = 13.sp)
+            clubs.forEach { c ->
+                Card(onClick = { onOpen(c.id) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Groups, null, tint = Brand.accent)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(c.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(L("{n} üye", "{n} members").replace("{n}", "${c.memberCount}"), color = sub, fontSize = 12.sp)
+                        }
+                        Icon(Icons.Filled.ChevronRight, null, tint = sub)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClubDetailView(store: Store, id: String, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var me by remember { mutableStateOf("") }
+    var club by remember { mutableStateOf<Club?>(null) }
+    LaunchedEffect(id) { club = store.clubDetail(id); me = store.me }
+    Column(Modifier.fillMaxSize().background(Brand.bg)) {
+        Bar(club?.name ?: L("Kulüp", "Club"), onBack)
+        val c = club
+        if (c == null) { CircularProgressIndicator(color = Brand.accent, modifier = Modifier.padding(24.dp)); return@Column }
+        Column(Modifier.padding(14.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!c.code.isNullOrEmpty()) Card {
+                Text(L("Davet kodu", "Invite code"), color = sub, fontSize = 12.sp)
+                Text(c.code, color = Brand.accent, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            }
+            // 05.11: paylaş + açıklama (telsiz/interkom YOK)
+            Text(L("Bu kodu motorcu arkadaşlarına gönder — girip katılsınlar. Kulüptekiler birlikte sürünce ortak 3D video telefonunda üretilir.",
+                   "Send this code to your rider friends — they enter it and join. When club members ride together, a joint 3D video is made on your phone."),
+                color = sub, fontSize = 12.sp)
+            if (!c.code.isNullOrEmpty()) OutlinedButton(onClick = {
+                val t = L("Move Log'da motorcu kulübüme katıl", "Join my rider club on Move Log") + ": ${c.name} · " +
+                        L("Kod", "Code") + ": ${c.code}"
+                ctx.startActivity(android.content.Intent.createChooser(
+                    android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, t), null))
+            }, modifier = Modifier.fillMaxWidth()) { Text(L("Kodu paylaş", "Share code"), color = Brand.accent) }
+            Text(L("Üyeler", "Members"), color = Color.White, fontWeight = FontWeight.Bold)
+            c.members?.forEach { m ->
+                Card {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AvatarDot(m.avatarEmoji, m.name ?: m.username)
+                        Spacer(Modifier.width(10.dp))
+                        Text(m.name ?: m.username, color = Color.White, modifier = Modifier.weight(1f))
+                        if (m.username == c.owner) Text(L("Kurucu", "Owner"), color = gold, fontSize = 12.sp)
+                        else if (c.owner == me && me.isNotEmpty()) TextButton(onClick = {
+                            scope.launch { store.kickClubMember(id, m.username); club = store.clubDetail(id) }
+                        }) { Text(L("Çıkar", "Remove"), color = Color(0xFFFF453A), fontSize = 12.sp) }
+                    }
+                }
+            }
+            OutlinedButton(onClick = { scope.launch { store.leaveClub(id); onBack() } },
+                modifier = Modifier.fillMaxWidth()) { Text(L("Kulüpten ayrıl", "Leave club"), color = Color(0xFFFF453A)) }
+        }
+    }
+}
+

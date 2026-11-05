@@ -10,7 +10,7 @@
 //   SEG="" · CAMMODE="" · ZOOMO=None · MATES=[] · AVATAR=None · NOHUD=false · matched= YOK
 //   FPS=60 · rscale=1.0 · GOOGLE_3D_OLU=1
 //
-// PORT EDİLMEYEN (bu parametrelerle ASLA çalışmayan) dallar: grup sürüşü/mates, avatar,
+// PORT EDİLMEYEN (bu parametrelerle ASLA çalışmayan) dallar: avatar,  [05.11: grup sürüşü/mates ARTIK VAR → eslerUret]
 // FREE filigranı, seg=, ultra/kabartma/nohud/reel, Traccar HTTP dalı, rota_*.json yan dosyası,
 // Garmin nabız (aşağıda ayrıca not), outMp4/ffmpeg/rscale (bulut render alanları — telefon yolunda ölü).
 //
@@ -36,6 +36,8 @@ export type MotorGirdi = {
   camdist: 'yakin' | 'orta' | 'uzak'
   aspect9x16: boolean
   name: string
+  /** 05.11.2026 ORTAK SÜRÜŞ (telefonda): diğer sürücülerin ham izleri. Boşsa tek kişilik yol BİREBİR aynı. */
+  mates?: { iz: IzNokta[]; line: string; dot: string }[]
 }
 
 type P = {
@@ -432,6 +434,10 @@ export async function specUret(
 
   const FIDX3 = frameIndices(P, FR)
 
+  // ── 05.11.2026 ORTAK SÜRÜŞ: her eş sürücünün konumu, öndekinin O KAREDEKİ zamanında örneklenir ──
+  // sayfa.js/surucu.js sözleşmesi: mates[i] = { pts2: [[lon,lat]…] (iz çizgisi), pos2: [[lon,lat]] × FR, line, dot }
+  const mates = eslerUret(g.mates ?? [], P, FIDX3)
+
   // ── route-video.py:527-544: inp (spec) — ANAHTAR SIRASI kaynakla birebir ──
   const spec: Spec = {
     token, W: VW, H: VH, fps: FPS, outMp4: '', ffmpeg: 'ffmpeg', frames: FR, noHud: false,
@@ -446,5 +452,40 @@ export async function specUret(
     title: { date: `${daylabel(g.frm)} ${hhmm(P[0].t)}`, totkm: pyformat(TOTKM, 1) },
     pts,
   }
+  if (mates.length) { spec.mates = mates; log.push(`ortak sürüş: ${mates.length} eş sürücü`) }
   return { spec, log }
+}
+
+
+/** 05.11.2026 — ortak sürüş eşleri. Öndekinin kare zamanı t(f) = P[FIDX[f]].t (kesirli ara değer);
+ *  eşin konumu t(f) anında doğrusal ara değerle bulunur, iz dışında uçlara sabitlenir. */
+export function eslerUret(
+  ham: { iz: IzNokta[]; line: string; dot: string }[], P: { t: number }[], FIDX: number[],
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = []
+  const N = P.length
+  const kareZaman = FIDX.map((fi) => {
+    const i0 = Math.max(0, Math.min(N - 1, Math.floor(fi))), i1 = Math.min(N - 1, i0 + 1), fr = fi - i0
+    return P[i0].t + (P[i1].t - P[i0].t) * fr
+  })
+  for (const m of ham) {
+    const Q = m.iz.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Number.isFinite(Number(p.t)))
+      .map((p) => ({ t: Number(p.t), lat: p.lat, lon: p.lon })).sort((a, b) => a.t - b.t)
+    if (Q.length < 3) continue
+    const zt = Q.map((q) => q.t)
+    const pos2 = kareZaman.map((tt) => {
+      if (tt <= Q[0].t) return [pyround(Q[0].lon, 6), pyround(Q[0].lat, 6)]
+      if (tt >= Q[Q.length - 1].t) return [pyround(Q[Q.length - 1].lon, 6), pyround(Q[Q.length - 1].lat, 6)]
+      const j = Math.max(1, bisectLeft(zt, tt)), a = Q[j - 1], b = Q[j]
+      const fr = b.t > a.t ? (tt - a.t) / (b.t - a.t) : 0
+      return [pyround(a.lon + (b.lon - a.lon) * fr, 6), pyround(a.lat + (b.lat - a.lat) * fr, 6)]
+    })
+    // iz çizgisi: en çok 1500 nokta (sayfa boyutu)
+    const adim = Math.max(1, Math.ceil(Q.length / 1500))
+    const pts2: number[][] = []
+    for (let i = 0; i < Q.length; i += adim) pts2.push([pyround(Q[i].lon, 6), pyround(Q[i].lat, 6)])
+    const son = Q[Q.length - 1]; pts2.push([pyround(son.lon, 6), pyround(son.lat, 6)])
+    out.push({ line: m.line, dot: m.dot, pts2, pos2 })
+  }
+  return out
 }

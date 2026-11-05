@@ -92,6 +92,7 @@ object YerelVideo {
     data class Istek(
         val from: Double, val to: Double, val type: String, val mode: String, val speed: String,
         val aspect: String, val camdist: String, val line: String, val dot: String,
+        val grup: String? = null,   // 05.11: ortak sürüş anahtarı — sunucu eş izlerini ekler (yalnız 3D)
     )
 
     // ---- UI durumu (YerelVideoKatmani okur). Yalnız ana iş parçacığında yazılır (yuzde hariç). ----
@@ -132,7 +133,7 @@ object YerelVideo {
             dosya = f
             asama = L("Yükleniyor", "Uploading")
             yuzde = 0.9f
-            val ok = store.yerelVideoYukle(f, ist.from, ist.to, ist.mode, ist.aspect, ist.type, ist.speed) { p ->
+            val ok = store.yerelVideoYukle(f, ist.from, ist.to, ist.mode, ist.aspect, ist.type, ist.speed, ist.grup != null) { p ->
                 yuzde = 0.9f + 0.1f * p
             }
             if (!ok) {
@@ -166,10 +167,12 @@ object YerelVideo {
             val frm = j.optDouble("from", 0.0)
             val to = j.optDouble("to", 0.0)
             if (frm.isNaN() || to.isNaN() || frm <= 0.0 || to <= frm) continue
+            val grup = j.optString("grup", "").ifEmpty { null }
             val ist = Istek(
                 from = frm, to = to,
                 type = j.optString("type", "moto").ifEmpty { "moto" },
-                mode = j.optString("mode", "flyover").ifEmpty { "flyover" },
+                mode = if (grup != null) "3d" else j.optString("mode", "flyover").ifEmpty { "flyover" },
+                grup = grup,
                 speed = j.optString("speed", "medium").ifEmpty { "medium" },
                 aspect = j.optString("aspect", "9:16").ifEmpty { "9:16" },
                 camdist = j.optString("camdist", "orta").ifEmpty { "orta" },
@@ -191,14 +194,14 @@ object YerelVideo {
     private suspend fun uret(act: Activity, store: Store, ist: Istek): File? {
         asama = L("Harita hazırlanıyor", "Preparing map")
         val (kod, txt) = store.motorSayfasi(ist.from, ist.to, ist.type, ist.mode, ist.speed,
-            ist.aspect, ist.camdist, ist.line, ist.dot)
+            ist.aspect, ist.camdist, ist.line, ist.dot, ist.grup)
         sonKod = kod
         if (kod != 200) {
             // SUNUCUNUN KENDİ MESAJI (iOS sayfaAl ile aynı): "iz yok", "aralik", "spec uretilemedi"...
             val detay = runCatching { JSONObject(txt).optString("detail", "") }.getOrDefault("")
             return hata(detay.ifEmpty {
                 if (kod == 0) L("Sunucuya ulaşılamadı (bağlantı?)", "Couldn't reach the server (network?)")
-                else L("Sunucu $kod döndü", "Server returned $kod")
+                else L("Sunucu {n} döndü", "Server returned {n}").replace("{n}", "$kod")
             })
         }
         val o = runCatching { JSONObject(txt) }.getOrNull()
@@ -456,7 +459,7 @@ object YerelVideo {
             val tamam = withContext(encThread) { k.bitir() }
             kod = null
             if (!tamam || kareNo <= frames / 2)
-                return hata(L("Video tamamlanamadı ($kareNo/$frames kare)", "Video couldn't be completed ($kareNo/$frames frames)"))
+                return hata(L("Video tamamlanamadı ({n} kare)", "Video couldn't be completed ({n} frames)").replace("{n}", "$kareNo/$frames"))
             basarili = true
             return cikti
         } finally {

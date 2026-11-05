@@ -34,6 +34,7 @@ struct MoveLogApp: App {
                 if store.gate == .checking { store.gate = .offline }
             }
             .task {
+                Destek.dinle()   // 05.11: yarım kalmış bağış işlemlerini bitir (uygulama komple ücretsiz)
                 if store.gate == .checking { await store.validate() }
                 // 18.09: ConvoyVoice / PttEngine kaldırıldı (sesli iletişim çıktı).
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
@@ -136,7 +137,7 @@ struct RootView: View {
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
         // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar": return 3; default: return 0 }
+        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar","destek": return 3; case "social": return 4; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {
@@ -145,6 +146,8 @@ struct RootView: View {
             VideosView().tabItem { Label(L("Videolarım","My Videos"), systemImage: "film.stack") }.tag(1)
             SummariesView().tabItem { Label(L("Özet","Summary"), systemImage: "doc.text.magnifyingglass") }.tag(2)
             // 18.09: Telsiz sekmesi kaldırıldı (sesli/yazılı sohbet çıktı) -> 4 sekme.
+            // 05.11.2026: SOSYAL sekmesi (arkadaşlar + kulüpler + ortak sürüş) — tag 4, mevcut numaralar değişmesin
+            SocialView().tabItem { Label(L("Sosyal","Social"), systemImage: "person.2.fill") }.tag(4)
             ProfileView().tabItem { Label(L("Profil","Profile"), systemImage: "person.crop.circle") }.tag(3)
         }
         .onChange(of: store.jumpToVideos) { _, v in
@@ -158,7 +161,8 @@ struct RootView: View {
             // Profil'e (artık tag 3) gider; bilinmeyen rota sessizce yok sayılır.
             switch p.first {
             case "videos": sel = 1
-            case "friends", "profile", "wave": sel = 3
+            case "friends", "wave", "clubs", "pro": sel = 4   // "pro": ortak sürüş bildirimi → Sosyal (Pro kartı orada)   // 05.11: arkadaşlık/kulüp bildirimleri Sosyal'e
+            case "profile": sel = 3
             default: break
             }
         }

@@ -60,6 +60,27 @@ g.post('/api/motor3d', authUser, async (c) => {
     name: str(prof?.name ?? '', 40),
   }
 
+  // ═══ 05.11.2026 ORTAK SÜRÜŞ (telefonda) ═══
+  // İş kaydındaki `grup` anahtarı → KV grupvid:{anahtar} = {users,from,to} (cron grupsurus yazar;
+  // yalnız KARŞILIKLI ARKADAŞ kümeleri). İsteyen bu kümenin üyesi DEĞİLSE eş izleri EKLENMEZ —
+  // anahtarı tahmin eden biri başkasının konumunu göremez. Eş izi alınamazsa tek kişilik video çıkar.
+  const grup = typeof gov.grup === 'string' ? gov.grup.slice(0, 200) : ''
+  if (grup) {
+    try {
+      const kayit = await c.env.KV.get<{ users: string[]; from: number; to: number }>(`grupvid:${grup}`, 'json')
+      // 05.11: eşler yalnız PRO sahibine (cron da yalnız Pro'ya iş yazar; bu ikinci kilit)
+      if (kayit && Array.isArray(kayit.users) && kayit.users.includes(user)) {   // 05.11 (2. tur): Pro kilidi kaldırıldı — komple ücretsiz
+        const RENK = [['#FF9F0A', '#FFD60A'], ['#BF5AF2', '#FF7AB6'], ['#30D158', '#A3FF6B'], ['#FF453A', '#FFB4A9']]
+        const esler = kayit.users.filter((u) => u !== user).slice(0, 4)
+        girdi.mates = []
+        for (let i = 0; i < esler.length; i++) {
+          const ez = await izOku(c.env, esler[i], frm, to)
+          if (ez.length >= 3) girdi.mates.push({ iz: ez, line: RENK[i][0], dot: RENK[i][1] })
+        }
+      }
+    } catch (e) { console.error('motor3d grup:', String(e).slice(0, 200)) }
+  }
+
   let spec
   try {
     // token: harita-katman YUTAR (matching.js/geokod.js) — ama BOŞ olamaz:

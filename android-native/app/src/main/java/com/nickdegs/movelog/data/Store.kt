@@ -88,6 +88,8 @@ class Store(app: Application) : AndroidViewModel(app) {
     // uyum için duruyor ama HER ZAMAN true: sunucu da /api/profile'da herkese premium=true döner.
     // (Eski "nd_ultra" / "nd_free_tactical" / video_hak tercihleri öksüz kalır, zararsız.)
     var premium by mutableStateOf(true)
+    // 05.11.2026: Move Log Pro (tek seferlik) — sunucu onaylı; ortak sürüş videolarını açar
+    var pro by mutableStateOf(false)
         private set
     var loginError by mutableStateOf(false)
 
@@ -283,7 +285,16 @@ class Store(app: Application) : AndroidViewModel(app) {
         displayName = o.optString("name", displayName)
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
+        pro = o.optBoolean("pro", false)
         persistPremium(true)
+    }
+
+    /** 05.11.2026: Play satın alma jetonunu sunucuya doğrulat (/api/pro/google). Başarıda pro=true. */
+    suspend fun proBildir(purchaseToken: String): Boolean {
+        val d = req("/api/pro/google", "POST", JSONObject().put("token", purchaseToken)) ?: return false
+        val ok = runCatching { JSONObject(d).optBoolean("pro", false) }.getOrDefault(false)
+        if (ok) pro = true
+        return ok
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -469,7 +480,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 when (code) {
                     404 -> L("Bu kart için kayıtlı iz yok.", "No recorded track for this card.")
                     502, 503 -> L("Kart şu an üretilemedi, biraz sonra tekrar dene.", "Couldn't create the card right now, try again shortly.")
-                    else -> L("Kart indirilemedi ($code).", "Couldn't download the card ($code).")
+                    else -> L("Kart indirilemedi ({n}).", "Couldn't download the card ({n}).").replace("{n}", "$code")
                 }
             })
         } finally { c.disconnect() }
@@ -532,15 +543,17 @@ class Store(app: Application) : AndroidViewModel(app) {
     // Motor sayfası: POST /api/motor3d -> {"html","frames","fps","W","H"} (sunucu: cf/api/src/routes/motor3d.ts).
     // Sayfa üretimi map-match + karo ön-hazırlık yüzünden uzun sürebilir -> iOS gibi 190 sn okuma payı.
     suspend fun motorSayfasi(from: Double, to: Double, type: String, mode: String, speed: String,
-                             aspect: String, camdist: String, line: String, dot: String): Pair<Int, String> {
+                             aspect: String, camdist: String, line: String, dot: String,
+                             grup: String? = null): Pair<Int, String> {
         val b = JSONObject().put("from", from).put("to", to).put("type", type).put("mode", mode)
             .put("speed", speed).put("aspect", aspect).put("camdist", camdist).put("line", line).put("dot", dot)
+        if (!grup.isNullOrEmpty()) b.put("grup", grup)   // 05.11: ortak sürüş
         return reqCode("/api/motor3d", "POST", b, okumaMs = 190_000)
     }
 
     // Sunucunun "telefon üretsin" kuyruğu (KV yerelq). iOS Store.localRenders ile aynı.
     suspend fun localRenders(): List<JSONObject> {
-        val d = req("/api/local-renders") ?: return emptyList()
+        val d = req("/api/local-renders?grup=1") ?: return emptyList()   // 05.11: ortak sürüş işlerini de al
         val arr = runCatching { JSONObject(d).optJSONArray("pending") }.getOrNull() ?: return emptyList()
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
     }
@@ -552,11 +565,12 @@ class Store(app: Application) : AndroidViewModel(app) {
     // (setFixedLengthStreamingMode + FileInputStream ile akıtılır — 40-60 MB'lık dosyada tek kopya yok).
     // iOS uploadLocalVideo gibi 3 deneme. Başarıda true; dosyayı SİLMEK çağıranın işi.
     suspend fun yerelVideoYukle(file: java.io.File, ts: Double, to: Double, mode: String, aspect: String,
-                                type: String, speed: String, onProgress: (Float) -> Unit = {}): Boolean =
+                                type: String, speed: String, grup: Boolean = false,
+                                onProgress: (Float) -> Unit = {}): Boolean =
         withContext(Dispatchers.IO) {
             fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
             val q = "?ts=${ts.toLong()}&to=${to.toLong()}&mode=${enc(mode)}&aspect=${enc(aspect)}" +
-                    "&type=${enc(type)}&speed=${enc(speed)}"
+                    "&type=${enc(type)}&speed=${enc(speed)}" + (if (grup) "&grup=1" else "")
             val boy = file.length()
             if (boy <= 0L) return@withContext false
             for (deneme in 1..3) {
@@ -776,6 +790,31 @@ class Store(app: Application) : AndroidViewModel(app) {
         getApplication<Application>().getSharedPreferences("movelog", Context.MODE_PRIVATE)
             .edit().putString("nd_fcm", token).apply()
         req("/api/pushtoken", "POST", JSONObject().put("token", token).put("platform", "android"))
+    }
+    // 05.11.2026: KULÜPLER geri geldi (ortak sürüş için) — e761d42^ birebir
+    suspend fun clubs(): List<Club> {
+        val d = req("/api/clubs") ?: return emptyList()
+        val arr = JSONObject(d).optJSONArray("clubs") ?: JSONArray()
+        return (0 until arr.length()).map { parseClub(arr.getJSONObject(it)) }
+    }
+    suspend fun createClub(name: String): Club? {
+        val d = req("/api/clubs", "POST", JSONObject().put("name", name)) ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun joinClub(code: String): Club? {
+        val d = req("/api/clubs/join", "POST", JSONObject().put("code", code)) ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun clubDetail(id: String): Club? {
+        val d = req("/api/clubs/$id") ?: return null
+        return parseClub(JSONObject(d))
+    }
+    suspend fun leaveClub(id: String): Boolean = req("/api/clubs/leave", "POST", JSONObject().put("id", id)) != null
+    suspend fun kickClubMember(id: String, user: String): Boolean =
+        req("/api/clubs/kick", "POST", JSONObject().put("id", id).put("user", user)) != null
+    suspend fun renameClub(id: String, name: String): Club? {
+        val d = req("/api/clubs/rename", "POST", JSONObject().put("id", id).put("name", name)) ?: return null
+        return parseClub(JSONObject(d))
     }
     suspend fun liveClub(cid: String): List<ClubRider> {
         val d = req("/api/live/club/$cid") ?: return emptyList()
