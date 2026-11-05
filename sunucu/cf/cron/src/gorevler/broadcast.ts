@@ -21,7 +21,8 @@ export async function kos(c: GorevCtx): Promise<void> {
   const bKeys = await kvListe(env, 'broadcast:bekleyen:', 20)
   if (bKeys.length) {
     const users = await env.DB.prepare(
-      `SELECT DISTINCT u.uid, u.lang FROM users u JOIN push_tokens t ON t.uid = u.uid WHERE t.platform = 'apns'`)
+      // 05.11.2026: Android (fcm) kullanıcıları da dahil — eskiden yalnız iOS'a gidiyordu
+      `SELECT DISTINCT u.uid, u.lang FROM users u JOIN push_tokens t ON t.uid = u.uid WHERE t.platform IN ('apns', 'fcm')`)
       .all<{ uid: string; lang: string | null }>()
     for (const k of bKeys) {
       const req = jsonParse<{ title?: string; body?: string; titles?: Record<string, string>; bodies?: Record<string, string> }>(
