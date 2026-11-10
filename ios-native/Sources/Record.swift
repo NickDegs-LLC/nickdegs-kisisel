@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import Photos
+import AVKit
 
 // Aktivite tipleri (her yerde ortak)
 let RIDE_TYPES: [(id: String, icon: String)] = [
@@ -40,6 +41,11 @@ struct GenerateSheet: View {
     @State private var telefonIs: Task<Void, Never>?   // ekrandan çıkılırsa iptal edilir
     @State private var telefonHata = false
     @State private var telefonNeden = ""
+    // 10.11.2026 (Barış): video SUNUCUYA GİTMEZ. Telefonda üretilir, burada izlenir; "Galeriye kaydet"e
+    // basılmazsa kapatınca silinir. Ortak sürüş anahtarı (grup) sunucunun önerisinden okunur.
+    @State private var hazirVideo: URL? = nil
+    @State private var grup: String? = nil
+    @State private var ortak = true
     @State private var telefonAsama = ""   // "kareler çiziliyor" / "kapanış sahnesi" / "yükleniyor"…      // BAŞARISIZLIK NEDENİ — "Üretilemedi" tek başına hiçbir şey söylemiyordu
     @AppStorage("nd_camdist") private var camdist = "orta"   // kamera mesafesi yakın/orta/uzak
     @State private var stock: [[String:String]] = []
@@ -65,6 +71,14 @@ struct GenerateSheet: View {
     }
 
     var body: some View {
+        if let v = hazirVideo {
+            VideoSonucView(url: v) { try? FileManager.default.removeItem(at: v); hazirVideo = nil; dismiss() }
+        } else {
+            uretimGovdesi
+        }
+    }
+
+    @ViewBuilder private var uretimGovdesi: some View {
         ZStack {
             AuroraBackground()
             ScrollView {
@@ -115,6 +129,15 @@ struct GenerateSheet: View {
                     modeRow("flat", L("Düz","Flat"))
                     modeRow("flyover", L("Kuş bakışı (Flyover)","Bird's-eye (Flyover)"))
                     modeRow("3d", L("3D · arazi kabartmalı","3D · terrain relief"))
+                    // 10.11.2026: ortak sürüş (arkadaş/kulüp) — sunucu bu sürüş için grup önerdiyse
+                    if grup != nil {
+                        Toggle(isOn: $ortak) {
+                            Label(L("Arkadaşlarınla ortak video","Joint video with your friends"), systemImage: "person.2.fill")
+                        }.tint(Brand.accent).padding(.horizontal, 14).padding(.vertical, 10).glassPanel(14)
+                        Text(L("Bu sürüşte arkadaşların da vardı; ortak video 3B olarak hepinizi birlikte gösterir.",
+                               "Your friends rode with you; the joint video shows all of you together in 3D."))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     if mode != "tactical" {
                         field(L("En-boy","Aspect"))
                         Picker("", selection: $aspect) {
@@ -252,11 +275,6 @@ struct GenerateSheet: View {
                         Text(note.isEmpty ? L("Bu rotada konum verisi yok ya da istek başarısız.","No location data for this route or request failed.") : note)
                             .font(.caption2).foregroundStyle(.red)
                     }
-                    if done {
-                        Text(L("Videon hazır; Videolarım'da görünür.",
-                               "Your video is ready; it shows up in My Videos."))
-                            .font(.caption2).foregroundStyle(Brand.accent)
-                    }
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -310,6 +328,7 @@ struct GenerateSheet: View {
         }
         .task {
             stock = await store.musicList(); userTracks = await store.musicLibrary()
+            grup = await store.grupAnahtari(from: from, to: to)   // 10.11: bu sürüş arkadaşla/kulüple mi?
             // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (Barış 2026-07-27): kullanıcı müzik yüklediyse + henüz seçim yapmadıysa
             // varsayılan "active" (son yüklenen) -> "eklendi" görünür + videoda kullanılır (eskiden boş/sessiz kalıyordu).
             // 🔴 KALDIRILDI 05.09 (Barış: "garip bir müzik çalıyor, müzik seçmediğim halde").
@@ -436,11 +455,12 @@ struct GenerateSheet: View {
         // müzik geçici dosyası: hangi yoldan çıkarsak çıkalım silinsin (eskiden hiç silinmiyordu)
         defer { if let m = mURL { try? FileManager.default.removeItem(at: m) } }
         var video: URL?
-        if mode == "3d" {
+        let ortakAnahtar = (ortak && grup != nil) ? grup : nil   // ortak video yalnız 3B motorda (eşler orada çizilir)
+        if mode == "3d" || ortakAnahtar != nil {
             video = await WebRouteVideo.render(from: from, to: to, type: type, speed: speed,
                                                aspect: aspect, camdist: camdist,
                                                line: lineColor, dot: resolvedDot,
-                                               token: store.token, musicURL: mURL,
+                                               token: store.token, musicURL: mURL, grup: ortakAnahtar,
                                                onAsama: { a in Task { @MainActor in telefonAsama = a } },
                                                onProgress: { p in Task { @MainActor in pctYaz(p) } })
         } else {
@@ -459,22 +479,10 @@ struct GenerateSheet: View {
                                   telefonAsama = ""; telefonIs = nil }
             return
         }
-        // 🔴 FİKS 05.09: burada yüzde 0.96'ya SABİTLENİYOR ve yükleme boyunca (ölçülen: 26,8 MB)
-        // hiç kıpırdamıyordu — kullanıcı "%96'da takıldı" diye görüyordu. Artık gerçek ilerleme.
-        await MainActor.run { telefonAsama = L("yükleniyor", "uploading"); pctYaz(0.90) }
-        guard await store.uploadLocalVideo(v, ts: from, to: to, mode: mode,
-                                           aspect: aspect, type: type, speed: speed,
-                                           onProgress: { p in Task { @MainActor in pctYaz(0.90 + 0.10 * p) } }) else {
-            await MainActor.run { telefonNeden = L("video yüklenemedi (bağlantı?)", "upload failed (network?)")
-                                  telefonHata = true; telefonPct = 0; telefonAsama = ""; telefonIs = nil }
-            return
-        }
-        await MainActor.run {
-            telefonAktif = false; telefonPct = 0; telefonIs = nil
-            done = true; store.jumpToVideos = true
-        }
-        try? await Task.sleep(for: .seconds(0.8))
-        await MainActor.run { dismiss() }
+        // 10.11.2026: YÜKLEME YOK — video telefonda kalır; sonuç ekranında izlenir, kaydedilir ya da silinir.
+        await MainActor.run { telefonIs = nil; telefonAktif = false; telefonPct = 0; telefonAsama = "" }
+        try? await Task.sleep(for: .seconds(0.6))   // üretim katmanı kapansın, sonra sonuç ekranı
+        await MainActor.run { hazirVideo = v }
     }
 
     func field(_ t: String) -> some View {
@@ -531,3 +539,77 @@ let TACTICAL_TRACKS: [String] = [
     "Undaunted",
     "Volatile_Reaction"
 ]
+
+
+// 10.11.2026 (Barış): ÜRETİM SONUCU — video yalnız bu telefonda, geçici dosyada. Sunucuya yüklenmez.
+// "Galeriye kaydet" → Fotoğraflar; "Paylaş" → paylaşım sayfası; "Kapat" → dosya silinir (kaydedilmediyse kaybolur).
+struct VideoSonucView: View {
+    let url: URL
+    var kapat: () -> Void
+    @State private var player: AVPlayer? = nil
+    @State private var kaydediliyor = false
+    @State private var kaydedildi = false
+    @State private var kayitHata = false
+    @State private var soruyor = false
+
+    var body: some View {
+        ZStack {
+            AuroraBackground()
+            VStack(spacing: 14) {
+                Text(L("Videon hazır 🎬","Your video is ready 🎬")).font(.title2.bold()).padding(.top, 16)
+                if let player {
+                    VideoPlayer(player: player)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .frame(maxHeight: .infinity)
+                }
+                Button {
+                    Task {
+                        kaydediliyor = true; kayitHata = false
+                        let st = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+                        var ok = false
+                        if st == .authorized || st == .limited {
+                            ok = await withCheckedContinuation { cont in
+                                PHPhotoLibrary.shared().performChanges {
+                                    PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                                } completionHandler: { o, _ in cont.resume(returning: o) }
+                            }
+                        }
+                        kaydediliyor = false; kaydedildi = ok; kayitHata = !ok
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if kaydediliyor { ProgressView().tint(.white) }
+                        else { Image(systemName: kaydedildi ? "checkmark.circle.fill" : "square.and.arrow.down") }
+                        Text(kaydedildi ? L("Galeriye kaydedildi","Saved to Photos") : L("Galeriye kaydet","Save to Photos"))
+                    }.frame(maxWidth: .infinity)
+                }.buttonStyle(.glassyProminent()).disabled(kaydediliyor || kaydedildi)
+                if kayitHata {
+                    Text(L("Kaydedilemedi — Ayarlar'dan Fotoğraflar iznini kontrol et.",
+                           "Couldn't save — check Photos permission in Settings."))
+                        .font(.caption).foregroundStyle(.red)
+                }
+                HStack(spacing: 12) {
+                    ShareLink(item: url) {
+                        Label(L("Paylaş","Share"), systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassy)
+                    Button { if kaydedildi { kapat() } else { soruyor = true } } label: {
+                        Text(L("Kapat","Close")).frame(maxWidth: .infinity)
+                    }.buttonStyle(.glassy)
+                }
+                if !kaydedildi {
+                    Text(L("Video sunucuda saklanmaz. Kaydetmezsen kapatınca silinir.",
+                           "Videos aren't stored on our servers. If you don't save it, it's deleted when you close."))
+                        .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+            }.padding(20)
+        }
+        .interactiveDismissDisabled(!kaydedildi)   // kaydedilmemiş video kazara kaydırmayla kaybolmasın
+        .onAppear { if player == nil { let p = AVPlayer(url: url); player = p; p.play() } }
+        .onDisappear { player?.pause() }
+        .confirmationDialog(L("Video kaydedilmedi. Kapatırsan silinecek.","The video isn't saved. Closing deletes it."),
+                            isPresented: $soruyor, titleVisibility: .visible) {
+            Button(L("Sil ve kapat","Delete and close"), role: .destructive) { kapat() }
+            Button(L("Vazgeç","Cancel"), role: .cancel) {}
+        }
+    }
+}

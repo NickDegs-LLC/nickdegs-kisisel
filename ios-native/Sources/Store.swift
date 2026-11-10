@@ -724,6 +724,17 @@ enum DavetLink {
               let p = o["pending"] as? [[String:Any]] else { return [] }
         return p
     }
+    /// 10.11.2026: bu sürüş için sunucunun önerdiği ORTAK sürüş anahtarı (arkadaş/kulüp birlikte sürdüyse).
+    /// Sunucu önerileri yerel kuyrukta tutar (grupsurus); video artık otomatik üretilmez, kullanıcı ister.
+    func grupAnahtari(from: Double, to: Double) async -> String? {
+        if AppEnv.demo { return nil }
+        for j in await localRenders() {
+            guard let g = j["grup"] as? String, !g.isEmpty else { continue }
+            let f = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init) ?? 0
+            if f >= from - 600 && f <= to { return g }
+        }
+        return nil
+    }
     func localRenderDone(from: Double) async {
         _ = try? await req("/api/local-renders/done", method: "POST", body: ["from": from])
     }

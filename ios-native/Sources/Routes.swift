@@ -189,7 +189,8 @@ struct RoutesView: View {
                                 HStack(spacing: 8) {
                                 if r.sample == true && r.novideo == true {
                                     EmptyView()   // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
-                                } else if r.novideo == true || r.failed == true {
+                                } else if r.sample != true || r.novideo == true || r.failed == true {
+                                    // 10.11.2026: video sunucuda SAKLANMAZ → kendi sürüşünde her zaman "Video oluştur" (telefonda üretilir)
                                     // Videosuz algılanan rota VEYA başarısız render -> kullanıcı (yeniden) video ürettirir
                                     Button { createRide = r } label: {
                                         HStack(spacing: 6) {

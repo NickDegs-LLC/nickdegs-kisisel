@@ -137,21 +137,18 @@ struct RootView: View {
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
         // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar","destek": return 3; case "social": return 4; default: return 0 }
+        switch AppEnv.screen { case "videos": return 0; case "stats": return 2; case "profile","avatar","destek": return 3; case "social": return 4; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {
             RoutesView().tabItem { Label(L("Rotalar","Routes"), systemImage: "map") }.tag(0)
-            // not: aşağıda .onChange ile "Video oluştur" sonrası otomatik Videolarım'a geçilir
-            VideosView().tabItem { Label(L("Videolarım","My Videos"), systemImage: "film.stack") }.tag(1)
+            // 10.11.2026 (Barış): Videolarım sekmesi KALDIRILDI — video sunucuda saklanmaz; telefonda üretilir,
+            // üretim ekranında izlenir, "Galeriye kaydet"e basılmazsa kapatınca silinir.
             SummariesView().tabItem { Label(L("Özet","Summary"), systemImage: "doc.text.magnifyingglass") }.tag(2)
             // 18.09: Telsiz sekmesi kaldırıldı (sesli/yazılı sohbet çıktı) -> 4 sekme.
             // 05.11.2026: SOSYAL sekmesi (arkadaşlar + kulüpler + ortak sürüş) — tag 4, mevcut numaralar değişmesin
             SocialView().tabItem { Label(L("Sosyal","Social"), systemImage: "person.2.fill") }.tag(4)
             ProfileView().tabItem { Label(L("Profil","Profile"), systemImage: "person.crop.circle") }.tag(3)
-        }
-        .onChange(of: store.jumpToVideos) { _, v in
-            if v { sel = 1; store.jumpToVideos = false }   // "Video oluştur" -> Videolarım'a geç ("Hazırlanıyor" görünür)
         }
         // BİLDİRİM DOKUNMA -> ilgili ekran (route: "voice:<user>:<pid>:<isim>", "videos", "friends", "map"...)
         .onReceive(NotificationCenter.default.publisher(for: .ndDeepLink)) { note in
@@ -160,7 +157,7 @@ struct RootView: View {
             // 18.09: telsiz/sohbet/interkom bildirimleri kalktı. Arkadaşlık bildirimleri
             // Profil'e (artık tag 3) gider; bilinmeyen rota sessizce yok sayılır.
             switch p.first {
-            case "videos": sel = 1
+            case "videos": sel = 0   // 10.11: Videolarım kalktı → Rotalar
             case "friends", "wave", "clubs", "pro": sel = 4   // "pro": ortak sürüş bildirimi → Sosyal (Pro kartı orada)   // 05.11: arkadaşlık/kulüp bildirimleri Sosyal'e
             case "profile": sel = 3
             default: break
@@ -191,7 +188,8 @@ struct RootView: View {
             if tracker.active, let t = await store.trackerInfo() { tracker.start(deviceId: t.id, url: t.url) }
             if let a = await store.announcement(), a.ts > annSeen { withAnimation { ann = a } }
             await store.autoSaveNewVideos()            // açılışta: yeni videoları sessizce galeriye kaydet (R2'de 1 gün durur)
-            await MainActor.run { store.kuyrukBaslat() }   // bekleyen oto-videoları TELEFONDA üret (iptal edilebilir görev; 03.11)
+            // 10.11.2026: OTOMATİK arka plan üretimi KALDIRILDI — ölçüm (03–10.11): 257 tarif isteği, 0 tamamlanan
+            // video (kullanıcı uygulamayı kapatınca üretim iptal oluyordu). Video yalnız kullanıcı isteyince üretilir.
             #if DEBUG
             // QA (yalnız Debug/simülatör): -qaMotor3d <from> <to> -> web motoru 36 kareyle dener, Documents'a yazar
             let _qa = ProcessInfo.processInfo.arguments
@@ -216,7 +214,6 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, ph in
             if ph == .active {
                 GpsKuyruk.shared.bosalt()   // 🔴 bu satır Tracker'a HİÇ dokunmuyordu: öne gelince kuyruk boşalsın
-                Task { await store.autoSaveNewVideos(); await MainActor.run { store.kuyrukBaslat() } }   // her öne gelişte: 1 günlük pencereye yetiş
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ndApns)) { _ in
