@@ -97,7 +97,7 @@ struct Profile: Codable {
     var avatar: Avatar
     var premium: Bool? = false
     var ultra: Bool? = false
-    var pro: Bool? = false   // 05.11.2026: Move Log Pro (tek seferlik)
+    var admin: Bool? = false   // 10.11.2026: admin her şeyi açık görür (TamSurum)
 }
 struct Announcement: Identifiable { var title: String; var body: String; var url: String; var ts: Int; var id: Int { ts } }
 struct ActivitySummary: Codable, Identifiable, Hashable { var date: String; var summary: String; var videoId: String? = nil; var from: Double? = nil; var to: Double? = nil; var id: String { date } }
@@ -191,7 +191,6 @@ enum DavetLink {
     @Published var telefondaUretiliyor = false   // 1.63: cihazda üretim sürerken UI dürüst metin gösterir
     @Published var gate: AuthGate = .checking   // açılış doğrulama durumu
     @Published var davetSonuc = ""              // arkadaş daveti kabul sonucu (alert)
-    @Published var pro = UserDefaults.standard.bool(forKey: "nd_pro")   // 05.11: Move Log Pro (sunucu onaylı)
     @Published var davetYenile = 0              // kabul sonrası Profil arkadaş listesini tazelesin
     var loggedIn: Bool { !token.isEmpty || (AppEnv.demo && AppEnv.screen != "hero") }
     init() {
@@ -555,19 +554,11 @@ enum DavetLink {
         if AppEnv.demo { return DemoData.positions }
         return (try? dec().decode([String:[Position]].self, from: await req("/api/gps/live"))["positions"]) ?? []
     }
-    /// 05.11.2026: StoreKit 2 imzalı Pro işlemini sunucuya bildir. Başarıda pro=true.
-    func proBildir(_ jws: String) async -> Bool {
-        guard let d = try? await req("/api/pro/apple", method: "POST", body: ["jws": jws]),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
-              (o["pro"] as? Bool) == true else { return false }
-        await MainActor.run { self.pro = true; UserDefaults.standard.set(true, forKey: "nd_pro") }
-        return true
-    }
     func profile() async -> Profile? {
         if AppEnv.demo { return Profile(username: "me", name: Demo.user, avatar: Avatar()) }
         let p = try? dec().decode(Profile.self, from: await req("/api/profile"))
-        // 05.11: Pro durumunun tek doğrusu sunucu (iade/hesap değişimi dahil)
-        if let p { await MainActor.run { self.pro = p.pro ?? false; UserDefaults.standard.set(self.pro, forKey: "nd_pro") } }
+        // 10.11: tam sürüm hakkı StoreKit'te; sunucudan yalnız admin bayrağı gelir
+        if let p { await MainActor.run { TamSurum.shared.admin = p.admin ?? false } }
         return p }
     // 03.11.2026: syncPremium() KALDIRILDI — Move Log tamamen ücretsiz, abonelik/IAP yok;
     // sunucu /api/profile herkese premium=true döner, istemcide premium kapısı kalmadı.
@@ -792,7 +783,17 @@ enum DavetLink {
         }
         // 03.11.2026 (Barış): Move Log tamamen ÜCRETSİZ — premium şartı kalktı, herkes telefonda üretir.
         // Bulut üretimi kalıcı kapandı; sunucu /api/rides/generate dahil her işi bu kuyruğa yazar.
-        let jobs = await localRenders()
+        // 10.11.2026 TAM SÜRÜM: 3 ücretsiz sürüşten sonraki işler ÜRETİLMEZ (done da gönderilmez →
+        // kuyrukta bekler, satın alınca bir sonraki açılışta üretilir). Sınırı bilmek için sürüş listesi.
+        if !(await MainActor.run(body: { TamSurum.shared.tam })) {
+            let liste = await rides()
+            await MainActor.run { TamSurum.shared.guncelle(liste) }
+        }
+        var jobs: [[String:Any]] = []
+        for j in await localRenders() {
+            let f = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init) ?? 0
+            if !(await MainActor.run(body: { TamSurum.shared.kilitli(from: f) })) { jobs.append(j) }
+        }
         for j in jobs.prefix(2) {
             guard let frm = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init),
                   let to = j["to"] as? Double ?? (j["to"] as? Int).map(Double.init) else { continue }

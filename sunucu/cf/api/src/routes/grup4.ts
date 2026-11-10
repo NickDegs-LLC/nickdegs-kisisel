@@ -136,6 +136,15 @@ type ProfilSatir = {
   name: string | null; handle: string | null; avatar_json: string | null
   premium: number | null; admin: number | null
   video_hak: number | null; lang: string | null
+  created_at: number | null
+}
+
+/** Ücretli moddan önce kayıtlı mı? UCRETLI_KESIM yok/0 → true (ücretli mod kapalı). */
+function eskiUye(env: Env, createdAt: number | null | undefined): boolean {
+  const kesim = Number((env as Env & { UCRETLI_KESIM?: string }).UCRETLI_KESIM ?? 0)
+  if (!Number.isFinite(kesim) || kesim <= 0) return true
+  const c = Number(createdAt ?? 0)
+  return c > 0 && c < kesim
 }
 
 /** main.py _profile_of (1389-1407) birebir — alan KÜMESİ aynen korunur.
@@ -143,7 +152,7 @@ type ProfilSatir = {
 async function profilYukle(env: Env, uid: string): Promise<{ satir: ProfilSatir | null; profil: Record<string, unknown> }> {
   // 18.09: free_tactical kill-switch sorgusu kalkinca batch tek sorguya indi.
   const satir = await env.DB.prepare(
-    `SELECT name, handle, avatar_json, premium, admin, video_hak, lang
+    `SELECT name, handle, avatar_json, premium, admin, video_hak, lang, created_at
        FROM users WHERE uid = ?1`).bind(uid).first<ProfilSatir>()
 
   // avatar: p.get('avatar') or {'type':'initials'} — Python'da boş obje de falsy
@@ -171,6 +180,11 @@ async function profilYukle(env: Env, uid: string): Promise<{ satir: ProfilSatir 
     ultra: false,
     sokak_hediye: false,   // SABİT false — eski sürüm uyumluluğu, alan KALDIRILAMAZ (main.py:1400-1405)
     admin: !!satir?.admin,
+    // 10.11.2026 TAM SÜRÜM (Barış: ilk 3 sürüş açık, sonrası tek seferlik 4,99 $). Satın alma ve hak
+    // TAMAMEN mağazada (iOS StoreKit, Android Play Billing) — sunucu doğrulama YAPMAZ. Sunucunun tek
+    // işi: ücretli moddan ÖNCE kayıtlı üyeyi bildirmek (Android'de mağaza "ilk indirme tarihi" vermiyor;
+    // iOS bunu AppTransaction ile kendisi bilir). UCRETLI_KESIM (epoch) yoksa herkes eski üye sayılır.
+    eski_uye: eskiUye(env, satir?.created_at),
   }
   return { satir, profil }
 }

@@ -19,6 +19,7 @@ func rideLabel(_ t: String) -> String {
 struct GenerateSheet: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) var dismiss
+    @ObservedObject private var tamSurum = TamSurum.shared   // 10.11: satın alınca üretim ekranına geçsin
     let from: Double
     let to: Double
     let rideId: String?                         // nil = yeni üretim, dolu = mevcut videoyu düzenle
@@ -65,6 +66,12 @@ struct GenerateSheet: View {
     }
 
     var body: some View {
+        // 10.11.2026 TAM SÜRÜM: 3 ücretsiz sürüşten sonrakiler için üretim yerine satın alma ekranı
+        // (Rotalar, Özetler ve diğer bütün giriş yolları bu ekrandan geçer — tek kapı).
+        if tamSurum.kilitli(from: from) { TamSurumSheet() } else { uretimGovdesi }
+    }
+
+    @ViewBuilder private var uretimGovdesi: some View {
         ZStack {
             AuroraBackground()
             ScrollView {

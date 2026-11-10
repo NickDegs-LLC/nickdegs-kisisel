@@ -34,7 +34,7 @@ struct MoveLogApp: App {
                 if store.gate == .checking { store.gate = .offline }
             }
             .task {
-                Destek.dinle()   // 05.11: yarım kalmış bağış işlemlerini bitir (uygulama komple ücretsiz)
+                TamSurum.shared.baslat()   // 10.11: tam sürüm hakkı (StoreKit) + yarım kalmış işlemleri bitir
                 if store.gate == .checking { await store.validate() }
                 // 18.09: ConvoyVoice / PttEngine kaldırıldı (sesli iletişim çıktı).
                 if store.gate == .valid { await bekleyenDavetiKabulEt() }
@@ -137,7 +137,7 @@ struct RootView: View {
     @AppStorage("nd_ann_seen") private var annSeen = 0
     static func initialTab() -> Int {
         // 18.09: Telsiz sekmesi kalktı (5 -> 4). "chat"/"gps"/"map" artık Rotalar'a düşer.
-        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar","destek": return 3; case "social": return 4; default: return 0 }
+        switch AppEnv.screen { case "videos": return 1; case "stats": return 2; case "profile","avatar","tam": return 3; case "social": return 4; default: return 0 }
     }
     var body: some View {
         TabView(selection: $sel) {

@@ -112,7 +112,8 @@ fun SummariesScreen(store: Store) {
                         }
                         // Özet videosunu istediğin ayarlarla yeniden üret (rotalar gibi)
                         if (s.from != null && s.to != null) {
-                            IconButton(onClick = { genFor = s }) {
+                            // 10.11 TAM SÜRÜM: gün 3. ücretsiz sürüşten sonra başlıyorsa yeniden üretim paywall'a gider
+                            IconButton(onClick = { if (store.tsKilitli(s.from)) store.paywallAc() else { genFor = s } }) {
                                 Icon(Icons.Filled.Tune, L("Video ayarları", "Video settings"), tint = Brand.accent)
                             }
                         }

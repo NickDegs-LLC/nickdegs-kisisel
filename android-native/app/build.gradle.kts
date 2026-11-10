@@ -83,7 +83,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")   // FusedLocation (rota kaydı)
     // 16.09: osmdroid (OpenStreetMap) KALDIRILDI — canlı konum haritası uygulamadan çıkınca
     // kütüphane hiçbir yerden kullanılmaz hâle geldi, APK'yı boşuna büyütüyordu.
-    // 05.11.2026: billing-ktx YALNIZ "Destek ol" bahşişi için geri geldi (hiçbir özellik açmaz). Play zorunluluğu 8.0.0+
+    // 10.11.2026: billing-ktx tek seferlik "tam_surum" (Tam Sürüm, data/TamSurum.kt) için; bahşiş kaldırıldı. Play zorunluluğu 8.0.0+
     implementation("com.android.billingclient:billing-ktx:8.0.0")
     // (Billing.kt + PaywallScreen.kt silindi; BILLING izni bu bağımlılığın manifestinden geliyordu, o da gitti).
     implementation("com.google.android.play:integrity:1.4.0")   // Play Integrity (anti-tamper/sideload)

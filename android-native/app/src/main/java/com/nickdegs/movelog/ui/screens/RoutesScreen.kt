@@ -83,8 +83,10 @@ fun RoutesScreen(store: Store) {
             val res = if (bytes != null) store.uploadRoute(bytes) else null
             uploading = false
             if (res != null) {
-                genRide = Ride("upload", "", "bike", null, 0.0, res.first, res.second, null, null, null, false, false)
-                rides = store.rides()
+                rides = store.rides()   // önce tazele: ücretsiz sürüş sınırı yüklenen rotayı da hesaba katsın
+                // 10.11 TAM SÜRÜM: yüklenen rota 3 ücretsiz sürüşün dışındaysa üretim yerine paywall
+                if (store.tsKilitli(res.first)) store.paywallAc()
+                else { genRide = Ride("upload", "", "bike", null, 0.0, res.first, res.second, null, null, null, false, false) }
             }
         }
     }
@@ -136,6 +138,26 @@ fun RoutesScreen(store: Store) {
                 }
             }
         }
+        // 10.11 TAM SÜRÜM: kilitli sürüş varsa bilgi + kilit açma bandı
+        if (rides.any { store.kilitli(it) }) {
+            Surface(color = Brand.card, shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Lock, null, tint = Brand.accent)
+                    Spacer(Modifier.width(12.dp))
+                    Text(L("3 ücretsiz sürüşün doldu. Tam sürümü bir kez aç — {p}, abonelik yok.",
+                           "Your 3 free rides are used. Unlock the full version once — {p}, no subscription.")
+                            .replace("{p}", tamSurumFiyat(store)),
+                        color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(10.dp))
+                    Button(onClick = { store.paywallAc() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
+                        Text(L("Kilidi aç", "Unlock"))
+                    }
+                }
+            }
+        }
         if (loaded && rides.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(L("Henüz rota yok", "No routes yet"), color = Color(0xFF9AA4B2))
@@ -143,6 +165,7 @@ fun RoutesScreen(store: Store) {
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(rides) { r ->
+                val kilit = store.kilitli(r)   // 10.11 tam sürüm: 3 ücretsiz sürüşün dışında
                 Surface(color = Brand.card, shape = RoundedCornerShape(20.dp)) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(typeIcon(r.type), null, tint = Brand.accent, modifier = Modifier.size(40.dp))
@@ -151,10 +174,16 @@ fun RoutesScreen(store: Store) {
                             Text(dayTime(r), color = Color.White, fontWeight = FontWeight.SemiBold)
                             // 10.10: ÖRNEK rota (appreview) — tip menüsü yok (sunucu 404 verir), "Örnek" etiketi var.
                             Box {
-                                Row(if (r.sample) Modifier else Modifier.clickable { typeMenuFor = r.id },
+                                Row(if (r.sample) Modifier
+                                    else Modifier.clickable { if (kilit) store.paywallAc() else { typeMenuFor = r.id } },
                                     verticalAlignment = Alignment.CenterVertically) {
                                     Text(typeLabel(r.type), color = Color(0xFF9AA4B2), fontSize = 13.sp)
                                     if (r.sample) Text("  · " + L("Örnek", "Sample"), color = Brand.accent, fontSize = 12.sp)
+                                    else if (kilit) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Icon(Icons.Filled.Lock, null, tint = Brand.accent, modifier = Modifier.size(13.dp))
+                                        Text(" " + L("Kilitli", "Locked"), color = Brand.accent, fontSize = 12.sp)
+                                    }
                                     else Icon(Icons.Filled.ArrowDropDown, null, tint = Color(0xFF9AA4B2), modifier = Modifier.size(16.dp))
                                 }
                                 if (!r.sample) DropdownMenu(expanded = typeMenuFor == r.id, onDismissRequest = { typeMenuFor = null }) {
@@ -171,7 +200,8 @@ fun RoutesScreen(store: Store) {
                         // Örnek (sample) rotada da var: sunucu /kart ucunda appreview rotalarına izin verir
                         // (inceleyici paylaşımı deneyebilsin); sil/tip menüsünden farklı.
                         Box {
-                            IconButton(onClick = { kartMenuFor = r.id }, enabled = kartIndiriliyor == null) {
+                            IconButton(onClick = { if (kilit) store.paywallAc() else { kartMenuFor = r.id } },
+                                enabled = kartIndiriliyor == null) {
                                 if (kartIndiriliyor == r.id)
                                     CircularProgressIndicator(Modifier.size(20.dp), color = Brand.accent, strokeWidth = 2.dp)
                                 else Icon(Icons.Filled.Share, L("Kartı paylaş", "Share card"), tint = Brand.accent)
@@ -197,7 +227,12 @@ fun RoutesScreen(store: Store) {
                                     }
                             }
                         }
-                        if (r.rendering) {
+                        if (kilit) {
+                            // 10.11 TAM SÜRÜM: oynat / video oluştur yerine kilit -> paywall
+                            IconButton(onClick = { store.paywallAc() }) {
+                                Icon(Icons.Filled.Lock, L("Kilitli", "Locked"), tint = Brand.accent, modifier = Modifier.size(30.dp))
+                            }
+                        } else if (r.rendering) {
                             Text(L("Hazırlanıyor…", "Rendering…"), color = Brand.accent, fontSize = 13.sp)
                         } else if (r.novideo && r.sample) {
                             // örnek rotadan video üretilmez (kullanıcının kendi izi değil)

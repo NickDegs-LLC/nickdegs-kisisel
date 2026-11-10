@@ -88,10 +88,58 @@ class Store(app: Application) : AndroidViewModel(app) {
     // uyum için duruyor ama HER ZAMAN true: sunucu da /api/profile'da herkese premium=true döner.
     // (Eski "nd_ultra" / "nd_free_tactical" / video_hak tercihleri öksüz kalır, zararsız.)
     var premium by mutableStateOf(true)
-    // 05.11.2026: Move Log Pro (tek seferlik) — sunucu onaylı; ortak sürüş videolarını açar
-    var pro by mutableStateOf(false)
-        private set
     var loginError by mutableStateOf(false)
+
+    // ---- 10.11.2026 TAM SÜRÜM (data/TamSurum.kt) ----
+    // İlk 3 sürüş her şey açık; 4.'den itibaren tek seferlik "tam_surum" (4,99 $) gerekir.
+    // Tam erişim = eski üye (sunucu eski_uye; alan yoksa TRUE sayılır) || admin || Play'de tam_surum sahibi.
+    val tamSurum = TamSurum(app)
+    var eskiUye by mutableStateOf(prefs.getBoolean("nd_eski_uye", true))
+        private set
+    var admin by mutableStateOf(prefs.getBoolean("nd_admin", false))
+        private set
+    val tamErisim: Boolean get() = eskiUye || admin || tamSurum.sahip
+    /** Paywall penceresi (MoveLogApp tek yerden çizer); ekranlar paywallAc() çağırır. */
+    var paywallGoster by mutableStateOf(false)
+    fun paywallAc() { paywallGoster = true }
+    // Ücretsiz sürüşler: kullanıcının KENDİ sürüşleri (örnek/sample hariç), rides() ile aynı tekilleştirme
+    // anahtarıyla, başlangıç zamanına göre ARTAN sıralı ilk 3'ü. rides() her başarılı çağrıda tazeler.
+    var ucretsizAnahtarlar by mutableStateOf<Set<String>>(emptySet())
+        private set
+    /** 3. ücretsiz sürüşün başlangıç ts'i; null = henüz 3 sürüş yok (hiçbir şey kilitli değil). */
+    var ucretsizSinirTs by mutableStateOf<Double?>(null)
+        private set
+    fun surusAnahtari(r: Ride) = "${r.date}_${(r.ts ?: 0.0).toLong()}"
+    private fun ucretsizHesapla(list: List<Ride>) {
+        val kendi = list.filter { !it.sample }.sortedBy { it.ts ?: 0.0 }
+        val ilk = kendi.take(UCRETSIZ_SURUS)
+        ucretsizAnahtarlar = ilk.map { surusAnahtari(it) }.toSet()
+        ucretsizSinirTs = if (kendi.size >= UCRETSIZ_SURUS) (ilk.last().ts ?: 0.0) else null
+    }
+    /** Liste kartı kilitli mi (rota/video). Örnek (sample) içerik hiç kilitlenmez. */
+    fun kilitli(r: Ride): Boolean = !tamErisim && !r.sample && surusAnahtari(r) !in ucretsizAnahtarlar
+    /** Başlangıç zamanına göre kilit (telefon kuyruğu işleri, GPX yükleme, özet videosu). */
+    fun tsKilitli(ts: Double?): Boolean {
+        if (tamErisim) return false
+        val sinir = ucretsizSinirTs ?: return false
+        val t = ts ?: return false
+        return t > sinir
+    }
+    private fun profilBayraklari(o: JSONObject) {
+        eskiUye = o.optBoolean("eski_uye", true)   // alan yoksa (eski sunucu) ücretsiz say
+        admin = o.optBoolean("admin", false)
+        prefs.edit().putBoolean("nd_eski_uye", eskiUye).putBoolean("nd_admin", admin).apply()
+    }
+
+    init {
+        tamSurum.yenile()      // açılışta Play'e sahipliği sor (önbellek yalnız çevrimdışı yedek)
+        tamSurum.urunYukle()   // fiyat (banner/profil satırı için)
+    }
+
+    override fun onCleared() {
+        tamSurum.kapat()
+        super.onCleared()
+    }
 
     // Açılış kapısı: token yoksa giriş; varsa SUNUCUDA doğrulanana kadar CHECKING.
     var auth by mutableStateOf(if ((prefs.getString("nd_token", "") ?: "").isEmpty()) AuthState.NEED_LOGIN else AuthState.CHECKING)
@@ -102,6 +150,7 @@ class Store(app: Application) : AndroidViewModel(app) {
     suspend fun validate() {
         if (token.isEmpty()) { auth = AuthState.NEED_LOGIN; return }
         auth = AuthState.CHECKING
+        var profilJson: JSONObject? = null
         val code = withContext(Dispatchers.IO) {
             try {
                 val c = (URL("$API/api/profile").openConnection() as HttpURLConnection)
@@ -112,10 +161,12 @@ class Store(app: Application) : AndroidViewModel(app) {
                 if (rc == 200) {
                     val o = JSONObject(c.inputStream.bufferedReader().readText())
                     me = o.optString("username", me); persistPremium(true)
+                    profilJson = o
                 }
                 rc
             } catch (e: Exception) { -1 }
         }
+        profilJson?.let { profilBayraklari(it) }
         when {
             code == 200 -> {
                 // Play Integrity (anti-tamper/sideload): kurcalanmış/korsan kurulum engellenir (fail-open).
@@ -285,16 +336,8 @@ class Store(app: Application) : AndroidViewModel(app) {
         displayName = o.optString("name", displayName)
         val av = o.optJSONObject("avatar")
         avatarEmoji = if (av?.optString("type") == "emoji") av.optString("value", "") else ""
-        pro = o.optBoolean("pro", false)
+        profilBayraklari(o)
         persistPremium(true)
-    }
-
-    /** 05.11.2026: Play satın alma jetonunu sunucuya doğrulat (/api/pro/google). Başarıda pro=true. */
-    suspend fun proBildir(purchaseToken: String): Boolean {
-        val d = req("/api/pro/google", "POST", JSONObject().put("token", purchaseToken)) ?: return false
-        val ok = runCatching { JSONObject(d).optBoolean("pro", false) }.getOrDefault(false)
-        if (ok) pro = true
-        return ok
     }
 
     suspend fun setAvatarEmoji(emoji: String): Boolean {
@@ -365,10 +408,13 @@ class Store(app: Application) : AndroidViewModel(app) {
         set(v) { prefs.edit().putString("nd_sensitivity", v).apply() }
 
     // ---- Rotalar ----
-    suspend fun rides(): List<Ride> {
-        val d = req("/api/rides") ?: return emptyList()
-        val arr = JSONObject(d).optJSONArray("rides") ?: JSONArray()
-        return (0 until arr.length()).map { i ->
+    suspend fun rides(): List<Ride> = ridesOrNull() ?: emptyList()
+
+    /** null = sunucuya ulaşılamadı (ücretsiz sürüş sınırı TAZELENMEDİ). Başarıda sınırı da hesaplar. */
+    suspend fun ridesOrNull(): List<Ride>? {
+        val d = req("/api/rides") ?: return null
+        val arr = runCatching { JSONObject(d).optJSONArray("rides") }.getOrElse { return null } ?: JSONArray()
+        val liste = (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
             Ride(
                 id = o.getString("id"), date = o.optString("date", ""),
@@ -392,6 +438,8 @@ class Store(app: Application) : AndroidViewModel(app) {
                 grup.firstOrNull { it.rendering } ?: grup.maxByOrNull { it.done ?: 0.0 } ?: grup.first()
             }
             .sortedByDescending { it.ts ?: 0.0 }
+        ucretsizHesapla(liste)
+        return liste
     }
 
     fun videoUrl(id: String) = "$API/api/rides/$id/video"

@@ -97,6 +97,17 @@ fun VideosScreen(store: Store) {
                                     Icon(Icons.Filled.Delete, L("Sil", "Delete"), tint = Color(0xFFFF6B6B))
                                 }
                             }
+                        } else if (store.kilitli(r)) {
+                            // 10.11 TAM SÜRÜM: 3 ücretsiz sürüşün dışındaki video — oynat/kaydet yerine kilit -> paywall
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(L("Kilitli", "Locked"), color = Brand.accent, fontSize = 13.sp)
+                                IconButton(onClick = { store.paywallAc() }) {
+                                    Icon(Icons.Filled.Lock, L("Kilitli", "Locked"), tint = Brand.accent, modifier = Modifier.size(30.dp))
+                                }
+                                if (!r.sample) IconButton(onClick = { pendingDelete = r }) {
+                                    Icon(Icons.Filled.Delete, L("Sil", "Delete"), tint = Color(0xFFFF6B6B))
+                                }
+                            }
                         } else {
                             // Kaydet (galeriye indir)
                             if (savingId == r.id) CircularProgressIndicator(Modifier.size(20.dp), color = Brand.accent, strokeWidth = 2.dp)

@@ -161,7 +161,11 @@ object YerelVideo {
      */
     suspend fun kuyruguIsle(act: Activity, store: Store) {
         if (calisiyor) return
-        val isler = store.localRenders()
+        // 10.11.2026 TAM SÜRÜM: tam erişim yoksa 3. ücretsiz sürüşten SONRA başlayan işler (grup dahil)
+        // üretilmez — kuyruktan da DÜŞÜLMEZ, başarısız da sayılmaz; satın alınca sonraki turda üretilir.
+        // Sınırı tazelemek için rotalar çekilir; sunucuya ulaşılamazsa güvenli taraf: bu tur hiçbir şey yapma.
+        if (!store.tamErisim && store.ridesOrNull() == null) return
+        val isler = store.localRenders().filter { !store.tsKilitli(it.optDouble("from", 0.0)) }
         for (j in isler.take(2)) {
             if (act.isFinishing || act.isDestroyed) return
             val frm = j.optDouble("from", 0.0)

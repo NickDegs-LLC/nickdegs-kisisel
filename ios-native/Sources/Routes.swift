@@ -49,11 +49,13 @@ struct RoutesView: View {
     @State private var uploadErr: String?
     @State private var kartId: String? = nil          // kartı indirilen rota (düğmede ProgressView)
     @State private var paylasKart: PaylasimKarti?     // indirilen kart -> paylaşım sayfası
+    @ObservedObject private var tam = TamSurum.shared   // 10.11: tam sürüm kilidi
+    @State private var showTam = false
 
     // Listeyi tazele: yeni (oto-algılanan) sürüşler + biten render'lar hemen görünsün.
     func reload() async {
         let fresh = await store.rides()
-        await MainActor.run { rides = fresh; managePoll() }
+        await MainActor.run { rides = fresh; TamSurum.shared.guncelle(fresh); managePoll() }
     }
     // Hâlâ render olan kayıt varsa 12 sn'de bir tazele -> bitince "Hazırlanıyor" açılır.
     func managePoll() {
@@ -157,7 +159,10 @@ struct RoutesView: View {
                             }
                             .padding(14).glassPanel(20).smoothAppear()
                         }
+                        // 10.11.2026 TAM SÜRÜM: 3 ücretsiz sürüş dolduysa bant
+                        if tam.kilitVar { TamSurumBandi { showTam = true }.smoothAppear() }
                         ForEach(sortedRides) { r in
+                            let kilitli = r.sample != true && tam.kilitli(from: r.ts ?? 0)
                             HStack(spacing: 14) {
                                 Image(systemName: typeIcon(r.type)).font(.system(size: 22))
                                     .foregroundStyle(Brand.accent).frame(width: 50, height: 50).glassPanel(16)
@@ -187,7 +192,16 @@ struct RoutesView: View {
                                 Spacer()
                                 // 26.10: işlem düğmeleri tek grupta (8 pt aralık) — 4. düğme (kart) satıra sığsın
                                 HStack(spacing: 8) {
-                                if r.sample == true && r.novideo == true {
+                                if kilitli {
+                                    // 10.11: kilitli sürüş → tek düğme: tam sürüm
+                                    Button { showTam = true } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "lock.fill").font(.system(size: 13, weight: .bold))
+                                            Text(L("Kilidi aç","Unlock")).font(.system(size: 13, weight: .semibold))
+                                        }.foregroundStyle(.white).padding(.horizontal, 14).frame(height: 42)
+                                            .background(Brand.gradient, in: Capsule())
+                                    }.buttonStyle(.borderless).contentShape(Rectangle())
+                                } else if r.sample == true && r.novideo == true {
                                     EmptyView()   // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
                                 } else if r.novideo == true || r.failed == true {
                                     // Videosuz algılanan rota VEYA başarısız render -> kullanıcı (yeniden) video ürettirir
@@ -219,6 +233,7 @@ struct RoutesView: View {
                                         }.font(.system(size: 16, weight: .semibold)).frame(width: 42, height: 42).glassPanel(21)
                                     }.buttonStyle(.borderless).contentShape(Rectangle()).disabled(savingId == r.id)
                                 }
+                                if !kilitli {
                                 // Kartı paylaş (26.10): kısa bas = Story (9:16) dikey kart; uzun bas = biçim seç.
                                 // Örnek (sample) rotada da VAR: sunucu /kart ucunda appreview rotalarına izin verir
                                 // (inceleyici paylaşımı deneyebilsin) — sil/tip menüsünden farklı.
@@ -241,6 +256,7 @@ struct RoutesView: View {
                                     .contentShape(Rectangle()).disabled(kartId != nil)
                                     .accessibilityLabel(L("Kartı paylaş", "Share card"))
                                 }
+                                }   // if !kilitli (kart)
                                 }   // HStack(spacing: 8) — işlem düğmeleri
                             }
                             .padding(14).glassPanel(20).smoothAppear()
@@ -277,7 +293,7 @@ struct RoutesView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     // GPX/TCX yükle (akıllı saat / Strava dosyasından video) — 03.11.2026: herkese açık
                     Button {
-                        showImporter = true
+                        if tam.hakDoldu { showTam = true } else { showImporter = true }   // 10.11: yeni sürüş = tam sürüm
                     } label: {
                         if uploading { ProgressView() }
                         else { Image(systemName: "tray.and.arrow.up").font(.system(size: 16, weight: .semibold)) }
@@ -312,6 +328,7 @@ struct RoutesView: View {
                 }
             }
         }
+        .sheet(isPresented: $showTam) { TamSurumSheet() }
         .sheet(item: $paylasKart) { k in
             PaylasimSayfasi(ogeler: [k.url]) { paylasKart = nil }
                 .presentationDetents([.medium, .large])

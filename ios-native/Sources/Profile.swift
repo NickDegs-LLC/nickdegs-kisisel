@@ -37,7 +37,8 @@ struct ProfileView: View {
     @State private var showAddFriend = false
     @State private var showHandle = false
     @State private var showFeedback = false
-    @State private var showDestek = false
+    @State private var showTam = false   // 10.11: tam sürüm (eski bağış satırının yerine)
+    @ObservedObject private var tam = TamSurum.shared
     @State private var showDelete = false
     @State private var showRename = false
     @State private var newName = ""
@@ -305,14 +306,15 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
-                        // 05.11.2026: DESTEK OL — isteğe bağlı bağış (Destek.swift), hiçbir şey açmaz; uygulama komple ücretsiz
-                        Button { showDestek = true } label: {
+                        // 10.11.2026: TAM SÜRÜM — herkese görünür (inceleyici satın almayı bulabilsin); bağış kaldırıldı
+                        Button { showTam = true } label: {
                             HStack(spacing: 12) {
-                                Text("☕").font(.system(size: 26))
+                                Text("🏍️").font(.system(size: 26))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Destek ol","Support us")).font(.system(size: 16, weight: .semibold))
-                                    Text(L("Move Log ücretsiz — istersen geliştiriciye kahve ısmarla",
-                                           "Move Log is free — buy the developer a coffee if you like"))
+                                    Text(L("Tam sürüm","Full version")).font(.system(size: 16, weight: .semibold))
+                                    Text(tam.satinAlindi ? L("Aktif — teşekkürler!","Active — thank you!")
+                                         : tam.tam ? L("Erken kullanıcı — sana ücretsiz","Early rider — free for you")
+                                         : L("İlk 3 sürüş ücretsiz, sonrası tek seferlik","First 3 rides free, then a one-time purchase"))
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -336,7 +338,7 @@ struct ProfileView: View {
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
                 if AppEnv.screen == "avatar" { showAvatar = true }
-                if AppEnv.screen == "destek" { showDestek = true }   // 05.11: IAP inceleme görüntüsü
+                if AppEnv.screen == "tam" { showTam = true }   // 10.11: IAP inceleme görüntüsü
             }
         }
         .onChange(of: store.davetYenile) { _, _ in
@@ -345,7 +347,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
-        .sheet(isPresented: $showDestek) { DestekSheet() }
+        .sheet(isPresented: $showTam) { TamSurumSheet() }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {

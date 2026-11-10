@@ -101,6 +101,7 @@ fun MoveLogApp(store: Store) {
     DisposableEffect(lifecycleOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                store.tamSurum.yenile()   // 10.11 tam sürüm: öne gelişte Play'e sahipliği yeniden sor
                 scope.launch { store.autoSaveNewVideos() }
                 if (aktivite != null) scope.launch {
                     kotlinx.coroutines.delay(1500)   // ekran yerleşsin (kök görünüm ölçülmüş olsun)
@@ -110,6 +111,18 @@ fun MoveLogApp(store: Store) {
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    // 10.11 TAM SÜRÜM: satın alınınca (kilitli -> açık geçişi) kuyrukta bekletilen videoları hemen üret.
+    // Yalnız GEÇİŞTE çalışır; açılıştaki üretimi ON_RESUME kancası zaten yapıyor (çift tetik olmasın).
+    var oncekiTamErisim by remember { mutableStateOf(store.tamErisim) }
+    LaunchedEffect(store.tamErisim) {
+        val simdi = store.tamErisim
+        val acildi = simdi && !oncekiTamErisim
+        oncekiTamErisim = simdi
+        if (acildi && aktivite != null) {
+            kotlinx.coroutines.delay(1500)
+            com.nickdegs.movelog.video.YerelVideo.kuyruguIsle(aktivite, store)
+        }
     }
 
     var sel by remember { mutableStateOf(0) }
@@ -166,6 +179,8 @@ fun MoveLogApp(store: Store) {
             }
         }
     }
+    // 10.11 TAM SÜRÜM penceresi — ekranlar store.paywallAc() ile açar.
+    if (store.paywallGoster) TamSurumDialog(store) { store.paywallGoster = false }
     // Telefonda video üretimi sürerken tam ekran ilerleme (ayrı pencere — motor WebView'ı örter).
     com.nickdegs.movelog.video.YerelVideoKatmani()
 }
