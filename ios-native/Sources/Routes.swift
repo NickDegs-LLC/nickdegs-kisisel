@@ -49,6 +49,7 @@ struct RoutesView: View {
     @State private var uploadErr: String?
     @State private var kartId: String? = nil          // kartı indirilen rota (düğmede ProgressView)
     @State private var paylasKart: PaylasimKarti?     // indirilen kart -> paylaşım sayfası
+    @State private var demoSonuc: URL? = nil          // yalnız DEMO (mağaza görseli): Documents/demo.mp4 sonuç ekranı
 
     // Listeyi tazele: yeni (oto-algılanan) sürüşler + biten render'lar hemen görünsün.
     func reload() async {
@@ -130,7 +131,7 @@ struct RoutesView: View {
                         // anahtarı KAPALIYKEN burada kırmızı kart + "Aç" görünür. 26.09 Semra vakası: takip kapalıydı,
                         // iki uzun yolculuk kaydedilmedi, kullanıcı uygulamayı bozuk sandı; 18.09–10.10 arası 42 yeni
                         // üyenin 35'i hiç konum göndermedi. "Aç" = Profil anahtarıyla BİREBİR aynı yol (trackerInfo → start).
-                        if !tracker.active && !tracker.recording {
+                        if !tracker.active && !tracker.recording && !AppEnv.demo {   // demo/mağaza görselinde gösterme
                             HStack(spacing: 12) {
                                 Image(systemName: "location.slash.fill").font(.system(size: 20, weight: .semibold))
                                     .foregroundStyle(.red).frame(width: 44, height: 44).glassPanel(14)
@@ -163,6 +164,7 @@ struct RoutesView: View {
                                     .foregroundStyle(Brand.accent).frame(width: 50, height: 50).glassPanel(16)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(dayTime(r)).font(.system(size: 17, weight: .semibold))
+                                        .lineLimit(1).minimumScaleFactor(0.75)   // 10.11: düğmeye yer kalsın
                                     if r.sample == true {
                                         // 10.10: ÖRNEK rota (appreview) — tip menüsü yok (sunucu 404 verir), "Örnek" etiketi var
                                         HStack(spacing: 4) {
@@ -193,10 +195,12 @@ struct RoutesView: View {
                                     // 10.11.2026: video sunucuda SAKLANMAZ → kendi sürüşünde her zaman "Video oluştur" (telefonda üretilir)
                                     // Videosuz algılanan rota VEYA başarısız render -> kullanıcı (yeniden) video ürettirir
                                     Button { createRide = r } label: {
+                                        // 10.11: metin satıra sığmayınca "Creat / e vi…" diye bölünüyordu → tek satır, sabit genişlik
                                         HStack(spacing: 6) {
                                             Image(systemName: "film.stack").font(.system(size: 13, weight: .bold))
                                             Text(L("Video oluştur","Create video")).font(.system(size: 13, weight: .semibold))
-                                        }.foregroundStyle(.white).padding(.horizontal, 14).frame(height: 42)
+                                                .lineLimit(1).minimumScaleFactor(0.8)
+                                        }.fixedSize().foregroundStyle(.white).padding(.horizontal, 12).frame(height: 42)
                                             .background(Brand.gradient, in: Capsule())
                                     }.buttonStyle(.borderless).contentShape(Rectangle())
                                 } else {
@@ -286,7 +290,21 @@ struct RoutesView: View {
                 }
             }
         }
-        .onAppear { Task { await reload() } }      // sekmeye her gelişte tazele (yeni oto-rota hemen görünsün)
+        .onAppear { Task {
+            await reload()      // sekmeye her gelişte tazele (yeni oto-rota hemen görünsün)
+            // 10.11: yalnız DEMO/mağaza görseli — video oluştur ve sonuç ekranlarını doğrudan aç
+            if AppEnv.demo && demoSonuc == nil && createRide == nil {
+                try? await Task.sleep(for: .milliseconds(600))
+                if AppEnv.screen == "uret", let r = rides.first(where: { $0.sample != true }) ?? rides.first { createRide = r }
+                if AppEnv.screen == "sonuc" {
+                    let u = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("demo.mp4")
+                    if FileManager.default.fileExists(atPath: u.path) { demoSonuc = u }
+                }
+            }
+        } }
+        .sheet(isPresented: Binding(get: { demoSonuc != nil }, set: { if !$0 { demoSonuc = nil } })) {
+            if let u = demoSonuc { VideoSonucView(url: u) { demoSonuc = nil } }
+        }
         .onDisappear { pollTask?.cancel(); pollTask = nil }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType(filenameExtension: "gpx") ?? .xml,

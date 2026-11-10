@@ -727,7 +727,7 @@ enum DavetLink {
     /// 10.11.2026: bu sürüş için sunucunun önerdiği ORTAK sürüş anahtarı (arkadaş/kulüp birlikte sürdüyse).
     /// Sunucu önerileri yerel kuyrukta tutar (grupsurus); video artık otomatik üretilmez, kullanıcı ister.
     func grupAnahtari(from: Double, to: Double) async -> String? {
-        if AppEnv.demo { return nil }
+        if AppEnv.demo { return AppEnv.screen == "uret" ? "demo" : nil }   // mağaza görseli: ortak video seçeneği görünsün
         for j in await localRenders() {
             guard let g = j["grup"] as? String, !g.isEmpty else { continue }
             let f = j["from"] as? Double ?? (j["from"] as? Int).map(Double.init) ?? 0
