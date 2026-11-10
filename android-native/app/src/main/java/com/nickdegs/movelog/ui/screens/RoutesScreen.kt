@@ -197,15 +197,18 @@ fun RoutesScreen(store: Store) {
                                     }
                             }
                         }
-                        if (r.rendering) {
-                            Text(L("Hazırlanıyor…", "Rendering…"), color = Brand.accent, fontSize = 13.sp)
-                        } else if (r.novideo && r.sample) {
-                            // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
-                        } else if (r.novideo) {
+                        if (!r.sample) {
+                            // 10.11.2026 (Barış): video sunucuda SAKLANMAZ -> kendi sürüşünde her zaman
+                            // "Video oluştur" (telefonda üretilir, sonuç ekranında izlenir/kaydedilir).
                             IconButton(onClick = { genRide = r }) {
                                 Icon(Icons.Filled.MovieCreation, L("Video oluştur", "Create video"), tint = Brand.accent)
                             }
+                        } else if (r.rendering) {
+                            Text(L("Hazırlanıyor…", "Rendering…"), color = Brand.accent, fontSize = 13.sp)
+                        } else if (r.novideo) {
+                            // örnek rotadan video üretilmez (kullanıcının kendi izi değil)
                         } else {
+                            // örnek rota: sunucudaki hazır örnek videoyu oynat (eski davranış)
                             IconButton(onClick = {
                                 scope.launch { playUrl = store.signedVideoUrl(r.id) ?: store.videoUrl(r.id) }
                             }) { Icon(Icons.Filled.PlayCircle, null, tint = Brand.accent, modifier = Modifier.size(34.dp)) }
@@ -225,7 +228,7 @@ fun RoutesScreen(store: Store) {
     genRide?.let { r ->
         GenerateSheet(store, from = r.ts ?: 0.0, to = r.to ?: 0.0, type = r.type ?: "moto") {
             genRide = null
-            scope.launch { rides = store.rides() }   // üretim sonrası tazele ("Hazırlanıyor" görünsün)
+            scope.launch { rides = store.rides() }   // sayfayı tazele
         }
     }
 }

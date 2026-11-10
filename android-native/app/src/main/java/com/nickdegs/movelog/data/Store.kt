@@ -510,6 +510,8 @@ class Store(app: Application) : AndroidViewModel(app) {
     // HTTP durumunu döner: 200 = istek kabul edildi, diğer = hata (03.11: 402/hak kapısı YOK).
     // 03.11 ÜCRETSİZ MOD: bulut üretimi kalıcı kapalı; sunucu işi TELEFON KUYRUĞUNA (yerelq) yazar ve
     // {"ok":true,"yerel":true} döner -> çağıran videoyu YerelVideo ile telefonda üretir.
+    // 10.11.2026: GenerateSheet artık bunu ÇAĞIRMAZ (iOS gibi doğrudan /api/motor3d -> telefonda üretim);
+    // çağrılırsa sunucu kuyruğa iş yazar ve o iş hiç "bitti" işaretlenmez. Geri dönüş için duruyor.
     /** Son uretim isteginin sunucudan gelen ACIKLAMASI (bos = hata yok). */
     var sonUretimHatasi: String = ""
         private set
@@ -552,61 +554,30 @@ class Store(app: Application) : AndroidViewModel(app) {
     }
 
     // Sunucunun "telefon üretsin" kuyruğu (KV yerelq). iOS Store.localRenders ile aynı.
+    // 10.11.2026: yalnız ortak sürüş (grup) önerisini bulmak için okunur — kuyruk artık otomatik işlenmez.
     suspend fun localRenders(): List<JSONObject> {
         val d = req("/api/local-renders?grup=1") ?: return emptyList()   // 05.11: ortak sürüş işlerini de al
         val arr = runCatching { JSONObject(d).optJSONArray("pending") }.getOrNull() ?: return emptyList()
         return (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
     }
-    suspend fun localRenderDone(from: Double) {
-        req("/api/local-renders/done", "POST", JSONObject().put("from", from))
-    }
-
-    // Telefonda üretilen MP4'ü yükle -> R2 + Videolarım. Gövde HAM MP4; dosya belleğe ALINMAZ
-    // (setFixedLengthStreamingMode + FileInputStream ile akıtılır — 40-60 MB'lık dosyada tek kopya yok).
-    // iOS uploadLocalVideo gibi 3 deneme. Başarıda true; dosyayı SİLMEK çağıranın işi.
-    suspend fun yerelVideoYukle(file: java.io.File, ts: Double, to: Double, mode: String, aspect: String,
-                                type: String, speed: String, grup: Boolean = false,
-                                onProgress: (Float) -> Unit = {}): Boolean =
-        withContext(Dispatchers.IO) {
-            fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
-            val q = "?ts=${ts.toLong()}&to=${to.toLong()}&mode=${enc(mode)}&aspect=${enc(aspect)}" +
-                    "&type=${enc(type)}&speed=${enc(speed)}" + (if (grup) "&grup=1" else "")
-            val boy = file.length()
-            if (boy <= 0L) return@withContext false
-            for (deneme in 1..3) {
-                var c: HttpURLConnection? = null
-                try {
-                    c = (URL("$API/api/videos/upload$q").openConnection() as HttpURLConnection)
-                    c.requestMethod = "POST"; c.connectTimeout = 15000; c.readTimeout = 600_000
-                    c.doOutput = true
-                    c.setFixedLengthStreamingMode(boy)
-                    c.setRequestProperty("Content-Type", "video/mp4")
-                    if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
-                    c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-                    java.io.FileInputStream(file).use { giris ->
-                        c.outputStream.use { cikis ->
-                            val tampon = ByteArray(256 * 1024)
-                            var giden = 0L
-                            while (true) {
-                                val n = giris.read(tampon)
-                                if (n < 0) break
-                                cikis.write(tampon, 0, n)
-                                giden += n
-                                onProgress((giden.toDouble() / boy).toFloat().coerceIn(0f, 1f))
-                            }
-                        }
-                    }
-                    val kod = c.responseCode
-                    runCatching { (if (kod in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes() } }
-                    if (kod in 200..299) return@withContext true
-                    if (kod in 400..499 && kod != 408 && kod != 429) return@withContext false   // kalıcı ret: tekrar deneme
-                } catch (e: Exception) {
-                    // ağ hatası -> tekrar dene
-                } finally { c?.disconnect() }
-                if (deneme < 3) kotlinx.coroutines.delay(deneme * 3000L)
-            }
-            false
+    /**
+     * 10.11.2026: bu sürüş için sunucunun önerdiği ORTAK sürüş anahtarı (arkadaş/kulüp birlikte sürdüyse).
+     * Sunucu önerileri yerel kuyrukta `grup` alanıyla tutar; video artık OTOMATİK üretilmez, kullanıcı
+     * GenerateSheet'te ister. Eşleşme: grup dolu ve işin `from`'u [rideFrom − 600 sn, rideTo] içinde
+     * (iOS Store.grupAnahtari ile aynı). Bulunamazsa / ağ hatasında null.
+     * NOT: telefon /api/videos/upload ve /api/local-renders/done ÇAĞIRMAZ (video sunucuda saklanmaz).
+     */
+    suspend fun grupAnahtari(from: Double, to: Double): String? {
+        for (j in localRenders()) {
+            if (j.isNull("grup")) continue          // optString JSON null için "null" döndürür
+            val g = j.optString("grup", "")
+            if (g.isEmpty()) continue
+            val f = j.optDouble("from", Double.NaN)
+            if (f.isNaN()) continue
+            if (f >= from - 600.0 && f <= to) return g
         }
+        return null
+    }
 
     suspend fun musicList(): List<Pair<String, String>> {
         val d = req("/api/music") ?: return emptyList()

@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.*
@@ -50,7 +51,14 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
     var busy by remember { mutableStateOf(false) }
     // FIX 05.09: uretim hatasi mesaji (400/429/503) — oncesinde hicbir yerde gosterilmiyordu
     var hataMetni by remember { mutableStateOf("") }
+    // 10.11.2026 (Barış): video SUNUCUYA GİTMEZ. Telefonda üretilir, sonuç ekranında izlenir;
+    // "Galeriye kaydet"e basılmazsa kapatınca silinir. hazir = üretilmiş geçici MP4 (cacheDir/videolar).
+    var hazir by remember { mutableStateOf<java.io.File?>(null) }
+    // Ortak sürüş: sunucu bu sürüş için grup önerdiyse anahtar (yoksa null) + kullanıcının tercihi.
+    var grup by remember { mutableStateOf<String?>(null) }
+    var ortak by remember { mutableStateOf(true) }
     val ctx = LocalContext.current
+    LaunchedEffect(from, to) { grup = store.grupAnahtari(from, to) }
     LaunchedEffect(Unit) {
         stock = store.musicList(); userTracks = store.musicLibrary()
         // YÜKLÜ MÜZİK OTOMATİK SEÇİLİ (iOS 1.57 paritesi): kullanıcı müzik yüklediyse ve henüz seçim yapmadıysa
@@ -91,6 +99,25 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                    "The video is created on your phone; keep the screen on until it finishes."),
                 color = Color(0xFF9AA4B2), fontSize = 13.sp)
             Picker(L("Görünüm", "Mode"), modes, mode) { mode = it }
+            // 10.11.2026: ortak sürüş (arkadaş/kulüp) — yalnız sunucu bu sürüş için grup önerdiyse.
+            // Açıkken video 3B motorla ve grup anahtarıyla üretilir (eşler yalnız 3B'de çizilir).
+            if (grup != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF23303F))
+                        .clickable { ortak = !ortak }.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Groups, null, tint = Brand.accent, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(L("Arkadaşlarınla ortak video", "Joint video with your friends"),
+                            color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = ortak, onCheckedChange = { ortak = it },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Brand.accent))
+                    }
+                    Text(L("Bu sürüşte arkadaşların da vardı; ortak video 3B olarak hepinizi birlikte gösterir.",
+                           "Your friends rode with you; the joint video shows all of you together in 3D."),
+                        color = Color(0xFF9AA4B2), fontSize = 12.sp)
+                }
+            }
             // 18.09: tactical dalı ve Ultra kamera açısı bloğu kaldırıldı; bu üç picker KALIYOR
             // (eskiden else gövdesindeydi — video üretiminin çekirdek ayarları).
             Picker(L("Süre", "Duration"), speeds, speed) { speed = it }
@@ -179,30 +206,18 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                     busy = true; hataMetni = ""
                     scope.launch {
                         val dotHex = if (dot == "line") (if (line.startsWith("#")) line else "#FFFFFF") else dot
-                        // 1) Sunucuya bildir: ayarlar kaydedilir, iş TELEFON KUYRUĞUNA (yerelq) yazılır.
-                        //    Üretim yarıda kalırsa (iptal/arka plan/ağ) iş kuyrukta durur, sonraki açılışta
-                        //    MoveLogApp'teki ON_RESUME kancası onu otomatik üretir.
-                        val kod = store.generate(from, to, type, mode, aspect, speed, cam, music, line,
-                            if (mode == "3d") camAngle else "", dotHex)
-                        if (kod != 200) {
-                            busy = false
-                            // FIX 05.09: sunucunun kendi açıklamasını göster (400/429/503...).
-                            hataMetni = store.sonUretimHatasi.ifEmpty {
-                                if (kod == 0) L("Sunucuya ulaşılamadı (bağlantı?)", "Couldn't reach the server (network?)")
-                                else L("Video oluşturulamadı (sunucu {n})", "Couldn't create the video (server {n})").replace("{n}", "$kod")
-                            }
-                            return@launch
-                        }
-                        if (!store.sonUretimYerel) { busy = false; onClose(); return@launch }   // eski bulut modu: sunucu üretir
-                        // 2) TELEFONDA üret -> yükle -> kuyruktan düş (tam ekran ilerleme: YerelVideoKatmani)
-                        val ok = YerelVideo.uretVeYukle(act, store, YerelVideo.Istek(
-                            from = from, to = to, type = type, mode = mode, speed = speed, aspect = aspect,
-                            camdist = cam, line = line, dot = dotHex))
+                        // 10.11.2026: /api/rides/generate ÇAĞRILMAZ (iOS gibi): o uç sunucu kuyruğuna iş
+                        // yazıyordu. Doğrudan motor sayfası (/api/motor3d) -> TELEFONDA üretim. YÜKLEME YOK,
+                        // /api/local-renders/done YOK. (tam ekran ilerleme: YerelVideoKatmani)
+                        val ortakAnahtar = if (ortak) grup else null
+                        val f = YerelVideo.telefondaUret(act, store, YerelVideo.Istek(
+                            from = from, to = to, type = type,
+                            mode = if (ortakAnahtar != null) "3d" else mode,   // ortak video yalnız 3B motorda
+                            speed = speed, aspect = aspect,
+                            camdist = cam, line = line, dot = dotHex, grup = ortakAnahtar))
                         busy = false
-                        if (ok) {
-                            android.widget.Toast.makeText(ctx, L("Video hazır — Videolarım'da.", "Video ready — in My Videos."),
-                                android.widget.Toast.LENGTH_SHORT).show()
-                            onClose()
+                        if (f != null) {
+                            hazir = f   // sonuç ekranı (VideoSonuc) açılır
                         } else {
                             val neden = YerelVideo.sonHata.ifEmpty { L("Video üretilemedi.", "Couldn't create the video.") }
                             hataMetni = neden
@@ -222,6 +237,114 @@ fun GenerateSheet(store: Store, from: Double, to: Double, type: String, onClose:
                      modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             }
         }
+    }
+    hazir?.let { f ->
+        VideoSonuc(f) {
+            runCatching { f.delete() }
+            hazir = null
+            onClose()
+        }
+    }
+}
+
+/**
+ * 10.11.2026 (Barış): ÜRETİM SONUCU — video yalnız bu telefonda, geçici dosyada; sunucuya yüklenmez.
+ * "Galeriye kaydet" -> Movies/MoveLog; "Paylaş" -> paylaşım menüsü (FileProvider, cacheDir/videolar);
+ * "Kapat" -> kaydedilmediyse onay sorar, dosya silinir. Ekrandan hangi yoldan çıkılırsa çıkılsın
+ * (ör. Activity yeniden kurulursa) geçici dosya onDispose'da silinir. iOS VideoSonucView eşi.
+ */
+@Composable
+private fun VideoSonuc(dosya: java.io.File, onKapat: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var kaydediliyor by remember { mutableStateOf(false) }
+    var kaydedildi by remember { mutableStateOf(false) }
+    var kayitHata by remember { mutableStateOf(false) }
+    var soruyor by remember { mutableStateOf(false) }
+    DisposableEffect(dosya) { onDispose { runCatching { dosya.delete() } } }
+
+    fun kapatIste() {
+        if (kaydedildi) onKapat() else soruyor = true
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { kapatIste() },   // geri tuşu: kaydedilmediyse önce sor
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false,
+            dismissOnBackPress = true, dismissOnClickOutside = false)
+    ) {
+        Column(Modifier.fillMaxSize().background(Brand.bg).padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(L("Videon hazır 🎬", "Your video is ready 🎬"), color = Color.White,
+                fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+            Box(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(18.dp))) {
+                VideoPlayer(android.net.Uri.fromFile(dosya).toString())   // VideosScreen.kt (Media3 ExoPlayer)
+            }
+            Button(
+                onClick = {
+                    kaydediliyor = true; kayitHata = false
+                    scope.launch {
+                        val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            YerelVideo.galeriyeKaydet(ctx.applicationContext, dosya)
+                        }
+                        kaydediliyor = false; kaydedildi = ok; kayitHata = !ok
+                    }
+                },
+                enabled = !kaydediliyor && !kaydedildi,
+                colors = ButtonDefaults.buttonColors(containerColor = Brand.accent),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                if (kaydediliyor) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                else Text(if (kaydedildi) L("Galeriye kaydedildi", "Saved to gallery") else L("Galeriye kaydet", "Save to gallery"),
+                    fontWeight = FontWeight.SemiBold)
+            }
+            if (kayitHata) {
+                Text(L("Galeriye kaydedilemedi.", "Couldn't save to the gallery."), color = Color(0xFFFF6B6B), fontSize = 13.sp)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        // Manifest'teki mevcut FileProvider ("<paket>.kartlar"); res/xml/kart_paths.xml'de
+                        // cacheDir/videolar/ yolu açık.
+                        runCatching {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".kartlar", dosya)
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "video/mp4"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            val chooser = android.content.Intent.createChooser(send, L("Paylaş", "Share"))
+                            if (ctx !is android.app.Activity) chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            ctx.startActivity(chooser)
+                        }.onFailure {
+                            android.widget.Toast.makeText(ctx, L("Paylaşılamadı", "Couldn't share"),
+                                android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(L("Paylaş", "Share")) }
+                OutlinedButton(onClick = { kapatIste() }, modifier = Modifier.weight(1f)) {
+                    Text(L("Kapat", "Close"))
+                }
+            }
+            if (!kaydedildi) {
+                Text(L("Video sunucuda saklanmaz. Kaydetmezsen kapatınca silinir.",
+                       "Videos aren't stored on our servers. If you don't save it, it's deleted when you close."),
+                    color = Color(0xFF9AA4B2), fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+    if (soruyor) {
+        AlertDialog(
+            onDismissRequest = { soruyor = false },
+            title = { Text(L("Video kaydedilmedi. Kapatırsan silinecek.", "The video isn't saved. Closing deletes it.")) },
+            confirmButton = {
+                TextButton(onClick = { soruyor = false; onKapat() }) {
+                    Text(L("Sil ve kapat", "Delete and close"), color = Color(0xFFFF6B6B))
+                }
+            },
+            dismissButton = { TextButton(onClick = { soruyor = false }) { Text(L("Vazgeç", "Cancel")) } }
+        )
     }
 }
 

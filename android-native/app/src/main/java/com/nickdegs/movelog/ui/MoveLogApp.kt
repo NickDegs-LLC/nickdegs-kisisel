@@ -95,17 +95,13 @@ fun MoveLogApp(store: Store) {
     // Uygulama her öne geldiğinde (ON_RESUME): yeni videoları sessizce galeriye kaydet.
     // R2'de video 1 gün durur -> kullanıcı hangi sekmede olursa olsun bu pencere içinde galeriye iner.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    // 03.11 TELEFONDA VİDEO: öne gelişte sunucunun telefon kuyruğundaki (yerelq) bekleyen işleri üret
-    // (iOS processLocalRenderQueue eşi; en çok 2 iş, aynı anda tek üretim — YerelVideo kilidi).
-    val aktivite = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+    // 10.11.2026 (Barış): öne gelişte telefon kuyruğunu (yerelq) OTOMATİK üretme KALDIRILDI — ölçüm
+    // (03–10.11): 257 tarif isteği, 0 yüklenen video; kullanıcı çıkınca üretim iptal oluyordu.
+    // Video yalnız kullanıcı "Video oluştur"a basınca üretilir (GenerateSheet).
     DisposableEffect(lifecycleOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 scope.launch { store.autoSaveNewVideos() }
-                if (aktivite != null) scope.launch {
-                    kotlinx.coroutines.delay(1500)   // ekran yerleşsin (kök görünüm ölçülmüş olsun)
-                    com.nickdegs.movelog.video.YerelVideo.kuyruguIsle(aktivite, store)
-                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -113,22 +109,23 @@ fun MoveLogApp(store: Store) {
     }
 
     var sel by remember { mutableStateOf(0) }
-    // Bildirim dokunma -> ilgili sekme (videos->Videolarım, friends/wave->Arkadaşlar, profile->Profil)
+    // Bildirim dokunma -> ilgili sekme (videos->Rotalar, friends/wave->Sosyal, profile->Profil)
+    // 10.11.2026: "Videolarım" sekmesi KALDIRILDI (video sunucuda saklanmaz) -> indeksler 1 kaydı;
+    // eski "videos" bildirimleri Rotalar'a düşer.
     // 18.09: Sohbet sekmesi KALDIRILDI (yazılı sohbet + telsiz tamamen çıktı), Topluluk sadeleşip
     // "Arkadaşlar" oldu -> sekme indeksleri 1 kaydı. 'chat'/'map'/'voice' route'ları artık
     // karşılıksız; sunucu eski sürümlere göndermeye devam edebilir, sessizce yok sayılır.
     LaunchedEffect(com.nickdegs.movelog.AppNav.route) {
         val r = com.nickdegs.movelog.AppNav.route ?: return@LaunchedEffect
         when (r.substringBefore(":")) {
-            "videos" -> sel = 1
-            "friends", "wave" -> sel = 3
-            "profile" -> sel = 4
+            "videos" -> sel = 0
+            "friends", "wave" -> sel = 2
+            "profile" -> sel = 3
         }
         com.nickdegs.movelog.AppNav.route = null
     }
     val tabs = listOf(
         Tab(L("Rotalar", "Routes"), Icons.Filled.Map),
-        Tab(L("Videolarım", "My Videos"), Icons.Filled.VideoLibrary),
         Tab(L("Özet", "Summary"), Icons.Filled.Article),
         // 18.09: "Sohbet" sekmesi kaldırıldı; "Topluluk" -> "Arkadaşlar" (yalnız arkadaş ekleme +
         // ikili sürüş videosu tercihi kalıyor). "Friends" anahtarı Strings.kt'de ZATEN var -> 12 dil hazır.
@@ -159,9 +156,9 @@ fun MoveLogApp(store: Store) {
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (sel) {
                 0 -> RoutesScreen(store)
-                1 -> VideosScreen(store)
-                2 -> SummariesScreen(store)
-                3 -> CommunityScreen(store)
+                // 10.11.2026: VideosScreen artık erişilemez (dosya duruyor, geri dönüş için).
+                1 -> SummariesScreen(store)
+                2 -> CommunityScreen(store)
                 else -> ProfileScreen(store)
             }
         }

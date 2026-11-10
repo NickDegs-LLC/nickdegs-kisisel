@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "1.76"   // 05.11: "Destek ol" bahşiş (3 tüketilebilir). 1.75: ücretsiz + video telefonda + kartlar
+        versionName = "1.77"   // 10.11: video yalnız telefonda, sunucuya yükleme yok, galeriye kaydet. 1.76: bahşiş. 1.75: ücretsiz + kartlar
     }
 
     signingConfigs {

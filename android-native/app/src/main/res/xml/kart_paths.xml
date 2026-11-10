@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Paylaşılabilir kart PNG'leri (Store.kartPaylas) yalnız cacheDir/kartlar/ altından dışarı açılır. -->
+<!-- Paylaşılabilir kart PNG'leri (Store.kartPaylas) cacheDir/kartlar/ altından dışarı açılır.
+     10.11.2026: telefonda üretilen geçici videolar (GenerateSheet sonuç ekranı "Paylaş") cacheDir/videolar/. -->
 <paths>
     <cache-path name="kartlar" path="kartlar/" />
+    <cache-path name="videolar" path="videolar/" />
 </paths>

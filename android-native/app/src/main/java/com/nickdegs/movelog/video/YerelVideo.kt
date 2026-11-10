@@ -85,7 +85,8 @@ import kotlin.math.roundToInt
 //   3) _ready -> motorHazir() -> introCiz() (1 çekim, introN kez) -> kareCiz(f) ×frames -> finalCiz(k) ×outroN
 //   4) ilk/son 0.8 sn siyaha kararma (iOS karart, SRC_OVER harman)
 //   5) MediaCodec H.264 (Surface girişi) + MediaMuxer -> cacheDir/videolar/<ts>.mp4
-//   6) POST /api/videos/upload (ham MP4) -> /api/local-renders/done
+//   6) 10.11.2026: YÜKLEME YOK — video telefonda kalır; GenerateSheet sonuç ekranında izlenir,
+//      "Galeriye kaydet" ile kalıcı olur, kaydedilmezse kapatınca silinir.
 // v1'de SES/MÜZİK YOK (iOS muxMusic eşleniği yazılmadı) — seçilen müzik bu videoya girmez.
 object YerelVideo {
 
@@ -98,8 +99,6 @@ object YerelVideo {
     // ---- UI durumu (YerelVideoKatmani okur). Yalnız ana iş parçacığında yazılır (yuzde hariç). ----
     var calisiyor by mutableStateOf(false)
         private set
-    var otomatik by mutableStateOf(false)
-        private set
     var yuzde by mutableStateOf(0f)
         private set
     var asama by mutableStateOf("")
@@ -107,8 +106,6 @@ object YerelVideo {
     /** Son hatanın kullanıcıya gösterilecek nedeni (iOS WebRouteVideo.sonHata). */
     var sonHata: String = ""
         private set
-    /** /api/motor3d'nin son HTTP kodu (kuyruk yolu 400/404'te işi kuyruktan düşürür). */
-    private var sonKod: Int = 0
 
     /** İş bitirme nedeni: null = sürsün. İptal düğmesi ve arka plan gözcüsü yazar, döngüler okur. */
     @Volatile private var durdur: String? = null
@@ -116,74 +113,30 @@ object YerelVideo {
     fun iptal() { if (calisiyor) durdur = L("iptal edildi", "cancelled") }
 
     /**
-     * Videoyu telefonda üret + yükle + kuyruktan düş. true = video Videolarım'da.
-     * false -> [sonHata]. Aynı anda TEK üretim (iOS telefonKilidi): başka iş sürüyorsa hemen false.
+     * 10.11.2026 (Barış): videoyu YALNIZ telefonda üret. Sunucuya YÜKLENMEZ, kuyruğa "bitti" yazılmaz.
+     * Başarıda cacheDir/videolar/ altındaki MP4 döner — dosyayı göstermek, galeriye kaydetmek ve
+     * kapatınca SİLMEK çağıranın işi (GenerateSheet sonuç ekranı). null -> [sonHata].
+     * Aynı anda TEK üretim (iOS telefonKilidi): başka iş sürüyorsa hemen null.
      * ANA iş parçacığından çağrılmalı (Compose scope.launch zaten Main).
+     * Otomatik arka plan kuyruğu (eski kuyruguIsle) KALDIRILDI: 03–10.11 ölçümünde 257 istek, 0 bitmiş video.
      */
-    suspend fun uretVeYukle(act: Activity, store: Store, ist: Istek, otomatik: Boolean = false): Boolean {
+    suspend fun telefondaUret(act: Activity, store: Store, ist: Istek): File? {
         if (calisiyor) {
             sonHata = L("Başka bir video şu an üretiliyor.", "Another video is being created right now.")
-            return false
+            return null
         }
-        calisiyor = true; this.otomatik = otomatik
-        yuzde = 0f; asama = ""; sonHata = ""; sonKod = 0; durdur = null
-        var dosya: File? = null
+        calisiyor = true
+        yuzde = 0f; asama = ""; sonHata = ""; durdur = null
         try {
-            val f = uret(act, store, ist) ?: return false
-            dosya = f
-            asama = L("Yükleniyor", "Uploading")
-            yuzde = 0.9f
-            val ok = store.yerelVideoYukle(f, ist.from, ist.to, ist.mode, ist.aspect, ist.type, ist.speed, ist.grup != null) { p ->
-                yuzde = 0.9f + 0.1f * p
+            // Önceki oturumlardan kalmış (kapatılmadan süreç ölmüş) geçici videoları temizle.
+            withContext(Dispatchers.IO) {
+                runCatching { File(act.cacheDir, "videolar").listFiles()?.forEach { it.delete() } }
             }
-            if (!ok) {
-                // iOS ile aynı: yükleme kalıcı başarısızsa video KAYBOLMASIN -> galeriye.
-                val galeri = withContext(Dispatchers.IO) { galeriyeKaydet(act.applicationContext, f) }
-                sonHata = if (galeri) L("Video yüklenemedi; telefonunun galerisine kaydedildi.",
-                                        "Couldn't upload the video; it was saved to your gallery.")
-                          else L("Video yüklenemedi (bağlantı?).", "Couldn't upload the video (network?).")
-                return false
-            }
-            store.localRenderDone(ist.from)
-            store.videolarYenile++
+            val f = uret(act, store, ist) ?: return null
             yuzde = 1f
-            return true
+            return f
         } finally {
-            runCatching { dosya?.delete() }
             calisiyor = false; asama = ""; durdur = null
-        }
-    }
-
-    /**
-     * Sunucunun telefon kuyruğundaki bekleyen işleri üret (iOS processLocalRenderQueue).
-     * Açılış başına en çok 2 iş (pil nezaketi). Kullanıcı iptal ederse / uygulama arka plana düşerse
-     * kalanlar denenmez (iş kuyrukta kalır, sonraki açılışta tekrar gelir).
-     */
-    suspend fun kuyruguIsle(act: Activity, store: Store) {
-        if (calisiyor) return
-        val isler = store.localRenders()
-        for (j in isler.take(2)) {
-            if (act.isFinishing || act.isDestroyed) return
-            val frm = j.optDouble("from", 0.0)
-            val to = j.optDouble("to", 0.0)
-            if (frm.isNaN() || to.isNaN() || frm <= 0.0 || to <= frm) continue
-            val grup = j.optString("grup", "").ifEmpty { null }
-            val ist = Istek(
-                from = frm, to = to,
-                type = j.optString("type", "moto").ifEmpty { "moto" },
-                mode = if (grup != null) "3d" else j.optString("mode", "flyover").ifEmpty { "flyover" },
-                grup = grup,
-                speed = j.optString("speed", "medium").ifEmpty { "medium" },
-                aspect = j.optString("aspect", "9:16").ifEmpty { "9:16" },
-                camdist = j.optString("camdist", "orta").ifEmpty { "orta" },
-                line = j.optString("line", "#00E5FF").ifEmpty { "#00E5FF" },
-                dot = j.optString("dot", "#FF3B30").ifEmpty { "#FF3B30" },
-            )
-            val ok = uretVeYukle(act, store, ist, otomatik = true)
-            if (ok) continue
-            // Bu rota hiç üretilemez (iz yok / geçersiz aralık) -> kuyruktan düş, her açılışta tekrar denenmesin.
-            if (sonKod == 400 || sonKod == 404 || sonKod == 422) { store.localRenderDone(frm); continue }
-            return   // iptal / arka plan / ağ: kalanları bu açılışta deneme
         }
     }
 
@@ -195,7 +148,6 @@ object YerelVideo {
         asama = L("Harita hazırlanıyor", "Preparing map")
         val (kod, txt) = store.motorSayfasi(ist.from, ist.to, ist.type, ist.mode, ist.speed,
             ist.aspect, ist.camdist, ist.line, ist.dot, ist.grup)
-        sonKod = kod
         if (kod != 200) {
             // SUNUCUNUN KENDİ MESAJI (iOS sayfaAl ile aynı): "iz yok", "aralik", "spec uretilemedi"...
             val detay = runCatching { JSONObject(txt).optString("detail", "") }.getOrDefault("")
@@ -369,7 +321,7 @@ object YerelVideo {
 
         // ---- ARKA PLAN KORUMASI (iOS ArkaPlanGozcu eşi) ----
         // Uygulama arka plana düşerse (ON_STOP) pencere yüzeyi çizilmez -> boş/eski kare. Üretim İPTAL
-        // (yarım video yazılmaz); iş sunucu kuyruğunda kalır, sonraki açılışta tekrar gelir.
+        // (yarım video yazılmaz); kullanıcı "Video oluştur"a yeniden basar.
         // ON_PAUSE dinlenmez: çoklu pencere/sistem diyaloğunda da gelir, orada kare bozulmaz.
         val gozcu = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_STOP)
@@ -494,8 +446,8 @@ object YerelVideo {
         } finally { runCatching { kod.release() } }
     }
 
-    /** Yükleme kalıcı başarısızsa videoyu Movies/MoveLog'a AKITARAK kaydet (belleğe tek parça almadan). */
-    private fun galeriyeKaydet(ctx: Context, f: File): Boolean = try {
+    /** Videoyu Movies/MoveLog'a AKITARAK kaydet (belleğe tek parça almadan). IO iş parçacığında çağır. */
+    fun galeriyeKaydet(ctx: Context, f: File): Boolean = try {
         val r = ctx.contentResolver
         val cv = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "MoveLog_${System.currentTimeMillis()}.mp4")
@@ -663,8 +615,7 @@ fun YerelVideoKatmani() {
         Box(Modifier.fillMaxSize().background(Brand.bg), contentAlignment = Alignment.Center) {
             Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(if (YerelVideo.otomatik) L("Bekleyen videon üretiliyor", "Creating your pending video")
-                     else L("Video üretiliyor", "Creating video"),
+                Text(L("Video üretiliyor", "Creating video"),
                     color = androidx.compose.ui.graphics.Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 LinearProgressIndicator(progress = { YerelVideo.yuzde.coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth(), color = Brand.accent)
