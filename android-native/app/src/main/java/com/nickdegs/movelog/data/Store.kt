@@ -199,7 +199,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
                 c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
                 // Sunucunun push/metin dilini cihaz diline sabitle (iOS ile aynı)
-                c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
+                c.setRequestProperty("Accept-Language", com.nickdegs.movelog.ui.currentLang())
                 if (body != null) {
                     c.setRequestProperty("Content-Type", "application/json")
                     c.doOutput = true
@@ -221,7 +221,7 @@ class Store(app: Application) : AndroidViewModel(app) {
                 c.requestMethod = method; c.connectTimeout = 15000; c.readTimeout = okumaMs
                 if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
                 c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-                c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
+                c.setRequestProperty("Accept-Language", com.nickdegs.movelog.ui.currentLang())
                 if (body != null) {
                     c.setRequestProperty("Content-Type", "application/json"); c.doOutput = true
                     OutputStreamWriter(c.outputStream).use { it.write(body.toString()) }
@@ -471,7 +471,7 @@ class Store(app: Application) : AndroidViewModel(app) {
             c.connectTimeout = 15000; c.readTimeout = 60000   // kart çizimi birkaç sn sürebilir
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
             c.setRequestProperty("X-Device-Id", cihazKimligi(getApplication()))
-            c.setRequestProperty("Accept-Language", java.util.Locale.getDefault().language)
+            c.setRequestProperty("Accept-Language", com.nickdegs.movelog.ui.currentLang())
             val code = c.responseCode
             if (code in 200..299) return@withContext c.inputStream.use { it.readBytes() }
             val txt = c.errorStream?.bufferedReader()?.use { it.readText() } ?: ""

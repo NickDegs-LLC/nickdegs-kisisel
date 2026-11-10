@@ -14,6 +14,8 @@ struct MoveLogApp: App {
     }
     @Environment(\.scenePhase) private var scenePhase
 
+    @AppStorage("nd_lang") private var secilenDil = ""   // 10.11: Profil > Dil (boş = telefon dili)
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -25,6 +27,9 @@ struct MoveLogApp: App {
                 case .offline: AuthGateView(checking: false) { Task { await store.validate() } }
                 }
             }
+            // 10.11: dil değişince bütün ekranlar yeniden kurulsun (L() metinleri yeni dille), Arapça sağdan sola
+            .id(secilenDil)
+            .environment(\.layoutDirection, currentLang() == "ar" ? .rightToLeft : .leftToRight)
             // 17.09 KILIT FIKSI: .checking ekrani ("Kimlik dogrulaniyor...") sonsuza kadar
             // kalabiliyordu - validate() donmezse cikis yolu YOKTU (Yeniden dene yalniz .offline'da).
             // Bekci: 20 sn sonra hala .checking ise .offline'a gecir, kullanici retry gorsun.

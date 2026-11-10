@@ -21,11 +21,15 @@ enum AppEnv {
 }
 
 let SUPPORTED = ["en","tr","de","fr","es","it","pt","ru","ja","zh","ko","ar"]
+/// Dil seçicide görünen ad — her dil kendi adıyla (çevrilmez)
+let DIL_ADI: [String:String] = ["en":"English","tr":"Türkçe","de":"Deutsch","fr":"Français","es":"Español","it":"Italiano","pt":"Português","ru":"Русский","ja":"日本語","zh":"中文","ko":"한국어","ar":"العربية"]
 // Cihazın TERCİH SIRASINDAKİ tüm dillerini tara; desteklediğimiz İLK dili döndür.
 // (ör. cihaz ["nl","de"] ise Almanca yakalanır.) Hiçbiri desteklenmiyorsa DAİMA "en" —
 // asla Türkçe'ye düşme. Türkçe sadece cihaz gerçekten tr istediğinde gelir.
 func currentLang() -> String {
     if let o = AppEnv.langOverride, SUPPORTED.contains(o) { return o }
+    // 10.11.2026: Profil > Dil ile kullanıcının seçtiği dil (boş = telefon dili)
+    if let s = UserDefaults.standard.string(forKey: "nd_lang"), SUPPORTED.contains(s) { return s }
     for pref in Locale.preferredLanguages {
         let code = String(pref.split(separator: "-").first ?? "").lowercased()
         if SUPPORTED.contains(code) { return code }
@@ -418,6 +422,8 @@ private let TRANS: [String: [String:String]] = [
  "Waiting for approval.": ["tr":"Onay bekleniyor.","de":"Warte auf Freigabe.","fr":"En attente d'approbation.","es":"Esperando aprobación.","it":"In attesa di approvazione.","pt":"Aguardando aprovação.","ru":"Ожидает подтверждения.","ja":"承認を待っています。","zh":"等待批准。","ko":"승인을 기다리는 중이에요.","ar":"بانتظار الموافقة."],
  "The purchase couldn't be completed.": ["tr":"Satın alma tamamlanamadı.","de":"Der Kauf konnte nicht abgeschlossen werden.","fr":"L'achat n'a pas pu être finalisé.","es":"No se pudo completar la compra.","it":"Impossibile completare l'acquisto.","pt":"Não foi possível concluir a compra.","ru":"Не удалось завершить покупку.","ja":"購入を完了できませんでした。","zh":"无法完成购买。","ko":"구매를 완료할 수 없어요.","ar":"تعذّر إتمام عملية الشراء."],
  // 10.11.2026 — telefonda video sonucu (Record.swift VideoSonucView)
+ "Language": ["tr":"Dil","de":"Sprache","fr":"Langue","es":"Idioma","it":"Lingua","pt":"Idioma","ru":"Язык","ja":"言語","zh":"语言","ko":"언어","ar":"اللغة"],
+ "Phone language": ["tr":"Telefon dili","de":"Telefonsprache","fr":"Langue du téléphone","es":"Idioma del teléfono","it":"Lingua del telefono","pt":"Idioma do celular","ru":"Язык телефона","ja":"端末の言語","zh":"手机语言","ko":"휴대폰 언어","ar":"لغة الهاتف"],
  "Save to Photos": ["tr":"Galeriye kaydet","de":"In Fotos sichern","fr":"Enregistrer dans Photos","es":"Guardar en Fotos","it":"Salva in Foto","pt":"Salvar em Fotos","ru":"Сохранить в Фото","ja":"写真に保存","zh":"存储到照片","ko":"사진에 저장","ar":"حفظ في الصور"],
  "Saved to Photos": ["tr":"Galeriye kaydedildi","de":"In Fotos gesichert","fr":"Enregistrée dans Photos","es":"Guardado en Fotos","it":"Salvato in Foto","pt":"Salvo em Fotos","ru":"Сохранено в Фото","ja":"写真に保存しました","zh":"已存储到照片","ko":"사진에 저장됨","ar":"حُفظ في الصور"],
  "Joint video with your friends": ["tr":"Arkadaşlarınla ortak video","de":"Gemeinsames Video mit deinen Freunden","fr":"Vidéo commune avec tes amis","es":"Vídeo conjunto con tus amigos","it":"Video comune con i tuoi amici","pt":"Vídeo em conjunto com seus amigos","ru":"Общее видео с друзьями","ja":"友達との共同動画","zh":"与好友的合拍视频","ko":"친구와 함께하는 공동 영상","ar":"فيديو مشترك مع أصدقائك"],

@@ -6,7 +6,14 @@ import java.util.Locale
 // cihaz dili tr ise Türkçe, en ise İngilizce, değilse TRANS[en][lang] (yoksa İngilizce'ye düşer).
 private val SUPPORTED = listOf("en", "tr", "de", "fr", "es", "it", "pt", "ru", "ja", "zh", "ko", "ar")
 
-private fun currentLang(): String {
+/** 10.11.2026: Profil > Dil seçimi (null/boş = telefon dili). MainActivity.onCreate SharedPreferences'tan yükler. */
+var secilenDil: String? = null
+/** Dil seçicide her dil kendi adıyla */
+val DIL_ADI = linkedMapOf("en" to "English", "tr" to "Türkçe", "de" to "Deutsch", "fr" to "Français", "es" to "Español",
+    "it" to "Italiano", "pt" to "Português", "ru" to "Русский", "ja" to "日本語", "zh" to "中文", "ko" to "한국어", "ar" to "العربية")
+
+fun currentLang(): String {
+    secilenDil?.let { if (SUPPORTED.contains(it)) return it }
     val code = Locale.getDefault().language
     return if (SUPPORTED.contains(code)) code else "en"
 }
@@ -295,6 +302,8 @@ private val TRANS: Map<String, Map<String, String>> = mapOf(
     "Videos aren't stored on our servers. If you don't save it, it's deleted when you close." to mapOf("tr" to "Video sunucuda saklanmaz. Kaydetmezsen kapatınca silinir.","de" to "Videos werden nicht auf unseren Servern gespeichert. Wenn du es nicht speicherst, wird es beim Schließen gelöscht.","fr" to "Les vidéos ne sont pas stockées sur nos serveurs. Si tu ne l'enregistres pas, elle sera supprimée à la fermeture.","es" to "Los vídeos no se guardan en nuestros servidores. Si no lo guardas, se eliminará al cerrar.","it" to "I video non vengono salvati sui nostri server. Se non lo salvi, verrà eliminato alla chiusura.","pt" to "Os vídeos não ficam nos nossos servidores. Se você não salvar, ele será excluído ao fechar.","ru" to "Видео не хранятся на наших серверах. Если не сохранить, оно удалится при закрытии.","ja" to "動画はサーバーに保存されません。保存しないと、閉じたときに削除されます。","zh" to "视频不会存储在我们的服务器上。如果不保存，关闭后将被删除。","ko" to "영상은 서버에 저장되지 않아요. 저장하지 않으면 닫을 때 삭제됩니다.","ar" to "لا تُخزَّن مقاطع الفيديو على خوادمنا. إن لم تحفظه، فسيُحذف عند الإغلاق."),
     "Joint video with your friends" to mapOf("tr" to "Arkadaşlarınla ortak video","de" to "Gemeinsames Video mit deinen Freunden","fr" to "Vidéo commune avec tes amis","es" to "Vídeo conjunto con tus amigos","it" to "Video condiviso con i tuoi amici","pt" to "Vídeo conjunto com seus amigos","ru" to "Общее видео с друзьями","ja" to "友だちとの合同動画","zh" to "与好友的合拍视频","ko" to "친구들과 함께하는 영상","ar" to "فيديو مشترك مع أصدقائك"),
     "Your friends rode with you; the joint video shows all of you together in 3D." to mapOf("tr" to "Bu sürüşte arkadaşların da vardı; ortak video 3B olarak hepinizi birlikte gösterir.","de" to "Deine Freunde sind mitgefahren; das gemeinsame Video zeigt euch alle zusammen in 3D.","fr" to "Tes amis ont roulé avec toi ; la vidéo commune vous montre tous ensemble en 3D.","es" to "Tus amigos rodaron contigo; el vídeo conjunto os muestra a todos juntos en 3D.","it" to "I tuoi amici erano con te; il video condiviso vi mostra tutti insieme in 3D.","pt" to "Seus amigos pilotaram com você; o vídeo conjunto mostra todos vocês juntos em 3D.","ru" to "Друзья ехали вместе с тобой; общее видео покажет всех вас вместе в 3D.","ja" to "友だちも一緒に走りました。合同動画では全員を3Dで一緒に表示します。","zh" to "好友与你同行；合拍视频以3D形式展示你们所有人。","ko" to "친구들이 함께 달렸어요. 함께하는 영상은 모두를 3D로 보여줍니다.","ar" to "رافقك أصدقاؤك في هذه الرحلة؛ يعرضكم الفيديو المشترك جميعًا معًا بتقنية 3D."),
+    "Language" to mapOf("tr" to "Dil","de" to "Sprache","fr" to "Langue","es" to "Idioma","it" to "Lingua","pt" to "Idioma","ru" to "Язык","ja" to "言語","zh" to "语言","ko" to "언어","ar" to "اللغة"),
+    "Phone language" to mapOf("tr" to "Telefon dili","de" to "Telefonsprache","fr" to "Langue du téléphone","es" to "Idioma del teléfono","it" to "Lingua del telefono","pt" to "Idioma do celular","ru" to "Язык телефона","ja" to "端末の言語","zh" to "手机语言","ko" to "휴대폰 언어","ar" to "لغة الهاتف"),
     "Couldn't save to the gallery." to mapOf("tr" to "Galeriye kaydedilemedi.","de" to "Konnte nicht in der Galerie gespeichert werden.","fr" to "Impossible d'enregistrer dans la galerie.","es" to "No se pudo guardar en la galería.","it" to "Impossibile salvare nella galleria.","pt" to "Não foi possível salvar na galeria.","ru" to "Не удалось сохранить в галерею.","ja" to "ギャラリーに保存できませんでした。","zh" to "无法保存到相册。","ko" to "갤러리에 저장할 수 없습니다.","ar" to "تعذّر الحفظ في المعرض."),
 )
 

@@ -25,6 +25,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 10.11.2026: Profil > Dil seçimi (boş = telefon dili)
+        com.nickdegs.movelog.ui.secilenDil = getSharedPreferences("movelog", MODE_PRIVATE).getString("nd_lang", null)?.ifEmpty { null }
         intent?.getStringExtra("route")?.let { AppNav.route = it }
         // Android 13+ bildirim izni (FCM push görünsün)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&

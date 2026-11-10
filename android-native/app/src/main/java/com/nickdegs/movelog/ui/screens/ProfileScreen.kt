@@ -47,7 +47,6 @@ fun ProfileScreen(store: Store) {
     var showSumVid by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var showAvatar by remember { mutableStateOf(false) }
-    var showDestek by remember { mutableStateOf(false) }
     fun saveSummary() { scope.launch { store.setSummarySettings(com.nickdegs.movelog.data.SummaryCfg(sumOn, sumHour, sumVid)) } }
     LaunchedEffect(Unit) {
         store.loadProfile(); friends = store.friends()
@@ -203,20 +202,36 @@ fun ProfileScreen(store: Store) {
             }
         }
 
-        // 05.11.2026: DESTEK OL — isteğe bağlı bağış (data/Destek.kt), hiçbir şey açmaz; uygulama komple ücretsiz
+        // 10.11.2026: "Destek ol" bağış satırı KALDIRILDI (Barış) — uygulamada satın alma yok.
+
+        // 10.11.2026: DİL SEÇİMİ (Barış). Boş = telefon dili. Seçilince kaydedilir ve ekran yeniden kurulur;
+        // sunucu bildirimleri de bu dilde gönderir (Accept-Language → users.lang).
         item {
-            Surface(color = Brand.card, shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { showDestek = true }) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("☕", fontSize = 26.sp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(L("Destek ol", "Support us"), color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text(L("Move Log ücretsiz — istersen geliştiriciye kahve ısmarla",
-                               "Move Log is free — buy the developer a coffee if you like"),
-                            color = Color(0xFF9AA4B2), fontSize = 12.sp)
+            var dilMenu by remember { mutableStateOf(false) }
+            val kayitli = com.nickdegs.movelog.ui.secilenDil ?: ""
+            fun sec(k: String) {
+                dilMenu = false
+                ctx.getSharedPreferences("movelog", android.content.Context.MODE_PRIVATE).edit().putString("nd_lang", k).apply()
+                com.nickdegs.movelog.ui.secilenDil = k.ifEmpty { null }
+                (ctx as? android.app.Activity)?.recreate()
+            }
+            Box {
+                Surface(color = Brand.card, shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable { dilMenu = true }) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Language, null, tint = Brand.accent)
+                        Spacer(Modifier.width(12.dp))
+                        Text(L("Dil", "Language"), color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text(if (kayitli.isEmpty()) L("Telefon dili", "Phone language") else (com.nickdegs.movelog.ui.DIL_ADI[kayitli] ?: kayitli),
+                            color = Color(0xFF9AA4B2), fontSize = 13.sp)
+                        Icon(Icons.Filled.ChevronRight, null, tint = Color(0xFF9AA4B2))
                     }
-                    Icon(Icons.Filled.ChevronRight, null, tint = Color(0xFF9AA4B2))
+                }
+                DropdownMenu(expanded = dilMenu, onDismissRequest = { dilMenu = false }) {
+                    DropdownMenuItem(text = { Text((if (kayitli.isEmpty()) "✓ " else "") + L("Telefon dili", "Phone language")) }, onClick = { sec("") })
+                    com.nickdegs.movelog.ui.DIL_ADI.forEach { (k, ad) ->
+                        DropdownMenuItem(text = { Text((if (kayitli == k) "✓ " else "") + ad) }, onClick = { sec(k) })
+                    }
                 }
             }
         }
@@ -304,7 +319,6 @@ fun ProfileScreen(store: Store) {
             })
     }
 
-    if (showDestek) DestekDialog { showDestek = false }
 
     if (showDelete) {
         AlertDialog(onDismissRequest = { showDelete = false },
@@ -398,55 +412,3 @@ private fun SumChips(title: String, opts: List<Pair<String, String>>, sel: Strin
     }
 }
 
-// 05.11.2026 — Destek ol penceresi. Billing bağlantısı yalnız pencere açıkken yaşar.
-@Composable
-private fun DestekDialog(onClose: () -> Unit) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val destek = remember { com.nickdegs.movelog.data.Destek(ctx) }
-    DisposableEffect(Unit) { onDispose { destek.kapat() } }
-    val emoji = listOf("☕", "🍔", "🏍️")
-    AlertDialog(onDismissRequest = onClose,
-        title = { Text(if (destek.tesekkur) "🧡 " + L("Çok teşekkürler!", "Thank you so much!") else "☕ " + L("Destek ol", "Support us")) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (destek.tesekkur) {
-                    Text(L("Desteğin Move Log'un ücretsiz kalmasına yardım ediyor. İyi yolculuklar! 🏍️",
-                           "Your support helps keep Move Log free. Ride safe! 🏍️"))
-                } else {
-                    Text(L("Move Log ücretsiz ve reklamsız. Beğendiysen küçük bir destekle geliştiriciye kahve ısmarlayabilirsin. Hiçbir özellik kilitli değil — tamamen isteğe bağlı.",
-                           "Move Log is free and ad-free. If you enjoy it, you can buy the developer a coffee. Nothing is locked — it's completely optional."),
-                        color = Color(0xFF9AA4B2), fontSize = 13.sp)
-                    when {
-                        destek.yukleniyor -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
-                        destek.urunler.isEmpty() -> Text(L("Şu an mağazaya ulaşılamıyor, biraz sonra tekrar dene.",
-                            "Can't reach the store right now, try again later."), fontSize = 13.sp)
-                        else -> destek.urunler.forEachIndexed { i, u ->
-                            Surface(color = Brand.card, shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable {
-                                    (ctx as? android.app.Activity)?.let { destek.al(it, u) }
-                                }) {
-                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(emoji[minOf(i, 2)], fontSize = 22.sp)
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(u.name, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                                    Text(u.oneTimePurchaseOfferDetails?.formattedPrice ?: "", color = Brand.accent, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                    if (destek.bekliyor) Text(L("Onay bekleniyor.", "Waiting for approval."), fontSize = 12.sp)
-                    if (destek.hata != null) Text(L("Satın alma tamamlanamadı.", "The purchase couldn't be completed."),
-                        color = Color(0xFFFF6B6B), fontSize = 12.sp)
-                    // 05.11.2026 (mağaza incelemesi): Gizlilik + Kullanım Şartları
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                        fun ac(u: String) = ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
-                        TextButton(onClick = { ac("https://realvirtuality.app/movelog/privacy.html") }) {
-                            Text(L("Gizlilik Politikası", "Privacy Policy"), fontSize = 12.sp, color = Brand.accent) }
-                        TextButton(onClick = { ac("https://realvirtuality.app/movelog/terms.html") }) {
-                            Text(L("Kullanım Şartları", "Terms of Use"), fontSize = 12.sp, color = Brand.accent) }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onClose) { Text(L("Kapat", "Close")) } })
-}

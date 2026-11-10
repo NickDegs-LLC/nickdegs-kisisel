@@ -33,11 +33,11 @@ struct ProfileView: View {
     @State private var incoming: [Friend] = []
     @State private var outgoing: [Friend] = []
     @State private var stats: Stats?
+    @AppStorage("nd_lang") private var dilKayit = ""   // 10.11: Profil > Dil
     @State private var showAvatar = false
     @State private var showAddFriend = false
     @State private var showHandle = false
     @State private var showFeedback = false
-    @State private var showDestek = false
     @State private var showDelete = false
     @State private var showRename = false
     @State private var newName = ""
@@ -53,6 +53,12 @@ struct ProfileView: View {
     @State private var davetGirisAcik = false
     @State private var davetGirisi = ""
     // 16.09: telsiz (bas-konuş, canlı telsiz daveti) durumları TELSİZ sekmesine taşındı.
+
+    /// Dil seç: kaydet → App kökü .id ile yeniden kurulur; sunucuya yeni dili bildir (profil GET Accept-Language ile yazar)
+    private func dilSec(_ k: String) {
+        dilKayit = k
+        Task { _ = await store.profile() }
+    }
 
     var body: some View {
         NavigationStack {
@@ -291,6 +297,29 @@ struct ProfileView: View {
                         }.padding(14).glassPanel(18).tint(Brand.accent)
 
                         // FİKİR KUTUSU (1.7): motorcular uygulamayı birlikte şekillendirir
+                        // 10.11.2026: DİL SEÇİMİ (Barış) — boş = telefon dili; seçilince uygulama hemen o dile geçer,
+                        // sunucu da bildirimleri bu dilde gönderir (Accept-Language → users.lang)
+                        Menu {
+                            Button { dilSec("") } label: {
+                                if dilKayit.isEmpty { Label(L("Telefon dili","Phone language"), systemImage: "checkmark") }
+                                else { Text(L("Telefon dili","Phone language")) }
+                            }
+                            ForEach(SUPPORTED, id: \.self) { k in
+                                Button { dilSec(k) } label: {
+                                    if dilKayit == k { Label(DIL_ADI[k] ?? k, systemImage: "checkmark") } else { Text(DIL_ADI[k] ?? k) }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "globe").font(.system(size: 22)).foregroundStyle(Brand.accent).frame(width: 30)
+                                Text(L("Dil","Language")).font(.system(size: 16, weight: .semibold)).foregroundStyle(.primary)
+                                Spacer()
+                                Text(dilKayit.isEmpty ? L("Telefon dili","Phone language") : (DIL_ADI[dilKayit] ?? dilKayit))
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
+                            }.padding(14).contentShape(Rectangle())
+                        }.glassPanel(18)
+
                         Button { showFeedback = true } label: {
                             HStack(spacing: 12) {
                                 Text("💡").font(.system(size: 26))
@@ -305,20 +334,7 @@ struct ProfileView: View {
                             }.padding(14).contentShape(Rectangle())
                         }.buttonStyle(.plain).glassPanel(18)
 
-                        // 05.11.2026: DESTEK OL — isteğe bağlı bağış (Destek.swift), hiçbir şey açmaz; uygulama komple ücretsiz
-                        Button { showDestek = true } label: {
-                            HStack(spacing: 12) {
-                                Text("☕").font(.system(size: 26))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(L("Destek ol","Support us")).font(.system(size: 16, weight: .semibold))
-                                    Text(L("Move Log ücretsiz — istersen geliştiriciye kahve ısmarla",
-                                           "Move Log is free — buy the developer a coffee if you like"))
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }.padding(14).contentShape(Rectangle())
-                        }.buttonStyle(.plain).glassPanel(18)
+                        // 10.11.2026: "Destek ol" bağış satırı KALDIRILDI (Barış) — uygulamada satın alma yok.
 
                         Button(L("Çıkış","Sign out")) { store.logout() }
                             .buttonStyle(.glassy).padding(.top, 8).tint(.red)
@@ -336,7 +352,6 @@ struct ProfileView: View {
             if AppEnv.demo {
                 try? await Task.sleep(for: .milliseconds(450))
                 if AppEnv.screen == "avatar" { showAvatar = true }
-                if AppEnv.screen == "destek" { showDestek = true }   // 05.11: IAP inceleme görüntüsü
             }
         }
         .onChange(of: store.davetYenile) { _, _ in
@@ -345,7 +360,6 @@ struct ProfileView: View {
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
-        .sheet(isPresented: $showDestek) { DestekSheet() }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
