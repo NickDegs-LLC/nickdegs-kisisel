@@ -74,20 +74,26 @@ final class NotifDelegate: NSObject, UNUserNotificationCenterDelegate {
     // uygulama açıkken de bildirim göster — İSTİSNA: sesli mesaj ("voice:") bildirimi.
     // App açıkken telsiz klibi zaten sessiz push'la otomatik çalınıyor; bir de banner göstermek
     // çift bildirim oluyordu -> foreground'da "voice:" banner'ı bastırılır (app kapalıyken normal gelir).
+    // 11.11.2026 ÇÖKME FİKSİ (Barış: "bildirime basınca crash"): iki metot `async` sürümdeydi. Bu sürümde
+    // sistem tamamlama işini ana iş parçacığı DIŞINDA bitirebiliyor ve uygulama bildirime dokunulunca
+    // çöküyordu. Klasik tamamlama-bloklu sürüm + her şey ana iş parçacığında = her iOS sürümünde güvenli.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        if let route = notification.request.content.userInfo["route"] as? String,
-           route.hasPrefix("voice:") {
-            return []   // çal + banner yok (çift bildirim fix'i)
-        }
-        return [.banner, .sound, .badge]
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let route = notification.request.content.userInfo["route"] as? String
+        let secenek: UNNotificationPresentationOptions = (route?.hasPrefix("voice:") == true) ? [] : [.banner, .sound, .badge]
+        if Thread.isMainThread { completionHandler(secenek) } else { DispatchQueue.main.async { completionHandler(secenek) } }
     }
-    // BİLDİRİME DOKUNULUNCA: payload'daki "route"a göre ilgili yere yönlendir (düz açılma yerine).
+    // BİLDİRİME DOKUNULUNCA: payload'daki "route"a göre ilgili yere yönlendir (route yoksa uygulama yalnız açılır).
     func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                didReceive response: UNNotificationResponse) async {
-        let info = response.notification.request.content.userInfo
-        if let route = info["route"] as? String, !route.isEmpty {
-            await MainActor.run { NotificationCenter.default.post(name: .ndDeepLink, object: route) }
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let route = response.notification.request.content.userInfo["route"] as? String
+        DispatchQueue.main.async {
+            if let route, !route.isEmpty {
+                NotificationCenter.default.post(name: .ndDeepLink, object: route)
+            }
+            completionHandler()
         }
     }
 }
