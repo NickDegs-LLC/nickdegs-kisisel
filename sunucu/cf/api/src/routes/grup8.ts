@@ -198,8 +198,7 @@ g.delete('/api/account', authUser, async (c) => {
 
   // 3) tek atomik batch (D1 batch = tek transaction) — sözleşme cf_mapping isteği
   await db.batch([
-    db.prepare('DELETE FROM users WHERE uid = ?1').bind(user),
-    db.prepare("DELETE FROM users WHERE alias = ?1 AND uid LIKE 'icloud_%'").bind(user), // 12.11: iCloud anahtar bağı da gitsin                       // profiles.pop + seen(last_seen_at)
+    db.prepare('DELETE FROM users WHERE uid = ?1').bind(user),                       // profiles.pop + seen(last_seen_at)
     db.prepare('DELETE FROM push_tokens WHERE uid = ?1').bind(user),                 // profil içindeki apns/fcm listeleri (D1'de ayrı tablo)
     db.prepare('DELETE FROM friends WHERE uid = ?1 OR friend_uid = ?1').bind(user),  // iki yön (main.py:2753-2757)
     db.prepare('DELETE FROM dm_messages WHERE user_a = ?1 OR user_b = ?1').bind(user), // 'a|b' anahtarında user (self-DM dahil)

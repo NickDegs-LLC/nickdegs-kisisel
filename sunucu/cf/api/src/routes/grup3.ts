@@ -617,63 +617,6 @@ g.post('/auth/google', async (c) => {
   return c.json({ token: await makeJwt(env, username), user: username })
 })
 
-// ---------------------------------------------------------------------------
-// POST /auth/icloud — 12.11.2026 (Barış: "giriş ekranını kaldıralım, giriş olmadan iCloud'a
-// yedeklensin hesaplar"). İstemci ilk açılışta 32 baytlık rastgele bir GİZLİ ANAHTAR üretir ve
-// iCloud Anahtar Zinciri'ne (synchronizable) + iCloud KV'ye yazar. Aynı Apple kimliğindeki her
-// cihaz / yeniden kurulum aynı anahtarı görür → aynı hesap. Sunucu anahtarın kendisini SAKLAMAZ;
-// uid = 'icloud_' + sha256(anahtar)[0:16]. Bağlanmış (alias) satırda token kanonik kimliğe basılır.
-// Cihaz bağlama (cihazBagla) BİLEREK yok: aynı Apple kimliğiyle iPhone+iPad birbirini atmasın.
-// ---------------------------------------------------------------------------
-const ICLOUD_RE = /^[0-9a-f]{64}$/
-async function icloudUid(secret: string): Promise<string> {
-  return 'icloud_' + (await sha256Hex('movelog-icloud:' + secret)).slice(0, 16)
-}
-
-g.post('/auth/icloud', async (c) => {
-  const env = c.env as Grup3Env
-  const body: any = await govdeAl(c)
-  const secret = String(body?.secret ?? '').toLowerCase()
-  if (!ICLOUD_RE.test(secret)) return hataYanit(400, 'geçersiz anahtar')
-  const username = await icloudUid(secret)
-  const mevcut = await getUser(env.DB, username)
-  if (mevcut?.alias) {
-    const kanon = await getUser(env.DB, mevcut.alias)
-    if (kanon) return c.json({ token: await makeJwt(env, mevcut.alias), user: mevcut.alias })
-    // kanonik hesap silinmiş → yetim bağ: kendi hesabı olarak yeniden doğsun
-    await env.DB.prepare('DELETE FROM users WHERE uid = ?1').bind(username).run()
-  } else if (mevcut) {
-    return c.json({ token: await makeJwt(env, username), user: username })
-  }
-  const now = simdi()
-  await env.DB.prepare('INSERT INTO users (uid, video_hak, premium, created_at, updated_at) VALUES (?1,0,1,?2,?2)')
-    .bind(username, now).run()
-  await uyeBildir(env, username, null, 'iCloud', '')
-  return c.json({ token: await makeJwt(env, username), user: username, yeni: true })
-})
-
-// POST /auth/icloud/bagla — giriş ekranı varken Apple/Google ile girmiş MEVCUT kullanıcının
-// iCloud anahtarını kendi hesabına bağlar (alias satırı). Böylece yeniden kurulumda giriş
-// ekranı olmadan AYNI hesaba döner. Anahtar başka bir gerçek hesaba aitse dokunulmaz (409).
-g.post('/auth/icloud/bagla', authUser, async (c) => {
-  const env = c.env as Grup3Env
-  const user = c.get('user')
-  const body: any = await govdeAl(c)
-  const secret = String(body?.secret ?? '').toLowerCase()
-  if (!ICLOUD_RE.test(secret)) return hataYanit(400, 'geçersiz anahtar')
-  const username = await icloudUid(secret)
-  if (username === user) return c.json({ ok: true })
-  const mevcut = await getUser(env.DB, username)
-  if (mevcut) {
-    if (mevcut.alias === user) return c.json({ ok: true })
-    return hataYanit(409, 'anahtar başka hesaba bağlı')
-  }
-  const now = simdi()
-  await env.DB.prepare('INSERT INTO users (uid, alias, video_hak, premium, created_at, updated_at) VALUES (?1,?2,0,1,?3,?3)')
-    .bind(username, user, now).run()
-  return c.json({ ok: true })
-})
-
 // POST /auth/sms/start (main.py:734) — gövde doğrulaması SONRASI koşulsuz 410 (FastAPI `body: dict`
 // validasyonu handler'dan önce çalışır: gövdesiz/bozuk istek 410 DEĞİL 422 alır — canlı doğrulandı).
 // 410 sonrası ölü kod (Twilio/ip-api/smsfix yazımı) TAŞINMADI.
