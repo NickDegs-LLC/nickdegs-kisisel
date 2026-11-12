@@ -336,6 +336,8 @@ struct ProfileView: View {
 
                         // 10.11.2026: "Destek ol" bağış satırı KALDIRILDI (Barış) — uygulamada satın alma yok.
 
+                        Button(L("Çıkış","Sign out")) { store.logout() }
+                            .buttonStyle(.glassy).padding(.top, 8).tint(.red)
 
                         Button(L("Hesabı sil","Delete account")) { showDelete = true }
                             .font(.footnote).foregroundStyle(.red).padding(.top, 2)

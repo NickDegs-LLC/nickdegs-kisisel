@@ -22,8 +22,7 @@ struct MoveLogApp: App {
                 // AÇILIŞ KAPISI: yalnızca sunucu-doğrulanmış kimlikle aç (internetsiz/kopya token çalışmaz).
                 switch store.gate {
                 case .valid: RootView()
-                // 12.11: giriş ekranı KALDIRILDI — hesap iCloud anahtarıyla kendiliğinden açılır
-                case .needLogin: AuthGateView(checking: true) {}
+                case .needLogin: LoginView()
                 case .checking: AuthGateView(checking: true) {}
                 case .offline: AuthGateView(checking: false) { Task { await store.validate() } }
                 }
@@ -35,9 +34,6 @@ struct MoveLogApp: App {
             // kalabiliyordu - validate() donmezse cikis yolu YOKTU (Yeniden dene yalniz .offline'da).
             // Bekci: 20 sn sonra hala .checking ise .offline'a gecir, kullanici retry gorsun.
             .task(id: store.gate) {
-                // 12.11: oturum düştüyse (401/hesap silme) iCloud hesabını aç. Yapısız Task: gate
-                // değişince bu .task iptal edilir, ağ isteği onunla birlikte ölmesin.
-                if store.gate == .needLogin { Task { await store.validate() }; return }
                 guard store.gate == .checking else { return }
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
                 if store.gate == .checking { store.gate = .offline }
@@ -120,7 +116,7 @@ struct AuthGateView: View {
                 Text("Move Log").font(.system(size: 30, weight: .bold)).foregroundStyle(Brand.accent)
                 if checking {
                     ProgressView().tint(Brand.accent)
-                    Text(L("Hazırlanıyor…", "Getting ready…")).foregroundStyle(.secondary)
+                    Text("Kimlik doğrulanıyor…").foregroundStyle(.secondary)
                 } else {
                     Image(systemName: "wifi.slash").font(.system(size: 40)).foregroundStyle(.secondary)
                     Text("İnternet gerekli").font(.headline).foregroundStyle(.white)
