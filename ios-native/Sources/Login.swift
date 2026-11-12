@@ -16,6 +16,7 @@ struct LoginView: View {
     @State private var busy = false
     @State private var float = false
     @State private var shown = false
+    @Environment(\.dismiss) private var dismiss   // 12.11: artık Profil'den sayfa olarak açılır
 
     var body: some View {
         ZStack {
@@ -95,7 +96,7 @@ struct LoginView: View {
                     .disabled(busy)
                     .padding(.top, 12)
 
-                    Text(L("Hesabın yoksa otomatik oluşturulur.", "No account? One is created automatically."))
+                    Text(L("Giriş ekranlı eski sürümde kullandığın hesaba döner.", "Returns to the account you used in the older version with sign-in."))
                         .font(.caption2).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).padding(.top, 14).padding(.bottom, 44)
                 }
@@ -105,6 +106,7 @@ struct LoginView: View {
                 .blur(radius: shown ? 0 : 6)
             }
         }
+        .onChange(of: store.me) { _, _ in dismiss() }   // hesap değişti → sayfayı kapat
         .onAppear {
             float = true
             withAnimation(.smooth(duration: 0.6)) { shown = true }

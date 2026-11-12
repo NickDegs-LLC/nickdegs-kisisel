@@ -211,7 +211,7 @@ enum DavetLink {
         if UserDefaults.standard.bool(forKey: "nd_qa_demo") { gate = .valid; return }
         #endif
         if AppEnv.demo && AppEnv.screen != "hero" { gate = .valid; return }
-        if token.isEmpty { gate = .needLogin; return }
+        if token.isEmpty { await icloudGiris(); return }   // 12.11: giriş ekranı yok → iCloud hesabı
         gate = .checking
         var r = URLRequest(url: URL(string: API + "/api/profile")!)
         r.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
@@ -225,10 +225,14 @@ enum DavetLink {
                     me = (o["username"] as? String) ?? me
                 }
                 gate = .valid
+                if UserDefaults.standard.string(forKey: "nd_uid") == nil, !me.isEmpty {
+                    UserDefaults.standard.set(me, forKey: "nd_uid")
+                }
                 PhoneWatchLink.shared.push()        // saate güncel kimliği ilet
                 Task { await attestIfPossible() }   // App Attest (fire-and-forget; fail-open, kilitlemez)
+                Task { await icloudBagla() }        // 12.11: eski Apple/Google hesabını iCloud anahtarına bağla
             } else if code == 401 || code == 403 {
-                logout(); gate = .needLogin            // geçersiz/iptal/kopya token
+                oturumDustu(); await icloudGiris()     // geçersiz/iptal token → iCloud hesabıyla yeniden aç
             } else {
                 gate = .offline                        // sunucu/internet sorunu -> kullanılamaz
             }
@@ -332,7 +336,7 @@ enum DavetLink {
         // 16.09 ÇEKİM: DEMO modunda token YOK; sunucu 401 döndüğü an bu otomatik logout
         // gate'i .needLogin yapıp RootView'ı kapatıyordu (mağaza karelerinde hep giriş ekranı
         // çıkmasının sebebi buydu). Demo dışında davranış AYNEN korunur.
-        if let h = resp as? HTTPURLResponse, h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.logout() } }
+        if let h = resp as? HTTPURLResponse, h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.oturumDustu() } }
         return data
     }
 
@@ -408,10 +412,9 @@ enum DavetLink {
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
                let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
-                token = t; me = (o["user"] as? String) ?? ""
-                UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
-                PhoneWatchLink.shared.push()
-                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
+                UserDefaults.standard.set(false, forKey: "nd_icloud_bagli")
+                oturumAc(t, (o["user"] as? String) ?? "")
+                Task { await icloudBagla() }   // 12.11: iCloud bundan sonra bu hesabı açsın
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -429,10 +432,9 @@ enum DavetLink {
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
                let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
-                token = t; me = (o["user"] as? String) ?? ""
-                UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
-                PhoneWatchLink.shared.push()
-                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
+                UserDefaults.standard.set(false, forKey: "nd_icloud_bagli")
+                oturumAc(t, (o["user"] as? String) ?? "")
+                Task { await icloudBagla() }   // 12.11: iCloud bundan sonra bu hesabı açsın
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -449,10 +451,9 @@ enum DavetLink {
             let (data, resp) = try await URLSession.shared.data(for: r)
             if let h = resp as? HTTPURLResponse, h.statusCode < 300,
                let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
-                token = t; me = (o["user"] as? String) ?? ""
-                UserDefaults.standard.set(t, forKey: "nd_token"); gate = .valid
-                PhoneWatchLink.shared.push()
-                Task { await attestIfPossible() }   // 17.09 gece (Cursor e2e #7): girişten hemen sonra attest, validate'i bekleme
+                UserDefaults.standard.set(false, forKey: "nd_icloud_bagli")
+                oturumAc(t, (o["user"] as? String) ?? "")
+                Task { await icloudBagla() }   // 12.11: iCloud bundan sonra bu hesabı açsın
             } else { loginError = true }
         } catch { loginError = true }
     }
@@ -462,22 +463,105 @@ enum DavetLink {
     /// hesabın tracker'ına yazmayı sürdürüyordu; aynı cihaza ikinci hesap girerse rotalar
     /// karışıyordu. Ayrıca hak/abonelik anahtarları kalıyordu. Cihaz TERCİHLERİ (font/tema) kalır.
     func logout() {
+        yerelTemizle()
+        token = ""
+        gate = .needLogin
+    }
+
+    /// 12.11: 401 → yalnız oturumu düşür. Yerel durum (takip, tampon) KALIR; iCloud aynı hesabı
+    /// geri açarsa hiçbir şey kaybolmaz. Farklı hesap gelirse `oturumAc` temizler.
+    func oturumDustu() {
+        UserDefaults.standard.removeObject(forKey: "nd_token")
+        token = ""
+        gate = .needLogin
+    }
+
+    /// Oturumu aç. Cihazda daha önce BAŞKA bir hesap açıksa onun yerel izleri temizlenir
+    /// (05.09 fiksiyle aynı sebep: takip/tampon eski hesaba akmasın).
+    func oturumAc(_ t: String, _ u: String) {
+        let d = UserDefaults.standard
+        let onceki = d.string(forKey: "nd_uid") ?? ""
+        if !onceki.isEmpty, !u.isEmpty, onceki != u { yerelTemizle() }
+        token = t; me = u
+        d.set(t, forKey: "nd_token")
+        if !u.isEmpty { d.set(u, forKey: "nd_uid") }
+        gate = .valid
+        PhoneWatchLink.shared.push()
+        Task { await attestIfPossible() }
+    }
+
+    private var icloudSuruyor = false
+    private var icloudDenemeler: [Date] = []
+
+    /// 12.11: GİRİŞ EKRANI YERİNE. iCloud'daki anahtarla hesabı açar; anahtar yoksa üretir.
+    func icloudGiris() async {
+        if let c = AppEnv.autoLogin { await login(c.user, c.pass); if gate != .valid { gate = .offline }; return }
+        guard !icloudSuruyor else { return }
+        icloudDenemeler = icloudDenemeler.filter { $0.timeIntervalSinceNow > -60 }
+        if icloudDenemeler.count >= 3 { gate = .offline; return }   // sunucu ters giderse döngüye girme
+        icloudDenemeler.append(Date())
+        icloudSuruyor = true
+        defer { icloudSuruyor = false }
+        gate = .checking
+        var anahtar = ICloudHesap.oku()
+        if anahtar == nil {
+            // Yeni cihazda iCloud KV geç inebilir: yeni hesap üretmeden önce kısa bir süre bekle.
+            NSUbiquitousKeyValueStore.default.synchronize()
+            for _ in 0..<6 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if let a = ICloudHesap.oku() { anahtar = a; break }
+            }
+        }
+        let secret: String
+        if let a = anahtar { secret = a } else { secret = ICloudHesap.uret(); ICloudHesap.yaz(secret) }
+        do {
+            var r = URLRequest(url: URL(string: API + "/auth/icloud")!)
+            r.httpMethod = "POST"; r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.setValue(cihazKimligi(), forHTTPHeaderField: "X-Device-Id")
+            r.timeoutInterval = 15
+            r.httpBody = try JSONSerialization.data(withJSONObject: ["secret": secret])
+            let (data, resp) = try await URLSession.shared.data(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode < 300,
+               let o = try JSONSerialization.jsonObject(with: data) as? [String:Any], let t = o["token"] as? String {
+                UserDefaults.standard.set(true, forKey: "nd_icloud_bagli")
+                oturumAc(t, (o["user"] as? String) ?? "")
+            } else { gate = .offline }
+        } catch { gate = .offline }
+    }
+
+    /// 12.11: Apple/Google ile girmiş mevcut kullanıcı → iCloud anahtarını kendi hesabına bağla.
+    /// Anahtar başka bir hesaba aitse (409) bu hesap için YENİ anahtar üretip bağla: iCloud her
+    /// zaman geçmişi olan hesabı açsın.
+    func icloudBagla() async {
+        let d = UserDefaults.standard
+        guard !AppEnv.demo, !token.isEmpty, !d.bool(forKey: "nd_icloud_bagli") else { return }
+        var secret = ICloudHesap.oku() ?? { let s = ICloudHesap.uret(); ICloudHesap.yaz(s); return s }()
+        var (kod, _) = await reqCode("/auth/icloud/bagla", method: "POST", body: ["secret": secret])
+        if kod == 409 {
+            secret = ICloudHesap.uret(); ICloudHesap.yaz(secret)
+            (kod, _) = await reqCode("/auth/icloud/bagla", method: "POST", body: ["secret": secret])
+        }
+        if kod == 200 { d.set(true, forKey: "nd_icloud_bagli") }
+    }
+
+    /// Hesaba ait yerel durum (takip, GPS tamponu, haklar). Cihaz TERCİHLERİ (font/tema/dil) kalır.
+    private func yerelTemizle() {
         Tracker.shared.stop()
         // 🔴 ZORUNLU: tampon kalırsa yukarıdaki 05.09 fiksinin kapattığı hata sınıfı GERİ GELİR —
         // eski hesabın birikmiş noktaları yeni oturumda eski tracker'a akar, rotalar karışır.
         GpsKuyruk.shared.temizle()
         let d = UserDefaults.standard
         for k in ["nd_token", "nd_dev", "nd_ingest", "nd_tracking", "nd_premium", "nd_ultra",
-                  "nd_gift", "nd_video_hak", "nd_sokak_hak", "nd_free_tactical", "nd_apns"] {
+                  "nd_gift", "nd_video_hak", "nd_sokak_hak", "nd_free_tactical", "nd_apns",
+                  "nd_uid", "nd_icloud_bagli"] {
             d.removeObject(forKey: k)
         }
-        token = ""
-        gate = .needLogin
     }
 
     func deleteAccount() async {
         _ = try? await req("/api/account", method: "DELETE")
         UserDefaults.standard.removeObject(forKey: "nd_premium")
+        ICloudHesap.sil()   // 12.11: silinen hesabın iCloud anahtarı da gitsin → sıradaki açılış YENİ hesap
         logout()
     }
 
@@ -884,7 +968,7 @@ enum DavetLink {
         if let body { r.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, resp) = try await URLSession.shared.data(for: r)
         let kod = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if kod == 401, !AppEnv.demo { await MainActor.run { self.logout() } }
+        if kod == 401, !AppEnv.demo { await MainActor.run { self.oturumDustu() } }
         return (data, kod)
     }
     // GPX/TCX dosyası yükle (ham body) -> backend parse eder, Rotalar'a ekler. (from,to) döner.
@@ -901,7 +985,7 @@ enum DavetLink {
               let h = resp as? HTTPURLResponse else { return nil }
         // 17.09 gece (Cursor e2e-2 #3): başka cihazdan giriş sonrası 401 burada "geçersiz GPX" gibi
         // görünüyordu; `req` ile aynı davranış — oturumu kapat, kullanıcı yeniden girsin.
-        if h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.logout() }; return nil }
+        if h.statusCode == 401, !AppEnv.demo { await MainActor.run { self.oturumDustu() }; return nil }
         guard h.statusCode == 200,
               let o = try? JSONSerialization.jsonObject(with: d) as? [String:Any],
               let f = (o["from"] as? NSNumber)?.doubleValue,

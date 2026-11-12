@@ -39,6 +39,7 @@ struct ProfileView: View {
     @State private var showHandle = false
     @State private var showFeedback = false
     @State private var showDelete = false
+    @State private var showEski = false
     @State private var showRename = false
     @State private var newName = ""
     @State private var sumEnabled = true
@@ -336,8 +337,10 @@ struct ProfileView: View {
 
                         // 10.11.2026: "Destek ol" bağış satırı KALDIRILDI (Barış) — uygulamada satın alma yok.
 
-                        Button(L("Çıkış","Sign out")) { store.logout() }
-                            .buttonStyle(.glassy).padding(.top, 8).tint(.red)
+                        // 12.11: giriş ekranı yok, hesap iCloud'da → "Çıkış" kalktı. Giriş ekranlı
+                        // eski sürümde Apple/Google ile açılmış hesaba dönüş yolu burada.
+                        Button(L("Önceki hesabına dön (Apple / Google)", "Use your previous account (Apple / Google)")) { showEski = true }
+                            .font(.footnote).padding(.top, 8)
 
                         Button(L("Hesabı sil","Delete account")) { showDelete = true }
                             .font(.footnote).foregroundStyle(.red).padding(.top, 2)
@@ -360,6 +363,7 @@ struct ProfileView: View {
         .sheet(isPresented: $showAvatar) { AvatarSheet(onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showHandle) { HandleSheet(current: prof?.handle ?? "", onDone: { Task { prof = await store.profile() } }) }
         .sheet(isPresented: $showFeedback) { FeedbackSheet() }
+        .sheet(isPresented: $showEski, onDismiss: { Task { prof = await store.profile(); await reloadFriends() } }) { LoginView() }
         // 16.09: canlı telsiz daveti + PTT meşgul polling'i TELSİZ sekmesine taşındı.
         .sheet(isPresented: $showSumVid) {
             SummaryVideoSheet(video: $sumVid) {
